@@ -318,3 +318,58 @@ exports.resendOtp = async (req, res) => {
     return response.response_with_code(res, 500, 'Internal server error');
   }
 };
+exports.login = async (req, res) => {
+  try {
+    const { email, phone, password, countryCode } = req.body;
+
+    if ((!email && !phone) || !password) {
+      return response.response_with_code(res, 400, 'Email or phone and password are required.');
+    }
+
+    let user;
+
+    if (email) {
+      user = await prisma.user.findUnique({ where: { email } });
+      if (!user) {
+        return response.response_with_code(res, 404, 'User with this email not found.');
+      }
+    } else if (phone) {
+      const fullPhone = `${countryCode}${phone}`;
+      user = await prisma.user.findUnique({ where: { phone: fullPhone } });
+      if (!user) {
+        return response.response_with_code(res, 404, 'User with this phone number not found.');
+      }
+    }
+
+    if (!user.isVerified) {
+      return response.response_with_code(res, 403, 'User is not verified. Please verify first.');
+    }
+
+    const isMatch = await comparePassword(password, user.password);
+    if (!isMatch) {
+      return response.response_with_code(res, 401, 'Incorrect password.');
+    }
+
+    // Generate new authorization token, similar to OTP verification
+    const authToken = randomKey(40);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { authorization: authToken }
+    });
+
+    return response.true_status(res, {
+      token: authToken,
+      user: {
+        id: user.id,
+        username: user.username,
+        email: user.email || null,
+        phone: user.phone || null,
+        isVerified: user.isVerified
+      }
+    }, 'Login successful.');
+
+  } catch (error) {
+    console.error('Login error:', error);
+    return response.response_with_code(res, 500, 'Internal server error');
+  }
+};
