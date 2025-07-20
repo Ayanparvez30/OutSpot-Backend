@@ -320,53 +320,64 @@ exports.resendOtp = async (req, res) => {
 };
 exports.login = async (req, res) => {
   try {
-    const { email, phone, password, countryCode } = req.body;
+    const { identifier, password, forceLogin } = req.body;
 
-    if ((!email && !phone) || !password) {
-      return response.response_with_code(res, 400, 'Email or phone and password are required.');
+    if (!identifier || !password) {
+      return response.response_with_code(res, 400, 'Identifier and password required');
     }
 
-    let user;
+    // Find user by email, phone or username
+    const user = await prisma.user.findFirst({
+      where: {
+        OR: [
+          { email: identifier },
+          { phone: identifier },
+          { username: identifier },
+        ],
+      },
+    });
 
-    if (email) {
-      user = await prisma.user.findUnique({ where: { email } });
-      if (!user) {
-        return response.response_with_code(res, 404, 'User with this email not found.');
-      }
-    } else if (phone) {
-      const fullPhone = `${countryCode}${phone}`;
-      user = await prisma.user.findUnique({ where: { phone: fullPhone } });
-      if (!user) {
-        return response.response_with_code(res, 404, 'User with this phone number not found.');
-      }
+    if (!user) {
+      return response.response_with_code(res, 401, 'Invalid credentials');
     }
 
+    // Check password
+    const passwordMatch = comparePassword(password, user.password);
+    if (!passwordMatch) {
+      return response.response_with_code(res, 401, 'Invalid credentials');
+    }
+
+    // Check if user is verified
     if (!user.isVerified) {
-      return response.response_with_code(res, 403, 'User is not verified. Please verify first.');
+      return response.response_with_code(res, 403, 'User not verified');
     }
 
-    const isMatch = await comparePassword(password, user.password);
-    if (!isMatch) {
-      return response.response_with_code(res, 401, 'Incorrect password.');
+    // Check active session token
+    if (user.authorization && !forceLogin) {
+      // User is already logged in somewhere else
+      return response.response_with_code(res, 409, 'User already logged in on another device');
     }
 
-    // Generate new authorization token, similar to OTP verification
-    const authToken = randomKey(40);
+    // If forceLogin=true, invalidate previous session by replacing token
+
+    // Generate new auth token
+    const newToken = randomKey(40);
+
+    // Update user with new token
     await prisma.user.update({
       where: { id: user.id },
-      data: { authorization: authToken }
+      data: { authorization: newToken },
     });
 
     return response.true_status(res, {
-      token: authToken,
+      token: newToken,
       user: {
         id: user.id,
+        email: user.email,
+        phone: user.phone,
         username: user.username,
-        email: user.email || null,
-        phone: user.phone || null,
-        isVerified: user.isVerified
-      }
-    }, 'Login successful.');
+      },
+    }, 'Login successful');
 
   } catch (error) {
     console.error('Login error:', error);
