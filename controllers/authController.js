@@ -358,7 +358,7 @@ exports.login = async (req, res) => {
       return response.response_with_code(res, 409, 'User already logged in on another device');
     }
 
-    // If forceLogin=true, invalidate previous session by replacing token
+
 
     // Generate new auth token
     const newToken = randomKey(40);
@@ -382,5 +382,238 @@ exports.login = async (req, res) => {
   } catch (error) {
     console.error('Login error:', error);
     return response.response_with_code(res, 500, 'Internal server error');
+  }
+};
+exports.forgotPasswordRequest = async (req, res) => {
+  try {
+    const { email, phone, countryCode } = req.body;
+
+    if (!email && !phone) {
+      return response.response_with_code(res, 400, 'Email or phone is required');
+    }
+
+    let user;
+
+    if (email) {
+      user = await prisma.user.findUnique({ where: { email } });
+    } else if (phone) {
+      const fullPhone = `${countryCode}${phone}`;
+      user = await prisma.user.findUnique({ where: { phone: fullPhone } });
+    }
+
+    if (!user) {
+      return response.response_with_code(res, 404, 'User not found');
+    }
+
+    // Generate OTP and expiry time
+    const otp = phone ? '123456' : generateOTP(); // fixed for phone
+    const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000); // 10 mins
+
+    // Save OTP and expiry
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { otp, otpExpiresAt }
+    });
+
+    // Send OTP
+    if (user.email) {
+      const html = `
+        <h1>Password Reset OTP</h1>
+        <p>Your OTP is: <strong>${otp}</strong></p>
+        <p>This OTP will expire in 10 minutes.</p>
+      `;
+      await sendEmail(user.email, 'Your OTP for Password Reset', html);
+    } else if (user.phone) {
+      console.log(`OTP for phone ${user.phone}: ${otp}`);
+    }
+
+    return response.true_status(res, null, 'OTP sent successfully');
+  } catch (error) {
+    console.error('Forgot password request error:', error);
+    return response.response_with_code(res, 500, 'Internal server error');
+  }
+};
+exports.verifyForgotPasswordOtp = async (req, res) => {
+  try {
+    const { email, phone, otp } = req.body;
+
+    if (!otp || (!email && !phone)) {
+      return response.response_with_code(res, 400, 'OTP and email or phone are required');
+    }
+
+    const identifier = email ? { email } : { phone };
+
+    const user = await prisma.user.findFirst({
+      where: {
+        ...identifier,
+        otp
+      }
+    });
+
+    if (!user) {
+      return response.response_with_code(res, 400, 'Invalid OTP or identifier');
+    }
+
+    if (new Date() > user.otpExpiresAt) {
+      return response.response_with_code(res, 400, 'OTP has expired');
+    }
+
+    // OTP verified successfully
+    return response.true_status(res, null, 'OTP verified successfully');
+  } catch (error) {
+    console.error('Verify forgot password OTP error:', error);
+    return response.response_with_code(res, 500, 'Internal server error');
+  }
+};
+exports.resetPassword = async (req, res) => {
+  try {
+    const { email, phone, password, repeatPassword } = req.body;
+
+    if (!password || !repeatPassword || (!email && !phone)) {
+      return response.response_with_code(res, 400, 'Password, repeatPassword and email or phone are required');
+    }
+
+    if (password !== repeatPassword) {
+      return response.response_with_code(res, 400, 'Passwords do not match');
+    }
+
+    const identifier = email ? { email } : { phone };
+
+    const user = await prisma.user.findUnique({
+      where: identifier
+    });
+
+    if (!user) {
+      return response.response_with_code(res, 404, 'User not found');
+    }
+
+    // Update password and clear otp
+    const hashedPassword = hashPassword(password);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        otp: null,
+        otpExpiresAt: null
+      }
+    });
+
+    return response.true_status(res, null, 'Password reset successfully');
+  } catch (error) {
+    console.error('Reset password error:', error);
+    return response.response_with_code(res, 500, 'Internal server error');
+  }
+};
+exports.logout = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { authorization: "" }
+    });
+
+    return response.true_status(res, {}, 'Logged out successfully');
+  } catch (error) {
+    console.error('Logout error:', error);
+    return response.response_with_code(res, 500, 'Internal server error');
+  }
+};
+exports.updateUsername = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const { username } = req.body;
+
+    if (!username) {
+      return response.response_with_code(res, 400, 'Username is required');
+    }
+
+    // Check if the username is already taken by another user
+    const existingUser = await prisma.user.findUnique({
+      where: { username }
+    });
+
+    if (existingUser && existingUser.id !== userId) {
+      return response.response_with_code(res, 409, 'Username is already taken');
+    }
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { username }
+    });
+
+    return response.true_status(res, null, 'Username updated successfully');
+  } catch (error) {
+    console.error('Update username error:', error);
+    return response.response_with_code(res, 500, 'Internal server error');
+  }
+};
+exports.updatePassword = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const { currentPassword, newPassword, repeatPassword } = req.body;
+
+    if (!currentPassword || !newPassword || !repeatPassword) {
+      return response.response_with_code(res, 400, 'All password fields are required');
+    }
+
+    if (newPassword !== repeatPassword) {
+      return response.response_with_code(res, 400, 'New passwords do not match');
+    }
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+
+    if (!user || !comparePassword(currentPassword, user.password)) {
+      return response.response_with_code(res, 400, 'Current password is incorrect');
+    }
+
+    const hashedPassword = hashPassword(newPassword);
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: { password: hashedPassword }
+    });
+
+    return response.true_status(res, null, 'Password updated successfully');
+  } catch (error) {
+    console.error('Update password error:', error);
+    return response.response_with_code(res, 500, 'Internal server error');
+  }
+};
+
+exports.contactUs = async (req, res) => {
+  const { email, subject, description } = req.body;
+
+  if (!email || !subject || !description) {
+    return res.status(400).json({ error: 'All fields are required.' });
+  }
+
+  try {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.SMTP_EMAIL,
+        pass: process.env.SMTP_PASSWORD,
+      },
+    });
+
+    const mailOptions = {
+      from: email,
+      to: process.env.CONTACT_RECEIVER_EMAIL || 'ishra101789@gmail.com',
+      subject: `Contact Us - ${subject}`,
+      html: `
+        <p><strong>From:</strong> ${email}</p>
+        <p><strong>Subject:</strong> ${subject}</p>
+        <p><strong>Description:</strong><br/>${description}</p>
+      `,
+    };
+
+    await transporter.sendMail(mailOptions);
+
+    return res.status(200).json({ message: 'Message sent successfully!' });
+  } catch (error) {
+    console.error('Contact Us Email Error:', error);
+    return res.status(500).json({ error: 'Failed to send your message. Please try again later.' });
   }
 };
