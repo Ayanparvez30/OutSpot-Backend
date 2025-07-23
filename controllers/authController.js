@@ -6,7 +6,8 @@ const { hashPassword, comparePassword, randomKey, generateOTP } = require('../ut
 
 const response = require('../functions/response');
 require('dotenv').config();
-const nodemailer = require('nodemailer');exports.signup = async (req, res) => {
+const nodemailer = require('nodemailer');
+exports.signup = async (req, res) => {
   try {
     const { email, phone, username, password, repeatPassword, countryCode } = req.body;
 
@@ -352,22 +353,20 @@ exports.login = async (req, res) => {
       return response.response_with_code(res, 403, 'User not verified');
     }
 
-    // Check active session token
-    if (user.authorization && !forceLogin) {
-      // User is already logged in somewhere else
-      return response.response_with_code(res, 409, 'User already logged in on another device');
-    }
+   // Check active session token
+if (user.authorization && !forceLogin) {
+  return response.response_with_code(res, 409, 'Another device is logged in. Force login?');
+}
 
+// Generate new auth token
+const newToken = randomKey(40);
 
+// Update user with new token (this will invalidate previous session)
+await prisma.user.update({
+  where: { id: user.id },
+  data: { authorization: newToken },
+});
 
-    // Generate new auth token
-    const newToken = randomKey(40);
-
-    // Update user with new token
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { authorization: newToken },
-    });
 
     return response.true_status(res, {
       token: newToken,
