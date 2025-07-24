@@ -3,6 +3,12 @@ const express = require('express');
 const app = express();
 app.use(express.json());
 
+const http = require('http');
+const server = http.createServer(app);
+
+const { initSocket } = require('./utils/socket');
+initSocket(server);
+
 
 app.use((req, res, next) => {
   console.log(`Incoming request: ${req.method} ${req.originalUrl}`);
@@ -12,8 +18,9 @@ app.use((req, res, next) => {
 
 
 const authRoutes = require('./routes/authRoutes');
-
+const chatRoutes = require('./routes/chatRoutes');
 app.use('/api', authRoutes);
+app.use('/api', chatRoutes);
 
 // Serve a simple HTML page at the root
 app.use('/', (req, res) => {
@@ -30,6 +37,6 @@ app.use('/', (req, res) => {
 
 
 const PORT = process.env.PORT || 3000;
-app.listen(PORT,'0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', () => {
   console.log(`Server running on port ${PORT}`);
 });

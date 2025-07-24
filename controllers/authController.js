@@ -7,6 +7,10 @@ const { hashPassword, comparePassword, randomKey, generateOTP } = require('../ut
 const response = require('../functions/response');
 require('dotenv').config();
 const nodemailer = require('nodemailer');
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
 exports.signup = async (req, res) => {
   try {
     const { email, phone, username, password, repeatPassword, countryCode } = req.body;

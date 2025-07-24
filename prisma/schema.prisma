@@ -12,16 +12,18 @@ datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
+
 model User {
-  id            Int      @id @default(autoincrement())
-  username      String   @unique
-  email         String?  @unique
-  phone         String?  @unique
+  id            Int          @id @default(autoincrement())
+  username      String       @unique
+  email         String?      @unique
+  phone         String?      @unique
   password      String
-  isVerified    Boolean  @default(false)
+  isVerified    Boolean      @default(false)
   otp           String?
   otpExpiresAt  DateTime?
   authorization String?
+<<<<<<< Updated upstream
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
     // Profile Onboarding
@@ -54,3 +56,39 @@ model Minime {
 
   user       User     @relation(fields: [userId], references: [id])
 }
+=======
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  messages      Message[]
+  chats         UserOnChat[]
+}
+
+model Chat {
+  id        Int          @id @default(autoincrement())
+  name      String?
+  isGroup   Boolean      @default(false)
+  users     UserOnChat[]
+  messages  Message[]
+  createdAt DateTime     @default(now())
+}
+
+model Message {
+  id        Int      @id @default(autoincrement())
+  content   String
+  sender    User     @relation(fields: [senderId], references: [id])
+  senderId  Int
+  chat      Chat     @relation(fields: [chatId], references: [id])
+  chatId    Int
+  createdAt DateTime @default(now())
+}
+
+model UserOnChat {
+  id     Int  @id @default(autoincrement())
+  user   User @relation(fields: [userId], references: [id])
+  userId Int
+  chat   Chat @relation(fields: [chatId], references: [id])
+  chatId Int
+
+  @@unique([userId, chatId])
+}
+>>>>>>> Stashed changes
