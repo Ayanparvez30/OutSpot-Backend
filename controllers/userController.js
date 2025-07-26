@@ -98,6 +98,61 @@ exports.saveMinimeOptions = async (req, res) => {
   }
 };
 
+exports.getUserProfile = async (req, res) => {
+  const viewerId = req.authData.id;
+  const profileUserId = parseInt(req.params.userId);
+
+  const isFriend = await prisma.friendship.findFirst({
+    where: {
+      status: 'ACCEPTED',
+      OR: [
+        { requesterId: viewerId, receiverId: profileUserId },
+        { requesterId: profileUserId, receiverId: viewerId }
+      ]
+    }
+  });
+
+  const user = await prisma.user.findUnique({
+    where: { id: profileUserId },
+    select: {
+      id: true,
+      username: true,
+      firstName: true,
+      lastName: true,
+      bio: true,
+      minime: { select: { avatarUrl: true } }
+    }
+  });
+
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  if (!isFriend && viewerId !== profileUserId) {
+    return res.json({
+      user,
+      isPrivate: true,
+      message: 'This profile is private. Send a friend request to view more.'
+    });
+  }
+
+  const stories = await prisma.story.findMany({
+    where: {
+      userId: profileUserId,
+      visibility: 'profile',
+      // isInVault: false
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  return res.json({
+    user,
+    isPrivate: false,
+    stories,
+    message: 'Profile loaded successfully.'
+  });
+};
+
 exports.generateOrRegenerateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;

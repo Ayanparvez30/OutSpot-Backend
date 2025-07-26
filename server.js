@@ -8,6 +8,9 @@ const server = http.createServer(app);
 
 const { initSocket } = require('./utils/socket');
 initSocket(server);
+const mediaRoutes = require('./routes/mediaRoutes');
+app.use('/api', mediaRoutes);
+app.use('/uploads', express.static('uploads')); 
 
 
 app.use((req, res, next) => {

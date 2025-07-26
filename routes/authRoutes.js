@@ -23,5 +23,7 @@ router.post('/contact-us', authController.contactUs);
 router.post('/save-profile', checkAuth, userController.saveProfile);
 router.post('/upload-avatar', checkAuth, userController.uploadAvatar);
 router.post('/save-minime-options', checkAuth, userController.saveMinimeOptions);
+router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
+
 router.post('/generateOrRegenerateMinime', checkAuth, userController.generateOrRegenerateMinime);
 module.exports = router;
