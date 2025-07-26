@@ -9,6 +9,25 @@ exports.createChat = async (req, res) => {
         return res.status(400).json({ message: 'User IDs required' });
     }
 
+    // ✅ Only allow private chats between friends
+    if (!isGroup && userIds.length === 1) {
+        const targetUserId = userIds[0];
+
+        const isFriend = await prisma.friendship.findFirst({
+            where: {
+                status: 'ACCEPTED',
+                OR: [
+                    { requesterId: currentUserId, receiverId: targetUserId },
+                    { requesterId: targetUserId, receiverId: currentUserId },
+                ],
+            },
+        });
+
+        if (!isFriend) {
+            return res.status(403).json({ message: 'You can only start chats with friends.' });
+        }
+    }
+
     const chat = await prisma.chat.create({
         data: {
             name,
@@ -22,6 +41,7 @@ exports.createChat = async (req, res) => {
 
     res.json(chat);
 };
+
 
 exports.getMyChats = async (req, res) => {
     const currentUserId = req.authData.id;

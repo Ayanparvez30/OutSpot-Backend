@@ -26,6 +26,43 @@ function initSocket(server) {
             }
 
             try {
+                // 🛡️ Block check logic
+                const chat = await prisma.chat.findUnique({
+                    where: { id: chatId },
+                    include: {
+                        users: {
+                            include: { user: true }
+                        }
+                    }
+                });
+
+                if (!chat || !chat.users) {
+                    console.log('❌ Chat not found or invalid participants');
+                    return;
+                }
+
+                const recipient = chat.users.find(u => u.userId !== senderId)?.user;
+
+                if (!recipient) {
+                    console.log('❌ Could not determine recipient');
+                    return;
+                }
+
+                const isBlocked = await prisma.block.findFirst({
+                    where: {
+                        OR: [
+                            { blockerId: senderId, blockedId: recipient.id },
+                            { blockerId: recipient.id, blockedId: senderId }
+                        ]
+                    }
+                });
+
+                if (isBlocked) {
+                    console.log('🚫 Message blocked due to block relationship');
+                    return;
+                }
+
+                // ✅ Proceed to save and emit message
                 const message = await prisma.message.create({
                     data: { content, senderId, chatId },
                     include: { sender: true },

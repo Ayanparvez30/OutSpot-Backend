@@ -34,7 +34,13 @@ model User {
   messages      Message[]
   chats         UserOnChat[]
   minime        Minime?
+  // Relations for friend system:
+  friendRequestsSent     Friendship[] @relation("friendRequestsSent")
+  friendRequestsReceived Friendship[] @relation("friendRequestsReceived")
+  blocks                 Block[]      @relation("blocks")       // users this user blocked
+  blockedBy              Block[]      @relation("blocked")      // users who blocked this user
 }
+
 
 model Minime {
   id         Int      @id @default(autoincrement())
@@ -86,4 +92,38 @@ model UserOnChat {
   chatId Int
 
   @@unique([userId, chatId])
+}
+
+// Relations for friend system:
+
+
+model Friendship {
+  id           Int              @id @default(autoincrement())
+  requesterId  Int
+  receiverId   Int
+  status       FriendshipStatus @default(PENDING)
+  requestedAt  DateTime         @default(now())
+  acceptedAt   DateTime?
+
+  requester    User @relation("friendRequestsSent", fields: [requesterId], references: [id])
+  receiver     User @relation("friendRequestsReceived", fields: [receiverId], references: [id])
+
+  @@unique([requesterId, receiverId])  // ensure no duplicate direction
+}
+
+model Block {
+  id         Int    @id @default(autoincrement())
+  blockerId  Int
+  blockedId  Int
+  blockedAt  DateTime @default(now())
+
+  blocker    User @relation("blocks", fields: [blockerId], references: [id])
+  blocked    User @relation("blocked", fields: [blockedId], references: [id])
+
+  @@unique([blockerId, blockedId])
+}
+
+enum FriendshipStatus {
+  PENDING
+  ACCEPTED
 }

@@ -19,20 +19,22 @@ app.use((req, res, next) => {
 
 const authRoutes = require('./routes/authRoutes');
 const chatRoutes = require('./routes/chatRoutes');
+const friendRoutes = require('./routes/friendRoutes');
 app.use('/api', authRoutes);
 app.use('/api', chatRoutes);
+app.use('/api', friendRoutes);
 
 // Serve a simple HTML page at the root
-app.use('/', (req, res) => {
-  res.send(`
-    <html>
-      <head><title>Server Status</title></head>
-      <body style="font-family:sans-serif; text-align:center; margin-top:50px;">
-        <h1>✅ Server is running ✅</h1>
-      </body>
-    </html>
-  `);
-});
+// app.use('/home', (req, res) => {
+//   res.send(`
+//     <html>
+//       <head><title>Server Status</title></head>
+//       <body style="font-family:sans-serif; text-align:center; margin-top:50px;">
+//         <h1>✅ Server is running ✅</h1>
+//       </body>
+//     </html>
+//   `);
+// });
 
 
 
