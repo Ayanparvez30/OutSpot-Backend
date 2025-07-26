@@ -140,7 +140,7 @@ exports.getUserProfile = async (req, res) => {
     where: {
       userId: profileUserId,
       visibility: 'profile',
-      // isInVault: false
+      isInVault: false
     },
     orderBy: { createdAt: 'desc' }
   });
