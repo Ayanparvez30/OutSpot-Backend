@@ -25,16 +25,20 @@ exports.uploadMedia = async (req, res) => {
   });
 
   // ✅ Always save to story with visibility = profile (so friends can see)
-  if ((postToStory + '').trim().toLowerCase() === 'true') {
-    await prisma.story.create({
-      data: {
-        userId,
-        mediaUrl: fileUrl,
-        type,
-        visibility: 'profile', // ✅ changed from 'private' to 'profile'
-        isInVault: false
-      }
-    });
+const { latitude, longitude } = req.body;
+
+if ((postToStory + '').trim().toLowerCase() === 'true') {
+  await prisma.story.create({
+    data: {
+      userId,
+      mediaUrl: fileUrl,
+      type,
+      visibility: 'profile',
+      isInVault: false,
+      latitude: parseFloat(latitude) || null,
+      longitude: parseFloat(longitude) || null
+    }
+  });
     console.log('✅ Story saved successfully');
   } else {
     console.log('⚠️ Skipped story save');
@@ -153,3 +157,100 @@ exports.removeStory = async (req, res) => {
   await prisma.story.delete({ where: { id: story.id } });
   res.json({ message: 'Story removed successfully.' });
 };
+
+
+exports.updateLocation = async (req, res) => {
+  try {
+    const { latitude, longitude } = req.body;
+    const userId = req.authData.id;
+
+    // Update current location
+    await prisma.location.upsert({
+      where: { userId },
+      update: { latitude, longitude },
+      create: { userId, latitude, longitude },
+    });
+
+    // Save movement history
+    await prisma.locationHistory.create({
+      data: { userId, latitude, longitude }
+    });
+
+    res.json({ message: "Location updated & history saved" });
+  } catch (error) {
+    console.error("Error updating location:", error);
+    res.status(500).json({ error: "Failed to update location" });
+  }
+};
+
+exports.getFriendLocations = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    const friendships = await prisma.friendship.findMany({
+      where: {
+        status: 'ACCEPTED',
+        OR: [
+          { requesterId: userId },
+          { receiverId: userId }
+        ]
+      }
+    });
+
+    const friendIds = friendships.map(f =>
+      f.requesterId === userId ? f.receiverId : f.requesterId
+    );
+
+    const locations = await prisma.location.findMany({
+      where: { userId: { in: friendIds } },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            minime: { select: { avatarUrl: true } }
+          }
+        }
+      }
+    });
+
+    res.json(locations);
+  } catch (error) {
+    console.error("Error fetching friend locations:", error);
+    res.status(500).json({ error: "Failed to fetch friend locations" });
+  }
+};
+
+exports.getVisitedTrail = async (req, res) => {
+  try {
+    const targetUserId = parseInt(req.params.userId);
+    const currentUserId = req.authData.id;
+
+    if (targetUserId !== currentUserId) {
+      const friendship = await prisma.friendship.findFirst({
+        where: {
+          status: 'ACCEPTED',
+          OR: [
+            { requesterId: currentUserId, receiverId: targetUserId },
+            { requesterId: targetUserId, receiverId: currentUserId }
+          ]
+        }
+      });
+
+      if (!friendship) {
+        return res.status(403).json({ error: 'Not authorized to view trail' });
+      }
+    }
+
+    const history = await prisma.locationHistory.findMany({
+      where: { userId: targetUserId },
+      orderBy: { createdAt: 'asc' }
+    });
+
+    res.json({ trail: history });
+  } catch (error) {
+    console.error("Error fetching trail:", error);
+    res.status(500).json({ error: "Failed to fetch visited trail" });
+  }
+};
+

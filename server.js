@@ -23,6 +23,7 @@ app.use((req, res, next) => {
 const authRoutes = require('./routes/authRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const friendRoutes = require('./routes/friendRoutes');
+
 app.use('/api', authRoutes);
 app.use('/api', chatRoutes);
 app.use('/api', friendRoutes);
