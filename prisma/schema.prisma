@@ -43,6 +43,10 @@ model User {
   friendRequestsReceived Friendship[] @relation("friendRequestsReceived")
   blocks                 Block[]      @relation("blocks")
   blockedBy              Block[]      @relation("blocked")
+
+  Location Location[]
+
+  LocationHistory LocationHistory[]
 }
 
 
@@ -87,6 +91,8 @@ model Story {
   visibility StoryVisibility  // ✅ enum instead of raw String
   isInVault  Boolean          @default(false)
   createdAt  DateTime         @default(now())
+  latitude  Float?   
+  longitude Float?   
 
   user       User             @relation(fields: [userId], references: [id])
 }
@@ -94,6 +100,25 @@ enum StoryVisibility {
   private
   profile
 }
+
+model Location {
+  id        Int      @id @default(autoincrement())
+  userId    Int      @unique
+  user      User     @relation(fields: [userId], references: [id])
+  latitude  Float
+  longitude Float
+  updatedAt DateTime @updatedAt
+}
+
+model LocationHistory {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  latitude  Float
+  longitude Float
+  createdAt DateTime @default(now())
+}
+
 
 model Chat {
   id        Int          @id @default(autoincrement())
