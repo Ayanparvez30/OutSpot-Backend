@@ -6,6 +6,8 @@ const authController = require('../controllers/authController');
 const authMiddleware = require('../middlewares/authMiddleware');
 const userController = require('../controllers/userController');
 const { checkAuth } = authMiddleware;
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' });
 router.post('/signup', authController.signup);
 
 router.post('/verify-otp', authController.verifyOtp);
@@ -21,9 +23,20 @@ router.post('/logout', checkAuth, authController.logout);
 router.post('/update-username', checkAuth, authController.updateUsername);
 router.post('/contact-us', authController.contactUs);
 router.post('/save-profile', checkAuth, userController.saveProfile);
-router.post('/upload-avatar', checkAuth, userController.uploadAvatar);
+router.post('/upload-avatar', checkAuth, userController.uploadAvatarWithMulter);
 router.post('/save-minime-options', checkAuth, userController.saveMinimeOptions);
 router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
+router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
+router.get('/minime/current', checkAuth, userController.getCurrentMinime);
 
-router.post('/generateOrRegenerateMinime', checkAuth, userController.generateOrRegenerateMinime);
+
+router.post(
+  '/minime/upload-avatar',
+  checkAuth,
+upload.any() // accept any key
+,
+  userController.uploadAvatarWithMulter
+);
+
+router.post('/RegenerateMinime', checkAuth, userController.RegenerateMinime);
 module.exports = router;

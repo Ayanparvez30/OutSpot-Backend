@@ -8,7 +8,18 @@ const { OpenAI } = require("openai");
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-
+const multer = require('multer');
+const path = require('path');
+const upload = multer({
+  dest: 'uploads/',
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname);
+    if (!['.jpg', '.jpeg', '.png'].includes(ext)) {
+      return cb(new Error('Only images are allowed'), false);
+    }
+    cb(null, true);
+  }
+});
 const response = require('../functions/response');
 require('dotenv').config();
 const nodemailer = require('nodemailer');
@@ -47,24 +58,38 @@ exports.saveProfile = async (req, res) => {
   }
 };
 
-exports.uploadAvatar = async (req, res) => {
+
+exports.uploadAvatarWithMulter = async (req, res) => {
   try {
     const userId = req.authData.id;
-    const { avatarUrl, selfieUrl } = req.body;
 
-    let updateData = {};
-    if (avatarUrl) updateData.avatarUrl = avatarUrl;
-    if (selfieUrl) updateData.selfieUrl = selfieUrl;
+    const file = req.files?.[0]; // ✅ handle any field
+    if (!file) {
+      return response.response_with_code(res, 400, 'No image uploaded');
+    }
 
-    const minime = await prisma.minime.upsert({
-      where: { userId },
-      update: updateData,
-      create: { userId, ...updateData },
-    });
+    const fileUrl = `/uploads/${file.filename}`;
+    const fieldName = file.fieldname.toLowerCase();
 
-    return response.true_status(res, minime, 'Avatar uploaded');
-  } catch (error) {
-    console.error('Upload error:', error);
+    let avatarData = { userId };
+
+    if (fieldName === 'selfie') {
+      avatarData.selfieUrl = fileUrl;
+    } else if (fieldName === 'avatar' || fieldName === 'premade') {
+      avatarData.avatarUrl = fileUrl;
+    } else {
+      // default fallback if fieldname is unknown
+      avatarData.avatarUrl = fileUrl;
+    }
+
+    // Clear previous MiniMe (single record per user)
+    await prisma.minime.deleteMany({ where: { userId } });
+
+    const minime = await prisma.minime.create({ data: avatarData });
+
+    return response.true_status(res, minime, 'MiniMe uploaded (field-detected)');
+  } catch (err) {
+    console.error('Upload error:', err);
     return response.response_with_code(res, 500, 'Upload failed');
   }
 };
@@ -80,23 +105,64 @@ exports.saveMinimeOptions = async (req, res) => {
     if (!user) return response.response_with_code(res, 404, 'User not found');
 
     const isFeminine = user.bodyType === 'feminine';
+    const bodyShapeUrl = user.bodyShapeUrl;
 
-    const data = {
-      shirt, pant, shoes, glasses,
-      ...(isFeminine && { lipstick, jewelry, bag })
-    };
-
-    const minime = await prisma.minime.update({
+    // Ensure selfie or avatar exists before proceeding
+    const latestMini = await prisma.minime.findFirst({
       where: { userId },
-      data
+      orderBy: { createdAt: 'desc' }
     });
 
-    return response.true_status(res, minime, 'MiniMe options saved');
+    const faceReference = latestMini?.selfieUrl || latestMini?.avatarUrl;
+
+    if (!bodyShapeUrl || !faceReference) {
+      return response.response_with_code(res, 400, 'Missing body shape or face reference for regeneration');
+    }
+
+    const prompt = [
+      "Create a single cartoon-style full-body avatar of a human character.",
+      `Base body shape image: ${bodyShapeUrl}`,
+      `Face reference: ${faceReference}`,
+      "Clothing:",
+      `- Shirt: ${shirt || 'none'}`,
+      `- Pant: ${pant || 'none'}`,
+      `- Shoes: ${shoes || 'none'}`,
+      `- Glasses: ${glasses || 'none'}`,
+      ...(isFeminine ? [
+        `- Lipstick: ${lipstick || 'none'}`,
+        `- Jewelry: ${jewelry || 'none'}`,
+        `- Bag: ${bag || 'none'}`
+      ] : []),
+      "Use a plain white background. Only show one character, centered in the image.",
+      "Style: Pixar-like, 3D rendered, soft facial features, clear eyes, expressive face, front-facing. High quality lighting."
+    ].join('\n');
+
+    const imageResponse = await openai.images.generate({
+      prompt,
+      n: 1,
+      size: "512x512",
+    });
+
+    const generatedUrl = imageResponse.data[0].url;
+
+    // Create a new MiniMe entry instead of updating existing
+    const newMini = await prisma.minime.create({
+      data: {
+        userId,
+        avatarUrl: generatedUrl,
+        selfieUrl: latestMini?.selfieUrl || null,
+        shirt, pant, shoes, glasses,
+        ...(isFeminine && { lipstick, jewelry, bag })
+      }
+    });
+
+    return response.true_status(res, newMini, 'MiniMe saved and regenerated');
   } catch (error) {
     console.error('Save Minime error:', error);
-    return response.response_with_code(res, 500, 'Failed to save Minime');
+    return response.response_with_code(res, 500, 'Failed to save and regenerate MiniMe');
   }
 };
+
 
 exports.getUserProfile = async (req, res) => {
   const viewerId = req.authData.id;
@@ -153,80 +219,107 @@ exports.getUserProfile = async (req, res) => {
   });
 };
 
-exports.generateOrRegenerateMinime = async (req, res) => {
+exports.RegenerateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
 
-    // Step 1: Fetch user and MiniMe data
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user) return response.response_with_code(res, 404, 'User not found');
 
-    const minime = await prisma.minime.findUnique({ where: { userId } });
+    const minime = await prisma.minime.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' }
+    });
     if (!minime) return response.response_with_code(res, 400, 'MiniMe options not set yet');
 
     const isFeminine = user.bodyType === 'feminine';
     const bodyShapeUrl = user.bodyShapeUrl;
+    const faceReference = minime.selfieUrl || minime.avatarUrl;
 
-    if (!bodyShapeUrl) {
-      return response.response_with_code(res, 400, "No reference image for this user's body shape");
+    if (!bodyShapeUrl || !faceReference) {
+      return response.response_with_code(res, 400, 'Missing body shape or face reference. Please upload a selfie or avatar.');
     }
 
-    // Step 2: Construct the prompt
-    const promptParts = [
-      "Create a cartoon-style full-body avatar.",
-      `Base body shape image: ${bodyShapeUrl}`,
-      `Face reference: ${minime.selfieUrl || minime.avatarUrl}`,
-      "Outfit:",
-      `- Shirt: ${minime.shirt || 'none'}`,
-      `- Pant: ${minime.pant || 'none'}`,
-      `- Shoes: ${minime.shoes || 'none'}`,
-      `- Glasses: ${minime.glasses || 'none'}`,
-    ];
+const prompt = [
+  "Create a single cartoon-style full-body avatar of a human character.",
+  `Base body shape image: ${bodyShapeUrl}`,
+  `Face reference: ${faceReference}`,
+  "Clothing:",
+  `- Shirt: ${minime.shirt || 'none'}`,
+  `- Pant: ${minime.pant || 'none'}`,
+  `- Shoes: ${minime.shoes || 'none'}`,
+  `- Glasses: ${minime.glasses || 'none'}`,
+  ...(isFeminine ? [
+    `- Lipstick: ${minime.lipstick || 'none'}`,
+    `- Jewelry: ${minime.jewelry || 'none'}`,
+    `- Bag: ${minime.bag || 'none'}`
+  ] : []),
+  "Use a plain white background. Only show one character, centered in the image.",
+  "Style: Pixar-like, 3D rendered, soft facial features, clear eyes, expressive face, front-facing. High quality lighting."
+].join('\n');
 
-    if (isFeminine) {
-      promptParts.push(
-        `- Lipstick: ${minime.lipstick || 'none'}`,
-        `- Jewelry: ${minime.jewelry || 'none'}`,
-        `- Bag: ${minime.bag || 'none'}`
-      );
-    }
 
-    promptParts.push("Pose or gesture should be slightly different each time for uniqueness.");
-
-    const finalPrompt = promptParts.join('\n');
-
-    // Step 3: Generate image from OpenAI
     const imageResponse = await openai.images.generate({
-      prompt: finalPrompt,
+      prompt,
       n: 1,
       size: "512x512",
     });
 
     const generatedUrl = imageResponse.data[0].url;
 
-    // Step 4: Save to database
-    await prisma.minime.upsert({
-      where: { userId },
-      update: { avatarUrl: generatedUrl },
-      create: {
+    if (minime) {
+      await prisma.minime.delete({ where: { id: minime.id } });
+    }
+
+    const newMini = await prisma.minime.create({
+      data: {
         userId,
         avatarUrl: generatedUrl,
+        selfieUrl: minime.selfieUrl,
         shirt: minime.shirt,
         pant: minime.pant,
         shoes: minime.shoes,
         glasses: minime.glasses,
-        selfieUrl: minime.selfieUrl,
         ...(isFeminine && {
           lipstick: minime.lipstick,
           jewelry: minime.jewelry,
-          bag: minime.bag,
-        }),
-      },
+          bag: minime.bag
+        })
+      }
     });
 
-    return response.true_status(res, { avatarUrl: generatedUrl }, 'MiniMe generated successfully');
+    return response.true_status(res, { avatarUrl: generatedUrl }, 'MiniMe regenerated and saved');
   } catch (error) {
-    console.error('Generate/Regenerate MiniMe error:', error);
-    return response.response_with_code(res, 500, 'Failed to generate MiniMe');
+    console.error('MiniMe generation error:', error);
+    return response.response_with_code(res, 500, 'Failed to regenerate MiniMe');
+  }
+};
+
+exports.getMiniMeLocker = async (req, res) => {
+  const userId = req.authData.id;
+  const locker = await prisma.minime.findMany({
+    where: { userId },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  res.json({ locker });
+};
+exports.getCurrentMinime = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    const minime = await prisma.minime.findFirst({
+      where: { userId },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    if (!minime) {
+      return response.response_with_code(res, 404, 'No MiniMe found');
+    }
+
+    return response.true_status(res, minime, 'Current MiniMe fetched');
+  } catch (error) {
+    console.error('Get current MiniMe error:', error);
+    return response.response_with_code(res, 500, 'Failed to get current MiniMe');
   }
 };

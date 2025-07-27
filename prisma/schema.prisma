@@ -12,32 +12,33 @@ datasource db {
   provider = "mysql"
   url      = env("DATABASE_URL")
 }
+
 model User {
-  id            Int          @id @default(autoincrement())
-  username      String       @unique
-  email         String?      @unique
-  phone         String?      @unique
+  id            Int       @id @default(autoincrement())
+  username      String    @unique
+  email         String?   @unique
+  phone         String?   @unique
   password      String
-  isVerified    Boolean      @default(false)
+  isVerified    Boolean   @default(false)
   otp           String?
   otpExpiresAt  DateTime?
   authorization String?
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
 
   // Profile Onboarding
-  firstName     String?
-  lastName      String?
-  bio           String?
-  bodyType      String?
-  bodyShapeUrl  String?
+  firstName    String?
+  lastName     String?
+  bio          String?
+  bodyType     String?
+  bodyShapeUrl String?
 
-  messages      Message[]
-  chats         UserOnChat[]
-  minime        Minime?
+  messages Message[]
+  chats    UserOnChat[]
+  minime   Minime[] // ✅ now a list
 
-  media         Media[]      @relation("UserMedia")     // ✅ Fixed name match
-  stories       Story[]
+  media   Media[] @relation("UserMedia") // ✅ Fixed name match
+  stories Story[]
 
   friendRequestsSent     Friendship[] @relation("friendRequestsSent")
   friendRequestsReceived Friendship[] @relation("friendRequestsReceived")
@@ -45,51 +46,53 @@ model User {
   blockedBy              Block[]      @relation("blocked")
 }
 
-
 model Minime {
-  id         Int      @id @default(autoincrement())
-  userId     Int      @unique
- avatarUrl String?  @db.Text // URL of selected or generated image
-  selfieUrl  String?  // If user uploads/takes a photo
-  shirt      String?
-  pant       String?
-  shoes      String?
-  glasses    String?
+  id Int @id @default(autoincrement())
+
+  avatarUrl String? @db.Text // URL of selected or generated image
+  selfieUrl String? // If user uploads/takes a photo
+  shirt     String?
+  pant      String?
+  shoes     String?
+  glasses   String?
 
   // Female-only
-  lipstick   String?
-  jewelry    String?
-  bag        String?
+  lipstick String?
+  jewelry  String?
+  bag      String?
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
-  user       User     @relation(fields: [userId], references: [id])
-  
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 }
- model Media {
-  id           Int      @id @default(autoincrement())
-  senderId     Int
-  receiverId   Int?
-  groupId      Int?
-  challengeId  Int?
-  fileUrl      String
-  type         String
-  createdAt    DateTime @default(now())
 
-  sender       User     @relation("UserMedia", fields: [senderId], references: [id]) // ✅ MATCHED name
+model Media {
+  id          Int      @id @default(autoincrement())
+  senderId    Int
+  receiverId  Int?
+  groupId     Int?
+  challengeId Int?
+  fileUrl     String
+  type        String
+  createdAt   DateTime @default(now())
+
+  sender User @relation("UserMedia", fields: [senderId], references: [id]) // ✅ MATCHED name
 }
+
 model Story {
-  id         Int              @id @default(autoincrement())
+  id         Int             @id @default(autoincrement())
   userId     Int
   mediaUrl   String
   type       String
-  visibility StoryVisibility  // ✅ enum instead of raw String
-  isInVault  Boolean          @default(false)
-  createdAt  DateTime         @default(now())
+  visibility StoryVisibility // ✅ enum instead of raw String
+  isInVault  Boolean         @default(false)
+  createdAt  DateTime        @default(now())
 
-  user       User             @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 }
+
 enum StoryVisibility {
   private
   profile
@@ -126,29 +129,28 @@ model UserOnChat {
 
 // Relations for friend system:
 
-
 model Friendship {
-  id           Int              @id @default(autoincrement())
-  requesterId  Int
-  receiverId   Int
-  status       FriendshipStatus @default(PENDING)
-  requestedAt  DateTime         @default(now())
-  acceptedAt   DateTime?
+  id          Int              @id @default(autoincrement())
+  requesterId Int
+  receiverId  Int
+  status      FriendshipStatus @default(PENDING)
+  requestedAt DateTime         @default(now())
+  acceptedAt  DateTime?
 
-  requester    User @relation("friendRequestsSent", fields: [requesterId], references: [id])
-  receiver     User @relation("friendRequestsReceived", fields: [receiverId], references: [id])
+  requester User @relation("friendRequestsSent", fields: [requesterId], references: [id])
+  receiver  User @relation("friendRequestsReceived", fields: [receiverId], references: [id])
 
-  @@unique([requesterId, receiverId])  // ensure no duplicate direction
+  @@unique([requesterId, receiverId]) // ensure no duplicate direction
 }
 
 model Block {
-  id         Int    @id @default(autoincrement())
-  blockerId  Int
-  blockedId  Int
-  blockedAt  DateTime @default(now())
+  id        Int      @id @default(autoincrement())
+  blockerId Int
+  blockedId Int
+  blockedAt DateTime @default(now())
 
-  blocker    User @relation("blocks", fields: [blockerId], references: [id])
-  blocked    User @relation("blocked", fields: [blockedId], references: [id])
+  blocker User @relation("blocks", fields: [blockerId], references: [id])
+  blocked User @relation("blocked", fields: [blockedId], references: [id])
 
   @@unique([blockerId, blockedId])
 }
