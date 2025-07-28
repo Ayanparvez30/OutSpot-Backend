@@ -254,3 +254,36 @@ exports.getVisitedTrail = async (req, res) => {
   }
 };
 
+exports.getStoriesWithLocation = async (req, res) => {
+  const userId = req.authData.id;
+
+  const stories = await prisma.story.findMany({
+    where: {
+      latitude: { not: null },
+      longitude: { not: null },
+      isInVault: false,
+      OR: [
+        { userId },
+        {
+          visibility: 'profile',
+          user: {
+            OR: [
+              { friendRequestsSent: { some: { receiverId: userId, status: 'ACCEPTED' } } },
+              { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } }
+            ]
+          }
+        }
+      ]
+    },
+    include: {
+      user: {
+        select: { id: true, username: true, minime: { select: { avatarUrl: true } } }
+      }
+    },
+    orderBy: { createdAt: 'desc' }
+  });
+
+  return res.json({ stories });
+};
+
+

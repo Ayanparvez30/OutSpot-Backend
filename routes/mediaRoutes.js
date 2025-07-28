@@ -26,6 +26,8 @@ router.post('/location', checkAuth, mediaController.updateLocation);
 // Get locations of friends
 router.get('/friends/locations', checkAuth, mediaController.getFriendLocations);
 router.get('/trail/:userId', checkAuth, mediaController.getVisitedTrail);
+router.get('/stories/with-location', checkAuth, mediaController.getStoriesWithLocation);
+
 
 
 module.exports = router;
