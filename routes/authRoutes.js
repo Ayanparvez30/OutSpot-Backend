@@ -18,6 +18,8 @@ router.post('/login', authController.login);
 router.post('/forgot-password', authController.forgotPasswordRequest);
 router.post('/verify-forgot-password-otp', authController.verifyForgotPasswordOtp);
 router.post('/reset-password', authController.resetPassword);
+router.post('/forgot-password/reset', authController.verifyOtpAndResetPassword);
+
 router.post('/update-password', checkAuth, authController.updatePassword);
 router.post('/logout', checkAuth, authController.logout);
 router.post('/update-username', checkAuth, authController.updateUsername);

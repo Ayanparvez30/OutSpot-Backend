@@ -10,7 +10,7 @@ const comparePassword = (plain, hashed) => {
   return bcrypt.compareSync(plain, hashed);
 };
 
-const randomKey = (length = 40) => {
+const randomKey = (length = 16) => {
   return require('crypto').randomBytes(length).toString('hex');
 };
 
