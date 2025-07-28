@@ -115,14 +115,14 @@ exports.saveMinimeOptions = async (req, res) => {
     const faceReference = latestMini?.selfieUrl || latestMini?.avatarUrl;
 
     if (!bodyShapeUrl || !faceReference) {
-      return response.response_with_code(res, 400, 'Missing body shape or face reference');
+      return response.response_with_code(res, 400, 'Missing body shape or face reference for generation');
     }
 
     const prompt = [
-      "Generate a high-quality Pixar-style 3D avatar with detailed clothing and soft lighting.",
-      `Base Body: ${bodyShapeUrl}`,
-      `Face Image: ${faceReference}`,
-      "Outfit includes:",
+      "Create a full-body 3D cartoon avatar in Pixar-style with realistic soft textures.",
+      `Use the provided body shape image: ${bodyShapeUrl}`,
+      `Use the face reference image: ${faceReference}`,
+      "Clothing:",
       `- Shirt: ${shirt || 'none'}`,
       `- Pant: ${pant || 'none'}`,
       `- Shoes: ${shoes || 'none'}`,
@@ -132,14 +132,18 @@ exports.saveMinimeOptions = async (req, res) => {
         `- Jewelry: ${jewelry || 'none'}`,
         `- Bag: ${bag || 'none'}`
       ] : []),
-      "Visual specs:",
-      "Full body visible, plain white background, crisp rendering, front-facing, clear eyes, expressive and vibrant facial details."
+      "Pose reference: standing straight, front-facing, arms relaxed at sides.",
+      "The avatar must be fully visible from head to toe, including feet and shoes — no cropping allowed.",
+      "Add 10% padding below the feet to prevent cutoff.",
+      "Use a clean white background, centered framing like a studio shot.",
+      "Facial expression: natural or slight smile.",
+      "Render style: Pixar-level 3D, soft lighting, high clarity, expressive eyes."
     ].join('\n');
 
     const imageResponse = await openai.images.generate({
       prompt,
       n: 1,
-      size: "512x512",
+      size: "1024x1024", // 👈 More space to avoid cutting feet
     });
 
     const generatedUrl = imageResponse.data[0].url;
@@ -154,12 +158,13 @@ exports.saveMinimeOptions = async (req, res) => {
       }
     });
 
-    return response.true_status(res, newMini, 'MiniMe created with updated style and clothes');
+    return response.true_status(res, newMini, 'MiniMe created with full-body, foot-safe framing');
   } catch (error) {
     console.error('saveMinimeOptions error:', error);
     return response.response_with_code(res, 500, 'MiniMe generation failed');
   }
 };
+
 
 
 exports.getUserProfile = async (req, res) => {
@@ -229,47 +234,44 @@ exports.RegenerateMinime = async (req, res) => {
     if (!user || !lastMini) return response.response_with_code(res, 404, 'MiniMe data missing');
 
     const isFeminine = user.bodyType === 'feminine';
-    const faceReference = lastMini.selfieUrl || lastMini.avatarUrl;
+    const faceReference = lastMini.selfieUrl;
 
     if (!user.bodyShapeUrl || !faceReference) {
-      return response.response_with_code(res, 400, 'Missing body or face data');
+      return response.response_with_code(
+        res,
+        400,
+        'Missing body shape or selfie reference. Please upload a selfie again to regenerate.'
+      );
     }
 
-    // 👇 Random facial expression (used in prompt only)
     const expressions = [
-      'gentle smile',
-      'neutral face',
-      'subtle smirk',
-      'slightly raised eyebrows',
-      'happy expression',
-      'soft eyes with slight blush'
+      'natural face',
+      'slight smile',
+      'happy look',
+      'gentle expression',
+      'soft confident look'
     ];
     const randomExpression = expressions[Math.floor(Math.random() * expressions.length)];
 
     const prompt = [
-      "Generate a single 3D cartoon avatar with Pixar-like detail.",
-      `Body shape image: ${user.bodyShapeUrl}`,
-      `Face reference: ${faceReference}`,
-      "Clothing:",
-      `- Shirt: ${lastMini.shirt || 'none'}`,
-      `- Pant: ${lastMini.pant || 'none'}`,
-      `- Shoes: ${lastMini.shoes || 'none'}`,
-      `- Glasses: ${lastMini.glasses || 'none'}`,
-      ...(isFeminine ? [
-        `- Lipstick: ${lastMini.lipstick || 'none'}`,
-        `- Jewelry: ${lastMini.jewelry || 'none'}`,
-        `- Bag: ${lastMini.bag || 'none'}`
-      ] : []),
-      "Visual specs:",
-      "Full body, centered, white background.",
-      `Facial expression: ${randomExpression}.`,
-      "High-resolution, front-facing, expressive eyes, smooth lighting."
-    ].join('\n');
+  "Full-body 3D cartoon avatar in Pixar style with soft textures and realistic proportions.",
+  `Body: ${user.bodyShapeUrl}`,
+  `Face: ${faceReference}`,
+  `Clothes: shirt=${lastMini.shirt || 'none'}, pant=${lastMini.pant || 'none'}, shoes=${lastMini.shoes || 'none'}, glasses=${lastMini.glasses || 'none'}`,
+  ...(isFeminine ? [
+    `Extras: lipstick=${lastMini.lipstick || 'none'}, jewelry=${lastMini.jewelry || 'none'}, bag=${lastMini.bag || 'none'}`
+  ] : []),
+  "Pose: standing front-facing, hands at sides, feet visible.",
+  "Background: plain white, full-body shown head to toe, centered frame.",
+  `Expression: ${randomExpression}`,
+  "Style: Disney-Pixar 3D, clear lighting, soft shading, no cropping, natural joints."
+].join('\n');
+
 
     const imageResponse = await openai.images.generate({
       prompt,
       n: 1,
-      size: "512x512",
+      size: "1024x1024"
     });
 
     const regeneratedUrl = imageResponse.data[0].url;
@@ -299,6 +301,7 @@ exports.RegenerateMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'MiniMe regeneration failed');
   }
 };
+
 
 
 

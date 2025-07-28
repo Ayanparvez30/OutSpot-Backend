@@ -11,6 +11,7 @@ initSocket(server);
 const mediaRoutes = require('./routes/mediaRoutes');
 app.use('/api', mediaRoutes);
 app.use('/uploads', express.static('uploads')); 
+app.use('/pose', express.static('public/pose'));
 
 
 app.use((req, res, next) => {
