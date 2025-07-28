@@ -134,11 +134,13 @@ model Chat {
 
 model Message {
   id        Int      @id @default(autoincrement())
-  content   String
+  content   String?
   sender    User     @relation(fields: [senderId], references: [id])
   senderId  Int
   chat      Chat     @relation(fields: [chatId], references: [id])
   chatId    Int
+  imageUrl  String?     // ✅ NEW: image support
+  
   createdAt DateTime @default(now())
 }
 

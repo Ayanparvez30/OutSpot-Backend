@@ -17,68 +17,59 @@ function initSocket(server) {
             console.log(`🔵 User joined chat_${chatId}`);
         });
 
-        socket.on('sendMessage', async (data) => {
-            const { chatId, content, senderId } = data;
+socket.on('sendMessage', async (data) => {
+  const { chatId, content, senderId, imageUrl } = data;
 
-            if (!chatId || !content || !senderId) {
-                console.log('❌ Missing fields in sendMessage:', data);
-                return;
-            }
+  if (!chatId || (!content && !imageUrl) || !senderId) {
+    console.log('❌ Missing fields in sendMessage');
+    return;
+  }
 
-            try {
-                // 🛡️ Block check logic
-                const chat = await prisma.chat.findUnique({
-                    where: { id: chatId },
-                    include: {
-                        users: {
-                            include: { user: true }
-                        }
-                    }
-                });
+  try {
+    const chat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      include: {
+        users: { include: { user: true } }
+      }
+    });
 
-                if (!chat || !chat.users) {
-                    console.log('❌ Chat not found or invalid participants');
-                    return;
-                }
+    const recipient = chat.users.find(u => u.userId !== senderId)?.user;
 
-                const recipient = chat.users.find(u => u.userId !== senderId)?.user;
+    const isBlocked = await prisma.block.findFirst({
+      where: {
+        OR: [
+          { blockerId: senderId, blockedId: recipient.id },
+          { blockerId: recipient.id, blockedId: senderId }
+        ]
+      }
+    });
 
-                if (!recipient) {
-                    console.log('❌ Could not determine recipient');
-                    return;
-                }
+    if (isBlocked) {
+      console.log('🚫 Message blocked');
+      return;
+    }
 
-                const isBlocked = await prisma.block.findFirst({
-                    where: {
-                        OR: [
-                            { blockerId: senderId, blockedId: recipient.id },
-                            { blockerId: recipient.id, blockedId: senderId }
-                        ]
-                    }
-                });
+    const message = await prisma.message.create({
+      data: { chatId, senderId, content, imageUrl },
+      include: { sender: true }
+    });
 
-                if (isBlocked) {
-                    console.log('🚫 Message blocked due to block relationship');
-                    return;
-                }
+    io.to(`chat_${chatId}`).emit('newMessage', {
+      id: message.id,
+      content: message.content,
+      imageUrl: message.imageUrl,
+      sender: {
+        id: message.sender.id,
+        username: message.sender.username
+      },
+      chatId: message.chatId,
+      createdAt: message.createdAt,
+    });
+  } catch (error) {
+    console.error('❌ Error sending message:', error);
+  }
+});
 
-                // ✅ Proceed to save and emit message
-                const message = await prisma.message.create({
-                    data: { content, senderId, chatId },
-                    include: { sender: true },
-                });
-
-                io.to(`chat_${chatId}`).emit('newMessage', {
-                    id: message.id,
-                    content: message.content,
-                    sender: { id: message.sender.id, username: message.sender.username },
-                    chatId: message.chatId,
-                    createdAt: message.createdAt,
-                });
-            } catch (error) {
-                console.error('❌ Error saving message:', error);
-            }
-        });
 
         socket.on('typing', ({ chatId, username }) => {
             socket.to(`chat_${chatId}`).emit('typing', { username });
