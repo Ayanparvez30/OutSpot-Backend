@@ -58,12 +58,32 @@ exports.saveProfile = async (req, res) => {
   }
 };
 
-
 exports.uploadAvatarWithMulter = async (req, res) => {
   try {
     const userId = req.authData.id;
 
-    const file = req.files?.[0]; // ✅ handle any field
+    // 🟢 Handle premade URL only (no file)
+    if (req.body.premadeUrl) {
+      const premadeUrl = req.body.premadeUrl;
+      if (!premadeUrl.startsWith('http')) {
+        return response.response_with_code(res, 400, 'Invalid premade URL');
+      }
+
+      // Clear previous MiniMe
+      await prisma.minime.deleteMany({ where: { userId } });
+
+      const minime = await prisma.minime.create({
+        data: {
+          userId,
+          avatarUrl: premadeUrl
+        }
+      });
+
+      return response.true_status(res, minime, 'MiniMe uploaded from premade URL');
+    }
+
+    // 🟡 Else: Handle file upload normally
+    const file = req.files?.[0];
     if (!file) {
       return response.response_with_code(res, 400, 'No image uploaded');
     }
@@ -78,11 +98,9 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     } else if (fieldName === 'avatar' || fieldName === 'premade') {
       avatarData.avatarUrl = fileUrl;
     } else {
-      // default fallback if fieldname is unknown
       avatarData.avatarUrl = fileUrl;
     }
 
-    // Clear previous MiniMe (single record per user)
     await prisma.minime.deleteMany({ where: { userId } });
 
     const minime = await prisma.minime.create({ data: avatarData });
@@ -93,6 +111,7 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     return response.response_with_code(res, 500, 'Upload failed');
   }
 };
+
 exports.saveMinimeOptions = async (req, res) => {
   try {
     const userId = req.authData.id;
