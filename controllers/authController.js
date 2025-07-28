@@ -505,6 +505,54 @@ exports.resetPassword = async (req, res) => {
     return response.response_with_code(res, 500, 'Internal server error');
   }
 };
+//Simplified version of verifyOtpAndResetPassword
+exports.verifyOtpAndResetPassword = async (req, res) => {
+  try {
+    const { email, phone, otp, password, repeatPassword } = req.body;
+
+    if (!otp || !password || !repeatPassword || (!email && !phone)) {
+      return response.response_with_code(res, 400, 'OTP, new password, repeat password, and email/phone are required');
+    }
+
+    if (password !== repeatPassword) {
+      return response.response_with_code(res, 400, 'Passwords do not match');
+    }
+
+    const identifier = email ? { email } : { phone };
+
+    const user = await prisma.user.findFirst({
+      where: {
+        ...identifier,
+        otp
+      }
+    });
+
+    if (!user) {
+      return response.response_with_code(res, 400, 'Invalid OTP or identifier');
+    }
+
+    if (new Date() > user.otpExpiresAt) {
+      return response.response_with_code(res, 400, 'OTP has expired');
+    }
+
+    const hashedPassword = hashPassword(password);
+
+    await prisma.user.update({
+      where: { id: user.id },
+      data: {
+        password: hashedPassword,
+        otp: null,
+        otpExpiresAt: null
+      }
+    });
+
+    return response.true_status(res, null, 'Password reset successfully');
+  } catch (error) {
+    console.error('verifyOtpAndResetPassword error:', error);
+    return response.response_with_code(res, 500, 'Internal server error');
+  }
+};
+
 exports.logout = async (req, res) => {
   try {
     const userId = req.authData.id;
