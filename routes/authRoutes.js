@@ -42,6 +42,7 @@ upload.any() // accept any key
 ,
   userController.uploadAvatarWithMulter
 );
+router.delete('/me/delete', checkAuth, userController.deleteAccount);
 
 router.post('/RegenerateMinime', checkAuth, userController.RegenerateMinime);
 module.exports = router;

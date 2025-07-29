@@ -490,3 +490,51 @@ exports.getAchievementStatus = async (req, res) => {
     res.status(500).json({ error: 'Could not get level info' });
   }
 };
+exports.deleteAccount = async (req, res) => {
+  const userId = req.authData.id;
+
+  try {
+    // Optional: delete dependent relations first if cascading is not set
+    await prisma.friendship.deleteMany({
+      where: {
+        OR: [
+          { requesterId: userId },
+          { receiverId: userId }
+        ]
+      }
+    });
+
+    await prisma.block.deleteMany({
+      where: {
+        OR: [
+          { blockerId: userId },
+          { blockedId: userId }
+        ]
+      }
+    });
+
+    await prisma.communityMember.deleteMany({
+      where: { userId }
+    });
+
+    await prisma.userOnChat.deleteMany({
+      where: { userId }
+    });
+
+    await prisma.story.deleteMany({ where: { userId } });
+    await prisma.media.deleteMany({ where: { senderId: userId } });
+    await prisma.minime.deleteMany({ where: { userId } });
+    await prisma.locationPoint.deleteMany({ where: { userId } });
+    await prisma.location.deleteMany({ where: { userId } });
+    await prisma.locationHistory.deleteMany({ where: { userId } });
+    await prisma.submission.deleteMany({ where: { userId } });
+
+    // Finally delete user
+    await prisma.user.delete({ where: { id: userId } });
+
+    return res.json({ message: 'Account deleted successfully' });
+  } catch (error) {
+    console.error('Delete account error:', error);
+    return res.status(500).json({ error: 'Failed to delete account' });
+  }
+};

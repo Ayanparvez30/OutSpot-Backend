@@ -32,6 +32,7 @@ model User {
   bio          String?
   bodyType     String?
   bodyShapeUrl String?
+  communities  CommunityMember[] // ✅ NEW
 
   messages Message[]
   chats    UserOnChat[]
@@ -40,14 +41,14 @@ model User {
   media   Media[] @relation("UserMedia") // ✅ Fixed name match
   stories Story[]
 
-  friendRequestsSent     Friendship[] @relation("friendRequestsSent")
-  friendRequestsReceived Friendship[] @relation("friendRequestsReceived")
-  blocks                 Block[]      @relation("blocks")
-  blockedBy              Block[]      @relation("blocked")
-totalPoints Int           @default(0)
-  Location Location[]
- submissions Submission[]  
- locationPoints LocationPoint[]
+  friendRequestsSent     Friendship[]    @relation("friendRequestsSent")
+  friendRequestsReceived Friendship[]    @relation("friendRequestsReceived")
+  blocks                 Block[]         @relation("blocks")
+  blockedBy              Block[]         @relation("blocked")
+  totalPoints            Int             @default(0)
+  Location               Location[]
+  submissions            Submission[]
+  locationPoints         LocationPoint[]
 
   LocationHistory LocationHistory[]
 }
@@ -80,11 +81,13 @@ model Media {
   receiverId  Int?
   groupId     Int?
   challengeId Int?
+  communityId Int? // ✅ NEW
   fileUrl     String
   type        String
   createdAt   DateTime @default(now())
 
-  sender User @relation("UserMedia", fields: [senderId], references: [id]) // ✅ MATCHED name
+  sender    User       @relation("UserMedia", fields: [senderId], references: [id])
+  community Community? @relation(fields: [communityId], references: [id]) // ✅ NEW
 }
 
 model Story {
@@ -92,11 +95,11 @@ model Story {
   userId     Int
   mediaUrl   String
   type       String
-  visibility StoryVisibility  // ✅ enum instead of raw String
-  isInVault  Boolean          @default(false)
-  createdAt  DateTime         @default(now())
-  latitude  Float?   
-  longitude Float?   
+  visibility StoryVisibility // ✅ enum instead of raw String
+  isInVault  Boolean         @default(false)
+  createdAt  DateTime        @default(now())
+  latitude   Float?
+  longitude  Float?
 
   user User @relation(fields: [userId], references: [id])
 }
@@ -125,37 +128,42 @@ model LocationHistory {
 }
 
 model LocationPoint {
-  id         Int      @id @default(autoincrement())
-  userId     Int
-  user       User     @relation(fields: [userId], references: [id])
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id])
 
-  mediaUrl   String
-  placeName  String?
-  latitude   Float?
-  longitude  Float?
-  points     Int      @default(5)
+  mediaUrl  String
+  placeName String?
+  latitude  Float?
+  longitude Float?
+  points    Int     @default(5)
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 }
 
 model Chat {
-  id        Int          @id @default(autoincrement())
-  name      String?
-  isGroup   Boolean      @default(false)
-  users     UserOnChat[]
+  id          Int          @id @default(autoincrement())
+  name        String?
+  isGroup     Boolean      @default(false)
+  isCommunity Boolean      @default(false) // 🆕
+  communityId Int? // 🆕
+  community   Community?   @relation(fields: [communityId], references: [id]) // 🆕
+  users       UserOnChat[]
+
   messages  Message[]
-  createdAt DateTime     @default(now())
+  updatedAt DateTime  @updatedAt
+  createdAt DateTime  @default(now())
 }
 
 model Message {
-  id        Int      @id @default(autoincrement())
-  content   String?
-  sender    User     @relation(fields: [senderId], references: [id])
-  senderId  Int
-  chat      Chat     @relation(fields: [chatId], references: [id])
-  chatId    Int
-  imageUrl  String?     // ✅ NEW: image support
-  
+  id       Int     @id @default(autoincrement())
+  content  String?
+  sender   User    @relation(fields: [senderId], references: [id])
+  senderId Int
+  chat     Chat    @relation(fields: [chatId], references: [id])
+  chatId   Int
+  imageUrl String? // ✅ NEW: image support
+
   createdAt DateTime @default(now())
 }
 
@@ -201,29 +209,54 @@ enum FriendshipStatus {
   PENDING
   ACCEPTED
 }
+
 model Challenge {
-  id          Int       @id @default(autoincrement())
+  id          Int           @id @default(autoincrement())
   title       String
   description String?
   type        ChallengeType // 'MORNING' or 'WEEKLY'
   startDate   DateTime
   endDate     DateTime
-   points      Int      
-  createdAt   DateTime  @default(now())
+  points      Int
+  createdAt   DateTime      @default(now())
   submissions Submission[]
 }
 
 model Submission {
-  id          Int       @id @default(autoincrement())
+  id          Int      @id @default(autoincrement())
   userId      Int
   challengeId Int
   mediaUrl    String
-  createdAt   DateTime  @default(now())
+  createdAt   DateTime @default(now())
 
-  user        User      @relation(fields: [userId], references: [id])
-  challenge   Challenge @relation(fields: [challengeId], references: [id])
+  user      User      @relation(fields: [userId], references: [id])
+  challenge Challenge @relation(fields: [challengeId], references: [id])
 }
+
 enum ChallengeType {
   DAILY
   WEEKLY
+}
+
+model Community {
+  id          Int               @id @default(autoincrement())
+  name        String
+  description String
+  members     CommunityMember[]
+  media       Media[]
+  chats       Chat[] // 👈 Add this
+
+  createdAt DateTime @default(now())
+}
+
+model CommunityMember {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  communityId Int
+  joinedAt    DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id])
+  community Community @relation(fields: [communityId], references: [id])
+
+  @@unique([userId, communityId])
 }

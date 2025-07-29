@@ -2,12 +2,14 @@
 const express = require('express');
 const app = express();
 app.use(express.json());
-
+const communityRoutes = require('./routes/communityRoutes');
+app.use('/api', communityRoutes);
 const http = require('http');
 const server = http.createServer(app);
 const challengeRoutes = require('./routes/challengeRoutes');
 const { initSocket } = require('./utils/socket');
 initSocket(server);
+
 const mediaRoutes = require('./routes/mediaRoutes');
 app.use('/api', mediaRoutes);
 app.use('/uploads', express.static('uploads')); 

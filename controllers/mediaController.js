@@ -7,7 +7,7 @@ const fs = require('fs');
 exports.uploadMedia = async (req, res) => {
   const userId = req.authData.id;
   const { receiverId, groupId, challengeId, type, postToStory } = req.body;
-
+const { communityId } = req.body;
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   const fileUrl = `/uploads/${req.file.filename}`;
@@ -21,6 +21,7 @@ exports.uploadMedia = async (req, res) => {
       receiverId: receiverId ? parseInt(receiverId) : null,
       groupId: groupId ? parseInt(groupId) : null,
       challengeId: challengeId ? parseInt(challengeId) : null,
+       communityId: communityId ? parseInt(communityId) : null,
     }
   });
 
