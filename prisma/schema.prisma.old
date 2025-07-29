@@ -1,3 +1,9 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
 generator client {
   provider = "prisma-client-js"
 }
@@ -26,21 +32,21 @@ model User {
   bio          String?
   bodyType     String?
   bodyShapeUrl String?
-  communities  CommunityMember[] 
+  communities  CommunityMember[] // ✅ NEW
 
   messages Message[]
   chats    UserOnChat[]
-  minime   Minime[]
+  minime   Minime[] // ✅ now a list
 
-  media   Media[] @relation("UserMedia")
+  media   Media[] @relation("UserMedia") // ✅ Fixed name match
   stories Story[]
 
-  friendRequestsSent     Friendship[] @relation("friendRequestsSent")
-  friendRequestsReceived Friendship[] @relation("friendRequestsReceived")
-  blocks                 Block[] @relation("blocks")
-  blockedBy              Block[] @relation("blocked")
-  totalPoints            Int     @default(0)
-  Location               Location?
+  friendRequestsSent     Friendship[]    @relation("friendRequestsSent")
+  friendRequestsReceived Friendship[]    @relation("friendRequestsReceived")
+  blocks                 Block[]         @relation("blocks")
+  blockedBy              Block[]         @relation("blocked")
+  totalPoints            Int             @default(0)
+  Location               Location[]
   submissions            Submission[]
   locationPoints         LocationPoint[]
 
@@ -50,13 +56,14 @@ model User {
 model Minime {
   id Int @id @default(autoincrement())
 
-  avatarUrl String? @db.Text
-  selfieUrl String?
+  avatarUrl String? @db.Text // URL of selected or generated image
+  selfieUrl String? // If user uploads/takes a photo
   shirt     String?
   pant      String?
   shoes     String?
   glasses   String?
 
+  // Female-only
   lipstick String?
   jewelry  String?
   bag      String?
@@ -65,7 +72,7 @@ model Minime {
   updatedAt DateTime @updatedAt
 
   userId Int
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id],onDelete: Cascade)
 }
 
 model Media {
@@ -74,13 +81,13 @@ model Media {
   receiverId  Int?
   groupId     Int?
   challengeId Int?
-  communityId Int?
+  communityId Int? // ✅ NEW
   fileUrl     String
   type        String
   createdAt   DateTime @default(now())
 
-  sender    User       @relation("UserMedia", fields: [senderId], references: [id], onDelete: Cascade)
-  community Community? @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  sender    User       @relation("UserMedia", fields: [senderId], references: [id],onDelete: Cascade)
+  community Community? @relation(fields: [communityId], references: [id]) // ✅ NEW
 }
 
 model Story {
@@ -88,13 +95,13 @@ model Story {
   userId     Int
   mediaUrl   String
   type       String
-  visibility StoryVisibility
+  visibility StoryVisibility // ✅ enum instead of raw String
   isInVault  Boolean         @default(false)
   createdAt  DateTime        @default(now())
   latitude   Float?
   longitude  Float?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id],onDelete: Cascade)
 }
 
 enum StoryVisibility {
@@ -105,7 +112,7 @@ enum StoryVisibility {
 model Location {
   id        Int      @id @default(autoincrement())
   userId    Int      @unique
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id],onDelete: Cascade)
   latitude  Float
   longitude Float
   updatedAt DateTime @updatedAt
@@ -114,7 +121,7 @@ model Location {
 model LocationHistory {
   id        Int      @id @default(autoincrement())
   userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id],onDelete: Cascade)
   latitude  Float
   longitude Float
   createdAt DateTime @default(now())
@@ -123,7 +130,7 @@ model LocationHistory {
 model LocationPoint {
   id     Int  @id @default(autoincrement())
   userId Int
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id],onDelete: Cascade)
 
   mediaUrl  String
   placeName String?
@@ -138,9 +145,9 @@ model Chat {
   id          Int          @id @default(autoincrement())
   name        String?
   isGroup     Boolean      @default(false)
-  isCommunity Boolean      @default(false)
-  communityId Int?
-  community   Community?   @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  isCommunity Boolean      @default(false) // 🆕
+  communityId Int? // 🆕
+  community   Community?   @relation(fields: [communityId], references: [id]) // 🆕
   users       UserOnChat[]
 
   messages  Message[]
@@ -151,24 +158,26 @@ model Chat {
 model Message {
   id       Int     @id @default(autoincrement())
   content  String?
-  sender   User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  sender   User    @relation(fields: [senderId], references: [id],onDelete: Cascade)
   senderId Int
-  chat     Chat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chat     Chat    @relation(fields: [chatId], references: [id])
   chatId   Int
-  imageUrl String?
+  imageUrl String? // ✅ NEW: image support
 
   createdAt DateTime @default(now())
 }
 
 model UserOnChat {
   id     Int  @id @default(autoincrement())
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user   User @relation(fields: [userId], references: [id],onDelete: Cascade)
   userId Int
-  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chat   Chat @relation(fields: [chatId], references: [id])
   chatId Int
 
   @@unique([userId, chatId])
 }
+
+// Relations for friend system:
 
 model Friendship {
   id          Int              @id @default(autoincrement())
@@ -178,10 +187,10 @@ model Friendship {
   requestedAt DateTime         @default(now())
   acceptedAt  DateTime?
 
-  requester User @relation("friendRequestsSent", fields: [requesterId], references: [id], onDelete: Cascade)
-  receiver  User @relation("friendRequestsReceived", fields: [receiverId], references: [id], onDelete: Cascade)
+  requester User @relation("friendRequestsSent", fields: [requesterId], references: [id],onDelete: Cascade)
+  receiver  User @relation("friendRequestsReceived", fields: [receiverId], references: [id])
 
-  @@unique([requesterId, receiverId])
+  @@unique([requesterId, receiverId]) // ensure no duplicate direction
 }
 
 model Block {
@@ -190,8 +199,8 @@ model Block {
   blockedId Int
   blockedAt DateTime @default(now())
 
-  blocker User @relation("blocks", fields: [blockerId], references: [id], onDelete: Cascade)
-  blocked User @relation("blocked", fields: [blockedId], references: [id], onDelete: Cascade)
+  blocker User @relation("blocks", fields: [blockerId], references: [id],onDelete: Cascade)
+  blocked User @relation("blocked", fields: [blockedId], references: [id],onDelete: Cascade)
 
   @@unique([blockerId, blockedId])
 }
@@ -205,7 +214,7 @@ model Challenge {
   id          Int           @id @default(autoincrement())
   title       String
   description String?
-  type        ChallengeType
+  type        ChallengeType // 'MORNING' or 'WEEKLY'
   startDate   DateTime
   endDate     DateTime
   points      Int
@@ -220,8 +229,8 @@ model Submission {
   mediaUrl    String
   createdAt   DateTime @default(now())
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id],onDelete: Cascade)
+  challenge Challenge @relation(fields: [challengeId], references: [id])
 }
 
 enum ChallengeType {
@@ -235,7 +244,7 @@ model Community {
   description String
   members     CommunityMember[]
   media       Media[]
-  chats       Chat[]
+  chats       Chat[] // 👈 Add this
 
   createdAt DateTime @default(now())
 }
@@ -246,8 +255,8 @@ model CommunityMember {
   communityId Int
   joinedAt    DateTime @default(now())
 
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id],onDelete: Cascade)
+  community Community @relation(fields: [communityId], references: [id])
 
   @@unique([userId, communityId])
 }
