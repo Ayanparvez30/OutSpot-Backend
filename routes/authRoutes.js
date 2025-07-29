@@ -26,10 +26,14 @@ router.post('/update-username', checkAuth, authController.updateUsername);
 router.post('/contact-us', authController.contactUs);
 router.post('/save-profile', checkAuth, userController.saveProfile);
 router.post('/upload-avatar', checkAuth, userController.uploadAvatarWithMulter);
-router.post('/save-minime-options', checkAuth, userController.saveMinimeOptions);
-router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
-router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
+router.post('/minime/generate', checkAuth, userController.generateMinime);
+router.post('/minime/regenerate', checkAuth, userController.regenerateMinime);
+router.post('/minime/save-latest', checkAuth, userController.saveLatestMinime);
 router.get('/minime/current', checkAuth, userController.getCurrentMinime);
+router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
+
+router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
+
 router.get('/users/:userId/points', checkAuth, userController.getUserPoints);
 
 router.post('/submit-points', checkAuth, upload.single('media'), userController.submitForPoints);
@@ -44,5 +48,5 @@ upload.any() // accept any key
 );
 router.delete('/me/delete', checkAuth, userController.deleteAccount);
 
-router.post('/RegenerateMinime', checkAuth, userController.RegenerateMinime);
+
 module.exports = router;
