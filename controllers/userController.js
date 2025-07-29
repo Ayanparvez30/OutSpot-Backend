@@ -494,7 +494,7 @@ exports.deleteAccount = async (req, res) => {
   const userId = req.authData.id;
 
   try {
-    // Optional: delete dependent relations first if cascading is not set
+    // Step 1: Remove related data
     await prisma.friendship.deleteMany({
       where: {
         OR: [
@@ -513,14 +513,8 @@ exports.deleteAccount = async (req, res) => {
       }
     });
 
-    await prisma.communityMember.deleteMany({
-      where: { userId }
-    });
-
-    await prisma.userOnChat.deleteMany({
-      where: { userId }
-    });
-
+    await prisma.communityMember.deleteMany({ where: { userId } });
+    await prisma.userOnChat.deleteMany({ where: { userId } });
     await prisma.story.deleteMany({ where: { userId } });
     await prisma.media.deleteMany({ where: { senderId: userId } });
     await prisma.minime.deleteMany({ where: { userId } });
@@ -529,7 +523,10 @@ exports.deleteAccount = async (req, res) => {
     await prisma.locationHistory.deleteMany({ where: { userId } });
     await prisma.submission.deleteMany({ where: { userId } });
 
-    // Finally delete user
+    // 🧨 ADD THIS: delete messages before user
+    await prisma.message.deleteMany({ where: { senderId: userId } });
+
+    // Step 2: Delete user
     await prisma.user.delete({ where: { id: userId } });
 
     return res.json({ message: 'Account deleted successfully' });
@@ -538,3 +535,4 @@ exports.deleteAccount = async (req, res) => {
     return res.status(500).json({ error: 'Failed to delete account' });
   }
 };
+
