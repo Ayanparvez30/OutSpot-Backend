@@ -352,3 +352,141 @@ exports.getCurrentMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'Failed to get current MiniMe');
   }
 };
+
+exports.getUserPoints = async (req, res) => {
+  const targetUserId = parseInt(req.params.userId);
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, username: true, totalPoints: true }
+    });
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    // Get start of current week (Monday 00:00)
+    const now = new Date();
+    const day = now.getDay(); // Sunday = 0
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1); // adjust to Monday
+    const weekStart = new Date(now.setDate(diff));
+    weekStart.setHours(0, 0, 0, 0);
+const challengeSubmissions = await prisma.submission.findMany({
+  where: {
+    userId: targetUserId,
+    createdAt: { gte: weekStart }
+  },
+  include: { challenge: true }
+});
+
+
+    const challengePoints = challengeSubmissions.reduce(
+      (sum, s) => sum + (s.challenge.points || 0),
+      0
+    );
+
+    // 🟦 Points from location submissions this week
+    const locationPoints = await prisma.locationPoint.findMany({
+      where: {
+        userId: targetUserId,
+        createdAt: { gte: weekStart }
+      }
+    });
+
+    const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
+
+    const thisWeekPoints = challengePoints + mapPoints;
+
+    return res.json({
+      userId: user.id,
+      username: user.username,
+      totalPoints: user.totalPoints,
+      thisWeekPoints
+    });
+  } catch (error) {
+    console.error('Get points error:', error);
+    res.status(500).json({ error: 'Failed to fetch points' });
+  }
+};
+exports.submitForPoints = async (req, res) => {
+  const userId = req.authData.id;
+  const { placeName, latitude, longitude } = req.body;
+
+  if (!req.file) return res.status(400).json({ error: 'No media uploaded' });
+
+  const mediaUrl = `/uploads/${req.file.filename}`;
+
+  try {
+    const points = 5; // 🔁 You can make this dynamic later
+
+    await prisma.locationPoint.create({
+      data: {
+        userId,
+        mediaUrl,
+        placeName,
+        latitude: latitude ? parseFloat(latitude) : null,
+        longitude: longitude ? parseFloat(longitude) : null,
+        points
+      }
+    });
+
+    await prisma.user.update({
+      where: { id: userId },
+      data: {
+        totalPoints: { increment: points }
+      }
+    });
+
+    res.json({ message: `You received ${points} points!`, points });
+  } catch (err) {
+    console.error('Submit for points error:', err);
+    res.status(500).json({ error: 'Submission failed', details: err.message });
+  }
+};
+const getLevelFromPoints = (points) => {
+  if (points >= 400) return { level: 20, title: "Legendary Explorer" };
+  if (points >= 300) return { level: 19, title: "City Sniper" };
+  if (points >= 250) return { level: 18, title: "City Sniper" };
+  if (points >= 200) return { level: 15, title: "City Sniper" };
+  if (points >= 150) return { level: 12, title: "City Sniper" };
+  if (points >= 100) return { level: 10, title: "City Sniper" };
+  if (points >= 75) return { level: 8, title: "Urban Explorer" };
+  if (points >= 50) return { level: 6, title: "Urban Explorer" };
+  if (points >= 25) return { level: 4, title: "New Explorer" };
+  if (points >= 10) return { level: 2, title: "New Explorer" };
+  return { level: 1, title: "New Explorer" };
+};
+
+const getPointsForNextLevel = (currentPoints) => {
+  const thresholds = [0, 10, 25, 50, 75, 100, 150, 200, 250, 300, 400];
+  for (let i = 0; i < thresholds.length; i++) {
+    if (currentPoints < thresholds[i]) {
+      return thresholds[i] - currentPoints;
+    }
+  }
+  return 0; // Already maxed out
+};
+exports.getAchievementStatus = async (req, res) => {
+  const userId = req.authData.id;
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { totalPoints: true }
+    });
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    const { level, title } = getLevelFromPoints(user.totalPoints);
+    const remaining = getPointsForNextLevel(user.totalPoints);
+
+    res.json({
+      totalPoints: user.totalPoints,
+      level,
+      title,
+      pointsToNextLevel: remaining
+    });
+  } catch (error) {
+    console.error('Get achievement error:', error);
+    res.status(500).json({ error: 'Could not get level info' });
+  }
+};

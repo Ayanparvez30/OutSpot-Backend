@@ -30,7 +30,10 @@ router.post('/save-minime-options', checkAuth, userController.saveMinimeOptions)
 router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
 router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
 router.get('/minime/current', checkAuth, userController.getCurrentMinime);
+router.get('/users/:userId/points', checkAuth, userController.getUserPoints);
 
+router.post('/submit-points', checkAuth, upload.single('media'), userController.submitForPoints);
+router.get('/me/achievements', checkAuth, userController.getAchievementStatus);
 
 router.post(
   '/minime/upload-avatar',

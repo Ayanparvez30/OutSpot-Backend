@@ -5,13 +5,15 @@ app.use(express.json());
 
 const http = require('http');
 const server = http.createServer(app);
-
+const challengeRoutes = require('./routes/challengeRoutes');
 const { initSocket } = require('./utils/socket');
 initSocket(server);
 const mediaRoutes = require('./routes/mediaRoutes');
 app.use('/api', mediaRoutes);
 app.use('/uploads', express.static('uploads')); 
 app.use('/pose', express.static('public/pose'));
+
+app.use('/api', challengeRoutes);
 
 
 app.use((req, res, next) => {

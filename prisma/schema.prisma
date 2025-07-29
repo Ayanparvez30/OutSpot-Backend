@@ -44,8 +44,10 @@ model User {
   friendRequestsReceived Friendship[] @relation("friendRequestsReceived")
   blocks                 Block[]      @relation("blocks")
   blockedBy              Block[]      @relation("blocked")
-
+totalPoints Int           @default(0)
   Location Location[]
+ submissions Submission[]  
+ locationPoints LocationPoint[]
 
   LocationHistory LocationHistory[]
 }
@@ -122,6 +124,19 @@ model LocationHistory {
   createdAt DateTime @default(now())
 }
 
+model LocationPoint {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  user       User     @relation(fields: [userId], references: [id])
+
+  mediaUrl   String
+  placeName  String?
+  latitude   Float?
+  longitude  Float?
+  points     Int      @default(5)
+
+  createdAt  DateTime @default(now())
+}
 
 model Chat {
   id        Int          @id @default(autoincrement())
@@ -185,4 +200,30 @@ model Block {
 enum FriendshipStatus {
   PENDING
   ACCEPTED
+}
+model Challenge {
+  id          Int       @id @default(autoincrement())
+  title       String
+  description String?
+  type        ChallengeType // 'MORNING' or 'WEEKLY'
+  startDate   DateTime
+  endDate     DateTime
+   points      Int      
+  createdAt   DateTime  @default(now())
+  submissions Submission[]
+}
+
+model Submission {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  challengeId Int
+  mediaUrl    String
+  createdAt   DateTime  @default(now())
+
+  user        User      @relation(fields: [userId], references: [id])
+  challenge   Challenge @relation(fields: [challengeId], references: [id])
+}
+enum ChallengeType {
+  DAILY
+  WEEKLY
 }
