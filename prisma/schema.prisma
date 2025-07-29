@@ -60,8 +60,8 @@ model Minime {
   lipstick String?
   jewelry  String?
   bag      String?
-isSaved    Boolean  @default(false) // ✅ add this
-  isDraft    Boolean  @default(false) // ✅ and this
+isSaved    Boolean  @default(false)
+  isDraft    Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
