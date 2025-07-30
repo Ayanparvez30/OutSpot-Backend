@@ -474,3 +474,30 @@ exports.deleteAccount = async (req, res) => {
     return res.status(500).json({ error: 'Failed to delete account' });
   }
 };
+//get profile
+exports.getProfile = async (req, res) => {
+  const userId = req.authData.id;
+
+  try {
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        bio: true,
+        bodyType: true,
+        bodyShapeUrl: true,
+        minime: { select: { avatarUrl: true } }
+      }
+    });
+
+    if (!user) return res.status(404).json({ error: 'User not found' });
+
+    return response.true_status(res, user, 'Profile loaded successfully');
+  } catch (error) {
+    console.error('Get profile error:', error);
+    return response.response_with_code(res, 500, 'Failed to load profile');
+  }
+};

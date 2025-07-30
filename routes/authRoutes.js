@@ -32,8 +32,11 @@ router.post('/minime/save-latest', checkAuth, userController.saveLatestMinime);
 router.get('/minime/current', checkAuth, userController.getCurrentMinime);
 router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
 
-router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
+router.get('/me/profile', checkAuth, userController.getProfile);
 
+
+router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
+router
 router.get('/users/:userId/points', checkAuth, userController.getUserPoints);
 
 router.post('/submit-points', checkAuth, upload.single('media'), userController.submitForPoints);
