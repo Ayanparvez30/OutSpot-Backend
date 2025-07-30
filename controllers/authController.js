@@ -340,7 +340,7 @@ exports.login = async (req, res) => {
     });
 
     if (!user) {
-      return response.response_with_code(res, 401, 'Invalid credentials');
+      return response.response_with_code(res, 401, 'User not found, please sign up first');
     }
 
     // Check password
