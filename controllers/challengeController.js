@@ -1,11 +1,19 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-
 exports.createChallenge = async (req, res) => {
-  const { title, description, type, startDate, endDate } = req.body;
+  const { title, description, type, startDate, endDate, points, requiredPhotos } = req.body;
+
   try {
     const challenge = await prisma.challenge.create({
-      data: { title, description, type, startDate: new Date(startDate), endDate: new Date(endDate),points: parseInt(req.body.points) }
+      data: {
+        title,
+        description,
+        type,
+        startDate: new Date(startDate),
+        endDate: new Date(endDate),
+        points: parseInt(points),
+        requiredPhotos: parseInt(requiredPhotos) || 1  // default fallback
+      }
     });
     res.json(challenge);
   } catch (err) {
@@ -40,17 +48,29 @@ exports.getFilteredChallenges = async (req, res) => {
 
   const result = await Promise.all(
     allChallenges.map(async (c) => {
-      const submission = await prisma.submission.findFirst({
+      const submissions = await prisma.submission.findMany({
         where: { userId, challengeId: c.id }
       });
 
-      const isCompleted = !!submission;
+      const requiredCount = c.requiredPhotos || 1;
+      const uploadedCount = submissions.length;
+      const isCompleted = uploadedCount >= requiredCount;
       const isActive = c.startDate <= now && c.endDate >= now;
+
+      const derivedStatus = isCompleted
+        ? 'completed'
+        : uploadedCount > 0
+          ? 'in_progress'
+          : isActive
+            ? 'in_progress'
+            : 'expired';
 
       return {
         ...c,
-        status: isCompleted ? 'completed' : isActive ? 'in_progress' : 'expired',
-        hasSubmitted: isCompleted
+        status: derivedStatus,
+        uploadedCount,
+        requiredCount,
+        hasSubmitted: uploadedCount > 0
       };
     })
   );
@@ -66,6 +86,7 @@ exports.getFilteredChallenges = async (req, res) => {
 
   res.json(filtered);
 };
+
 exports.submitToChallenge = async (req, res) => {
   const userId = req.authData.id;
   const { challengeId } = req.body;
@@ -75,23 +96,24 @@ exports.submitToChallenge = async (req, res) => {
   const mediaUrl = `/uploads/${req.file.filename}`;
 
   try {
-    // 1. Check if already submitted
-    const existing = await prisma.submission.findFirst({
-      where: { userId, challengeId: parseInt(challengeId) }
-    });
-
-    if (existing) {
-      return res.status(409).json({ error: 'Already submitted' });
-    }
-
-    // 2. Get challenge point value
     const challenge = await prisma.challenge.findUnique({
       where: { id: parseInt(challengeId) }
     });
 
     if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
 
-    // 3. Save submission
+    const requiredCount = challenge.requiredPhotos || 1;
+
+    // Count how many submissions user already made for this challenge
+    const existingSubmissions = await prisma.submission.findMany({
+      where: { userId, challengeId: parseInt(challengeId) }
+    });
+
+    if (existingSubmissions.length >= requiredCount) {
+      return res.status(409).json({ error: 'Challenge already completed' });
+    }
+
+    // Save new submission
     const submission = await prisma.submission.create({
       data: {
         userId,
@@ -100,22 +122,31 @@ exports.submitToChallenge = async (req, res) => {
       }
     });
 
-    // 4. Increment user's points
+    // Award points only once per submission (or you can customize this logic)
     await prisma.user.update({
       where: { id: userId },
       data: {
         totalPoints: {
-          increment: challenge.points 
+          increment: challenge.points
         }
       }
     });
 
-    res.json({ message: 'Submitted to challenge + points awarded', submission });
+    const updatedSubmissions = [...existingSubmissions, submission];
+
+    res.json({
+      message: 'Submission saved',
+      submission,
+      uploadedCount: updatedSubmissions.length,
+      requiredCount,
+      isCompleted: updatedSubmissions.length >= requiredCount
+    });
   } catch (err) {
     console.error('Submit error:', err);
     res.status(500).json({ error: 'Failed to submit', details: err.message });
   }
 };
+
 
 exports.getSubmissions = async (req, res) => {
   const { challengeId } = req.params;
@@ -140,11 +171,14 @@ exports.getMySubmission = async (req, res) => {
   const userId = req.authData.id;
   const { challengeId } = req.params;
 
-  const submission = await prisma.submission.findFirst({
-    where: { userId, challengeId: parseInt(challengeId) }
-  });
+ const submissions = await prisma.submission.findMany({
+  where: { userId, challengeId: parseInt(challengeId) },
+  orderBy: { createdAt: 'asc' }
+});
 
-  if (!submission) return res.status(404).json({ message: 'No submission found' });
+if (!submissions.length) return res.status(404).json({ message: 'No submissions found' });
 
-  res.json(submission);
+res.json(submissions);
+
+ 
 };

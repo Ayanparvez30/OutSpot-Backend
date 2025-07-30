@@ -210,6 +210,7 @@ model Challenge {
   startDate   DateTime
   endDate     DateTime
   points      Int
+  requiredPhotos Int         @default(1)
   createdAt   DateTime      @default(now())
   submissions Submission[]
 }
