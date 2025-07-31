@@ -18,6 +18,8 @@ router.delete('/friends/:userId', friendController.unfriend);
 
 // Friend list retrieval
 router.get('/friends', friendController.getFriendList);
+router.get('/friends/recommended', friendController.getRecommendedFriends);
+router.post('/contacts/sync', friendController.syncContacts);
 
 // Block/unblock routes
 router.post('/users/:userId/block', friendController.blockUser);

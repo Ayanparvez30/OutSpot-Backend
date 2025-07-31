@@ -27,6 +27,7 @@ model User {
   bodyType     String?
   bodyShapeUrl String?
   communities  CommunityMember[] 
+  syncedContacts ContactSync[]
 
   messages Message[]
   chats    UserOnChat[]
@@ -252,4 +253,13 @@ model CommunityMember {
   community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
 
   @@unique([userId, communityId])
+}
+model ContactSync {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  username  String?   // optional
+  phone     String?   // optional
+  createdAt DateTime @default(now())
+
+  user      User     @relation(fields: [userId], references: [id])
 }
