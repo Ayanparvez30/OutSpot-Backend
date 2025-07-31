@@ -3,7 +3,6 @@
 const express = require('express');
 const router = express.Router();
 const friendController = require('../controllers/friendController');
-const blockController = require('../controllers/blockController');
 const { checkAuth } = require('../middlewares/authMiddleware');
 
 // Protect all friend/block routes with auth middleware
@@ -21,8 +20,8 @@ router.delete('/friends/:userId', friendController.unfriend);
 router.get('/friends', friendController.getFriendList);
 
 // Block/unblock routes
-router.post('/users/:userId/block', blockController.blockUser);
-router.delete('/users/:userId/block', blockController.unblockUser);
+router.post('/users/:userId/block', friendController.blockUser);
+router.delete('/users/:userId/block', friendController.unblockUser);
 router.get('/friends/requests/count', friendController.getPendingFriendRequestCount);
 
 
