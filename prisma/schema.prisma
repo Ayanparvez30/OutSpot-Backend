@@ -19,7 +19,7 @@ model User {
   authorization String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
-
+ isProfilePrivate Boolean @default(false)
   // Profile Onboarding
   firstName    String?
   lastName     String?

@@ -275,6 +275,24 @@ exports.getUserProfile = async (req, res) => {
   const viewerId = req.authData.id;
   const profileUserId = parseInt(req.params.userId);
 
+  const user = await prisma.user.findUnique({
+    where: { id: profileUserId },
+    select: {
+      id: true,
+      username: true,
+      firstName: true,
+      lastName: true,
+      bio: true,
+      isProfilePrivate: true,
+      minime: { select: { avatarUrl: true } }
+    }
+  });
+
+  if (!user) {
+    return res.status(404).json({ error: 'User not found' });
+  }
+
+  // Friend check
   const isFriend = await prisma.friendship.findFirst({
     where: {
       status: 'ACCEPTED',
@@ -285,23 +303,9 @@ exports.getUserProfile = async (req, res) => {
     }
   });
 
-  const user = await prisma.user.findUnique({
-    where: { id: profileUserId },
-    select: {
-      id: true,
-      username: true,
-      firstName: true,
-      lastName: true,
-      bio: true,
-      minime: { select: { avatarUrl: true } }
-    }
-  });
+  const allowView = !user.isProfilePrivate || viewerId === profileUserId || isFriend;
 
-  if (!user) {
-    return res.status(404).json({ error: 'User not found' });
-  }
-
-  if (!isFriend && viewerId !== profileUserId) {
+  if (!allowView) {
     return res.json({
       user,
       isPrivate: true,
@@ -325,6 +329,7 @@ exports.getUserProfile = async (req, res) => {
     message: 'Profile loaded successfully.'
   });
 };
+
 exports.getUserPoints = async (req, res) => {
   const targetUserId = parseInt(req.params.userId);
 
@@ -499,5 +504,60 @@ exports.getProfile = async (req, res) => {
   } catch (error) {
     console.error('Get profile error:', error);
     return response.response_with_code(res, 500, 'Failed to load profile');
+  }
+};
+exports.updatePrivacy = async (req, res) => {
+  const userId = req.authData.id;
+  const { isPrivate } = req.body;
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { isProfilePrivate: !!isPrivate }
+  });
+
+  res.json({ message: `Profile privacy set to ${!!isPrivate}` });
+};
+//update bio
+exports.updateBio = async (req, res) => {
+  const userId = req.authData.id;
+  const { bio } = req.body;
+
+  if (!bio) return res.status(400).json({ error: 'Bio cannot be empty' });
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: { bio }
+    });
+
+    return response.true_status(res, updatedUser, 'Bio updated successfully');
+  } catch (error) {
+    console.error('Update bio error:', error);
+    return response.response_with_code(res, 500, 'Failed to update bio');
+  }
+};
+
+exports.updateName = async (req, res) => {
+  const userId = req.authData.id;
+  const { firstName, lastName } = req.body;
+
+  if (!firstName && !lastName) {
+    return response.response_with_code(res, 400, 'At least one of first name or last name is required');
+  }
+
+  const updateData = {};
+  if (firstName) updateData.firstName = firstName;
+  if (lastName) updateData.lastName = lastName;
+
+  try {
+    const updatedUser = await prisma.user.update({
+      where: { id: userId },
+      data: updateData
+    });
+
+    return response.true_status(res, updatedUser, 'Name updated successfully');
+  } catch (error) {
+    console.error('Update name error:', error);
+    return response.response_with_code(res, 500, 'Failed to update name');
   }
 };

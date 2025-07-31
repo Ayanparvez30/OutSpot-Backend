@@ -31,9 +31,12 @@ router.post('/minime/regenerate', checkAuth, userController.regenerateMinime);
 router.post('/minime/save-latest', checkAuth, userController.saveLatestMinime);
 router.get('/minime/current', checkAuth, userController.getCurrentMinime);
 router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
+router.post('/me/privacy', checkAuth, userController.updatePrivacy);
 
 router.get('/me/profile', checkAuth, userController.getProfile);
 
+router.post('/me/update-bio', checkAuth, userController.updateBio);
+router.post('/me/update-name', checkAuth, userController.updateName);
 
 router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
 router
