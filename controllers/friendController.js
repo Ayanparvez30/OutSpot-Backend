@@ -3,6 +3,116 @@ const { PrismaClient } = require('@prisma/client');
 const nodemailer = require('nodemailer');
 const prisma = new PrismaClient();
 
+// Search users
+exports.searchUsers = async (req, res) => {
+  const currentUserId = req.authData.id;
+  const searchQuery = req.query.q; // The search term from frontend
+
+  if (!searchQuery || searchQuery.length < 2) {
+    return res.status(400).json({ error: "Search query must be at least 2 characters" });
+  }
+
+  try {
+    const searchTerms = searchQuery.toLowerCase().split(' ');
+    const users = await prisma.user.findMany({
+      where: {
+        AND: [
+          {
+            OR: [
+              {
+                firstName: {
+                  not: null,
+                  contains: searchTerms[0]
+                }
+              },
+              {
+                lastName: {
+                  not: null,
+                  contains: searchTerms[0]
+                }
+              },
+              // Handle full name searches
+              {
+                AND: [
+                  {
+                    firstName: {
+                      not: null,
+                      contains: searchTerms[0]
+                    }
+                  },
+                  {
+                    lastName: {
+                      not: null,
+                      contains: searchTerms[1] || ''
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          // Exclude current user
+          { 
+            id: { 
+              not: currentUserId 
+            } 
+          },
+          // Exclude blocked users
+          {
+            NOT: {
+              OR: [
+                {
+                  blockedBy: {
+                    some: {
+                      blockerId: currentUserId
+                    }
+                  }
+                },
+                {
+                  blocks: {
+                    some: {
+                      blockedId: currentUserId
+                    }
+                  }
+                }
+              ]
+            }
+          }
+        ]
+      },
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        email: true,
+      },
+      take: 20 // Limit results
+    });
+
+    // Add friendship status to each user
+    const usersWithStatus = await Promise.all(users.map(async user => {
+      const friendship = await prisma.friendship.findFirst({
+        where: {
+          OR: [
+            { requesterId: currentUserId, receiverId: user.id },
+            { requesterId: user.id, receiverId: currentUserId }
+          ]
+        }
+      });
+
+      return {
+        ...user,
+        friendshipStatus: friendship ? friendship.status : null
+      };
+    }));
+
+    return res.json(usersWithStatus);
+  } catch (error) {
+    console.error('Error searching users:', error);
+    return res.status(500).json({ error: 'Failed to search users' });
+  }
+};
+
 // Send a friend request
 exports.sendFriendRequest = async (req, res) => {
   const currentUserId = req.authData.id;

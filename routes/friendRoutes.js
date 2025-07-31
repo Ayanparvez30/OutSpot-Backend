@@ -19,6 +19,9 @@ router.delete('/friends/:userId', friendController.unfriend);
 // Friend list retrieval
 router.get('/friends', friendController.getFriendList);
 
+// Search users
+router.get('/friends/search', friendController.searchUsers);
+
 // Block/unblock routes
 router.post('/users/:userId/block', friendController.blockUser);
 router.delete('/users/:userId/block', friendController.unblockUser);
