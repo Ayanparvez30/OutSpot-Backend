@@ -1,4 +1,3 @@
-
 const { PrismaClient } = require('@prisma/client');
 const nodemailer = require('nodemailer');
 const prisma = new PrismaClient();
@@ -725,4 +724,45 @@ exports.syncContacts = async (req, res) => {
     message: 'Contacts synced',
     matched: matchedUsers
   });
+};
+
+// Get blocked users
+exports.getBlockedUsers = async (req, res) => {
+  const currentUserId = req.authData.id;
+
+  try {
+    const blockedUsers = await prisma.block.findMany({
+      where: { blockerId: currentUserId },
+      include: {
+        blocked: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            totalPoints: true,
+            minime: { select: { avatarUrl: true } }
+          }
+        }
+      }
+    });
+
+    const users = blockedUsers.map(block => ({
+      id: block.blocked.id,
+      username: block.blocked.username,
+      firstName: block.blocked.firstName,
+      lastName: block.blocked.lastName,
+      avatarUrl: block.blocked.minime?.avatarUrl || null,
+      totalPoints: block.blocked.totalPoints || 0
+    }));
+
+    return res.status(200).json({
+      success: true,
+      message: "Blocked users fetched successfully",
+      data: users
+    });
+  } catch (error) {
+    console.error("Error fetching blocked users:", error);
+    return res.status(500).json({ error: "Failed to fetch blocked users" });
+  }
 };
