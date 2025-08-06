@@ -9,6 +9,7 @@ router.post('/friends/request/:userId', friendController.sendFriendRequest);
 router.post('/friends/accept/:userId', friendController.acceptFriendRequest);
 router.post('/friends/decline/:userId', friendController.declineFriendRequest);
 router.delete('/friends/:userId', friendController.unfriend);
+router.delete('/friends/request/:userId', friendController.declineFriendRequest);
 
 router.post('/block/:userId', friendController.blockUser);
 router.delete('/block/:userId', friendController.unblockUser);
@@ -24,6 +25,7 @@ router.get('/friends/recommended', friendController.getRecommendedFriends);
 router.post('/contacts/sync', friendController.syncContacts);
 router.get('/friends/search', friendController.searchUsers);
 router.get('/users/blocked', friendController.getBlockedUsers);
+router.get('/friends/sent-requests', friendController.getSentFriendRequests);
 
 
 module.exports = router;

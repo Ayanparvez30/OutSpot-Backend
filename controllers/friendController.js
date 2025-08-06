@@ -766,3 +766,47 @@ exports.getBlockedUsers = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch blocked users" });
   }
 };
+
+exports.getSentFriendRequests = async (req, res) => {
+  const currentUserId = req.authData.id;
+
+  try {
+    // Get all pending requests sent by the current user
+    const sentRequests = await prisma.friendship.findMany({
+      where: {
+        requesterId: currentUserId,
+        status: 'PENDING'
+      },
+      include: {
+        receiver: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            totalPoints: true,
+            minime: { select: { avatarUrl: true } }
+          }
+        }
+      }
+    });
+
+    const users = sentRequests.map(request => ({
+      id: request.receiver.id,
+      username: request.receiver.username,
+      firstName: request.receiver.firstName,
+      lastName: request.receiver.lastName,
+      avatarUrl: request.receiver.minime?.avatarUrl || null,
+      totalPoints: request.receiver.totalPoints || 0
+    }));
+
+    return res.status(200).json({
+      success: true,
+      message: "Sent friend requests fetched successfully",
+      data: users
+    });
+  } catch (error) {
+    console.error("Error fetching sent friend requests:", error);
+    return res.status(500).json({ error: "Failed to fetch sent friend requests" });
+  }
+};
