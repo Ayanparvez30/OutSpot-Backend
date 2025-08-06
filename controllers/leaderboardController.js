@@ -1,142 +1,201 @@
-// const { PrismaClient } = require('@prisma/client');
-// const { getIO } = require('../socket');
-// const prisma = new PrismaClient();
+// controllers/leaderboardController.js
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
 
-// function getStartOfWeek() {
-//   const now = new Date();
-//   const day = now.getDay();
-//   const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-//   const monday = new Date(now.setDate(diff));
-//   monday.setHours(0, 0, 0, 0);
-//   return monday;
-// }
+function getStartOfWeek() {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+  const monday = new Date(now.setDate(diff));
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
 
-// function getPrizeForRank(rank) {
-//   if (rank === 1) return '🥇 1st Prize';
-//   if (rank === 2) return '🥈 2nd Prize';
-//   if (rank === 3) return '🥉 3rd Prize';
-//   if (rank <= 10) return '🏅 Top 10';
-//   if (rank <= 50) return '🎖️ Top 50';
-//   return null;
-// }
+function getPrizeForRank(rank) {
+  if (rank === 1) return '🥇 1st Prize';
+  if (rank === 2) return '🥈 2nd Prize';
+  if (rank === 3) return '🥉 3rd Prize';
+  if (rank <= 10) return '🏅 Top 10';
+  if (rank <= 50) return '🎖️ Top 50';
+  return null;
+}
 
-// exports.getWeeklyChallengeLeaderboard = async (req, res) => {
-//   const userId = req.authData.id;
-//   const startOfWeek = getStartOfWeek();
+exports.getWeeklyGlobalLeaderboard = async (req, res) => {
+  const userId = req.authData.id;
+  const weekStart = getStartOfWeek();
 
-//   const weeklyChallenges = await prisma.challenge.findMany({
-//     where: {
-//       type: 'WEEKLY',
-//       startDate: { gte: startOfWeek },
-//       endDate: { gte: new Date() } // active this week
-//     },
-//     select: { id: true, points: true }
-//   });
+  const users = await prisma.user.findMany({
+    include: {
+      minime: {
+        where: { isSaved: true },
+        orderBy: { createdAt: 'desc' },
+        take: 1
+      }
+    }
+  });
 
-//   const challengeIds = weeklyChallenges.map(c => c.id);
-//   const pointsMap = Object.fromEntries(weeklyChallenges.map(c => [c.id, c.points]));
+  const submissions = await prisma.submission.findMany({
+    where: { createdAt: { gte: weekStart } },
+    include: { challenge: true }
+  });
 
-//   const submissions = await prisma.submission.findMany({
-//     where: { challengeId: { in: challengeIds } },
-//     include: { user: { include: { minime: { where: { isSaved: true }, orderBy: { createdAt: 'desc' }, take: 1 } } } }
-//   });
+  const pointsByUser = {};
+  for (const sub of submissions) {
+    if (!pointsByUser[sub.userId]) pointsByUser[sub.userId] = 0;
+    pointsByUser[sub.userId] += sub.challenge?.points || 0;
+  }
 
-//   const leaderboardMap = new Map();
+  const locationPoints = await prisma.locationPoint.findMany({
+    where: { createdAt: { gte: weekStart } }
+  });
 
-//   for (const s of submissions) {
-//     if (!leaderboardMap.has(s.userId)) {
-//       leaderboardMap.set(s.userId, {
-//         userId: s.userId,
-//         username: s.user.username,
-//         avatarUrl: s.user.minime[0]?.avatarUrl || null,
-//         points: 0
-//       });
-//     }
-//     leaderboardMap.get(s.userId).points += pointsMap[s.challengeId] || 0;
-//   }
+  for (const loc of locationPoints) {
+    if (!pointsByUser[loc.userId]) pointsByUser[loc.userId] = 0;
+    pointsByUser[loc.userId] += loc.points || 0;
+  }
 
-//   const leaderboard = Array.from(leaderboardMap.values()).sort((a, b) => b.points - a.points);
-//   const myRank = leaderboard.findIndex(u => u.userId === userId) + 1;
-//   const myInfo = leaderboard.find(u => u.userId === userId) || null;
+  const rawLeaderboard = users.map(user => ({
+    userId: user.id,
+    username: user.username,
+    avatarUrl: user.minime[0]?.avatarUrl || null,
+    points: pointsByUser[user.id] || 0
+  }));
 
-//   const prize = getPrizeForRank(myRank);
+  const sorted = rawLeaderboard.sort((a, b) => b.points - a.points);
 
-//   res.json({
-//     leaderboard: leaderboard.slice(0, 50),
-//     myRank,
-//     myInfo,
-//     prize
-//   });
-// };
+  const leaderboard = sorted.map((entry, index) => ({
+    ...entry,
+    rank: index + 1,
+    prize: getPrizeForRank(index + 1)
+  }));
 
-// exports.getCommunityWeeklyLeaderboard = async (req, res) => {
-//   const userId = req.authData.id;
-//   const communityId = parseInt(req.params.communityId);
-//   const startOfWeek = getStartOfWeek();
+  const myInfo = leaderboard.find(u => u.userId === userId) || null;
+  const myRank = myInfo?.rank || null;
+  const prize = myInfo?.prize || null;
 
-//   const weeklyChallenges = await prisma.challenge.findMany({
-//     where: {
-//       type: 'WEEKLY',
-//       startDate: { gte: startOfWeek },
-//       endDate: { gte: new Date() }
-//     },
-//     select: { id: true, points: true }
-//   });
+  res.json({ leaderboard: leaderboard.slice(0, 50), myRank, myInfo, prize });
+};
 
-//   const challengeIds = weeklyChallenges.map(c => c.id);
-//   const pointsMap = Object.fromEntries(weeklyChallenges.map(c => [c.id, c.points]));
+exports.getWeeklyCommunityLeaderboard = async (req, res) => {
+  const userId = req.authData.id;
+  const communityId = parseInt(req.params.communityId);
+  const weekStart = getStartOfWeek();
 
-//   const members = await prisma.communityMember.findMany({
-//     where: { communityId },
-//     select: { userId: true, user: { include: { minime: { where: { isSaved: true }, orderBy: { createdAt: 'desc' }, take: 1 } } } }
-//   });
+  const members = await prisma.communityMember.findMany({
+    where: { communityId },
+    include: {
+      user: {
+        include: {
+          minime: {
+            where: { isSaved: true },
+            orderBy: { createdAt: 'desc' },
+            take: 1
+          }
+        }
+      }
+    }
+  });
 
-//   const memberIds = members.map(m => m.userId);
+  const userIds = members.map(m => m.userId);
+  const submissions = await prisma.submission.findMany({
+    where: {
+      userId: { in: userIds },
+      createdAt: { gte: weekStart }
+    },
+    include: { challenge: true }
+  });
 
-//   const submissions = await prisma.submission.findMany({
-//     where: {
-//       userId: { in: memberIds },
-//       challengeId: { in: challengeIds }
-//     }
-//   });
+  const pointsByUser = {};
+  for (const sub of submissions) {
+    if (!pointsByUser[sub.userId]) pointsByUser[sub.userId] = 0;
+    pointsByUser[sub.userId] += sub.challenge?.points || 0;
+  }
 
-//   const leaderboardMap = new Map();
-//   for (const member of members) {
-//     leaderboardMap.set(member.userId, {
-//       userId: member.userId,
-//       username: member.user.username,
-//       avatarUrl: member.user.minime[0]?.avatarUrl || null,
-//       points: 0
-//     });
-//   }
+  const locationPoints = await prisma.locationPoint.findMany({
+    where: {
+      userId: { in: userIds },
+      createdAt: { gte: weekStart }
+    }
+  });
 
-//   for (const s of submissions) {
-//     leaderboardMap.get(s.userId).points += pointsMap[s.challengeId] || 0;
-//   }
+  for (const loc of locationPoints) {
+    if (!pointsByUser[loc.userId]) pointsByUser[loc.userId] = 0;
+    pointsByUser[loc.userId] += loc.points || 0;
+  }
 
-//   const leaderboard = Array.from(leaderboardMap.values()).sort((a, b) => b.points - a.points);
-//   const myRank = leaderboard.findIndex(u => u.userId === userId) + 1;
-//   const myInfo = leaderboard.find(u => u.userId === userId) || null;
-//   const prize = getPrizeForRank(myRank);
+  const rawLeaderboard = members.map(m => ({
+    userId: m.userId,
+    username: m.user.username,
+    avatarUrl: m.user.minime[0]?.avatarUrl || null,
+    points: pointsByUser[m.userId] || 0
+  }));
 
-//   res.json({
-//     leaderboard: leaderboard.slice(0, 50),
-//     myRank,
-//     myInfo,
-//     prize
-//   });
-// };
+  const sorted = rawLeaderboard.sort((a, b) => b.points - a.points);
 
-// exports.emitLeaderboardUpdate = async (userId) => {
-//   const io = getIO();
-//   io.emit('leaderboard:update', { scope: 'weekly-global' });
+  const leaderboard = sorted.map((entry, index) => ({
+    ...entry,
+    rank: index + 1,
+    prize: getPrizeForRank(index + 1)
+  }));
 
-//   const communityMemberships = await prisma.communityMember.findMany({
-//     where: { userId },
-//     select: { communityId: true }
-//   });
+  const myInfo = leaderboard.find(u => u.userId === userId) || null;
+  const myRank = myInfo?.rank || null;
+  const prize = myInfo?.prize || null;
 
-//   for (const { communityId } of communityMemberships) {
-//     io.emit('leaderboard:update', { scope: 'weekly-community', communityId });
-//   }
-// };
+  res.json({ leaderboard: leaderboard.slice(0, 50), myRank, myInfo, prize });
+};
+
+exports.getWeeklyCommunityRanks = async (req, res) => {
+  const weekStart = getStartOfWeek();
+
+  const communities = await prisma.community.findMany({
+    include: {
+      members: { select: { userId: true } }
+    }
+  });
+
+  const pointsByCommunity = [];
+
+  for (const community of communities) {
+    const memberIds = community.members.map(m => m.userId);
+
+    const submissions = await prisma.submission.findMany({
+      where: {
+        userId: { in: memberIds },
+        createdAt: { gte: weekStart }
+      },
+      include: { challenge: true }
+    });
+
+    const locationPoints = await prisma.locationPoint.findMany({
+      where: {
+        userId: { in: memberIds },
+        createdAt: { gte: weekStart }
+      }
+    });
+
+    let total = 0;
+    for (const sub of submissions) {
+      total += sub.challenge?.points || 0;
+    }
+    for (const loc of locationPoints) {
+      total += loc.points || 0;
+    }
+
+    pointsByCommunity.push({
+      communityId: community.id,
+      name: community.name,
+      points: total
+    });
+  }
+
+  const sorted = pointsByCommunity.sort((a, b) => b.points - a.points);
+
+  const ranked = sorted.map((c, index) => ({
+    ...c,
+    rank: index + 1,
+    prize: getPrizeForRank(index + 1)
+  }));
+
+  res.json({ leaderboard: ranked });
+};

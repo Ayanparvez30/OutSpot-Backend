@@ -17,6 +17,8 @@ app.use('/pose', express.static('public/pose'));
 
 app.use('/api', challengeRoutes);
 
+const leaderboardRoutes = require('./routes/leaderboardRoutes');
+app.use('/api', leaderboardRoutes);
 
 app.use((req, res, next) => {
   console.log(`Incoming request: ${req.method} ${req.originalUrl}`);
