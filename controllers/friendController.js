@@ -2,81 +2,62 @@
 const { PrismaClient } = require('@prisma/client');
 const nodemailer = require('nodemailer');
 const prisma = new PrismaClient();
-
-// Search users
 exports.searchUsers = async (req, res) => {
   const currentUserId = req.authData.id;
-  const searchQuery = req.query.q; // The search term from frontend
+  const query = req.query.q;
 
-  if (!searchQuery || searchQuery.length < 2) {
-    return res.status(400).json({ error: "Search query must be at least 2 characters" });
+  if (!query || query.length < 2) {
+    return res.status(400).json({
+      success: false,
+      message: "Search term must be at least 2 characters.",
+      data: []
+    });
   }
 
+  const searchTerm = query.trim().toLowerCase();
+
   try {
-    const searchTerms = searchQuery.toLowerCase().split(' ');
+    // 🛑 Get block list
+    const blocks = await prisma.block.findMany({
+      where: {
+        OR: [
+          { blockerId: currentUserId },
+          { blockedId: currentUserId }
+        ]
+      }
+    });
+    const blockedIds = new Set(
+      blocks.map(b => b.blockerId === currentUserId ? b.blockedId : b.blockerId)
+    );
+
+    // 🟢 Get community members
+    const myCommunities = await prisma.communityMember.findMany({
+      where: { userId: currentUserId }
+    });
+    const communityIds = myCommunities.map(c => c.communityId);
+
+    const sameCommunityMembers = await prisma.communityMember.findMany({
+      where: {
+        communityId: { in: communityIds },
+        userId: { not: currentUserId }
+      }
+    });
+
+    const sameCommunityUserIds = new Set(sameCommunityMembers.map(m => m.userId));
+
+    // 🟢 Get all users matching search
     const users = await prisma.user.findMany({
       where: {
+        id: { not: currentUserId },
         AND: [
           {
             OR: [
-              {
-                firstName: {
-                  not: null,
-                  contains: searchTerms[0]
-                }
-              },
-              {
-                lastName: {
-                  not: null,
-                  contains: searchTerms[0]
-                }
-              },
-              // Handle full name searches
-              {
-                AND: [
-                  {
-                    firstName: {
-                      not: null,
-                      contains: searchTerms[0]
-                    }
-                  },
-                  {
-                    lastName: {
-                      not: null,
-                      contains: searchTerms[1] || ''
-                    }
-                  }
-                ]
-              }
+              { firstName: { contains: searchTerm } },
+              { lastName: { contains: searchTerm } },
+              { username: { contains: searchTerm } }
             ]
           },
-          // Exclude current user
-          { 
-            id: { 
-              not: currentUserId 
-            } 
-          },
-          // Exclude blocked users
-          {
-            NOT: {
-              OR: [
-                {
-                  blockedBy: {
-                    some: {
-                      blockerId: currentUserId
-                    }
-                  }
-                },
-                {
-                  blocks: {
-                    some: {
-                      blockedId: currentUserId
-                    }
-                  }
-                }
-              ]
-            }
-          }
+          { id: { notIn: Array.from(blockedIds) } }
         ]
       },
       select: {
@@ -84,13 +65,36 @@ exports.searchUsers = async (req, res) => {
         username: true,
         firstName: true,
         lastName: true,
-        email: true,
+        totalPoints: true,
+        minime: { select: { avatarUrl: true } }
       },
-      take: 20 // Limit results
+      take: 30
     });
 
-    // Add friendship status to each user
-    const usersWithStatus = await Promise.all(users.map(async user => {
+    // ⏱ Weekly point setup
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const weekStart = new Date(now.setDate(diff));
+    weekStart.setHours(0, 0, 0, 0);
+
+    // 🔁 Helper: calculate score
+    const getMatchScore = (user, q) => {
+      const qLower = q.toLowerCase();
+      let score = 0;
+      const fields = [user.username, user.firstName, user.lastName].filter(Boolean).map(f => f.toLowerCase());
+
+      for (const field of fields) {
+        if (field === qLower) score += 40;
+        else if (field.startsWith(qLower)) score += 30;
+        else if (field.includes(qLower)) score += 20;
+        else if (field.endsWith(qLower)) score += 10;
+      }
+
+      return score;
+    };
+
+    const enriched = await Promise.all(users.map(async user => {
       const friendship = await prisma.friendship.findFirst({
         where: {
           OR: [
@@ -100,18 +104,65 @@ exports.searchUsers = async (req, res) => {
         }
       });
 
+      const submissions = await prisma.submission.findMany({
+        where: {
+          userId: user.id,
+          createdAt: { gte: weekStart }
+        },
+        include: { challenge: true }
+      });
+      const challengePoints = submissions.reduce((sum, s) => sum + (s.challenge?.points || 0), 0);
+
+      const locationPoints = await prisma.locationPoint.findMany({
+        where: {
+          userId: user.id,
+          createdAt: { gte: weekStart }
+        }
+      });
+      const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
+
+      const thisWeekPoints = challengePoints + mapPoints;
+      const isMutualFriend = friendship?.status === 'ACCEPTED';
+      const isInSameCommunity = sameCommunityUserIds.has(user.id);
+
+      // Final smart score
+      const score = getMatchScore(user, searchTerm)
+        + (isMutualFriend ? 20 : 0)
+        + (isInSameCommunity ? 10 : 0);
+
       return {
-        ...user,
-        friendshipStatus: friendship ? friendship.status : null
+        id: user.id,
+        username: user.username,
+        firstName: user.firstName,
+        lastName: user.lastName,
+        avatarUrl: user.minime?.avatarUrl || null,
+        totalPoints: user.totalPoints || 0,
+        thisWeekPoints,
+        friendshipStatus: friendship?.status || null,
+        profileUrl: `/api/users/${user.id}/profile`,
+        score
       };
     }));
 
-    return res.json(usersWithStatus);
+    // 🔽 Sort by score
+    enriched.sort((a, b) => b.score - a.score);
+
+    return res.status(200).json({
+      success: true,
+      message: "Search results",
+      data: enriched
+    });
+
   } catch (error) {
-    console.error('Error searching users:', error);
-    return res.status(500).json({ error: 'Failed to search users' });
+    console.error("Search error:", error);
+    return res.status(500).json({
+      success: false,
+      message: "Failed to search users",
+      data: []
+    });
   }
 };
+
 
 // Send a friend request
 exports.sendFriendRequest = async (req, res) => {
