@@ -400,6 +400,83 @@ exports.blockUser = async (req, res) => {
   });
   return res.json({ message: "User blocked successfully." });
 };
+exports.getFriendRequests = async (req, res) => {
+  const currentUserId = req.authData.id;
+
+  try {
+    // Get all pending requests sent to current user
+    const pendingRequests = await prisma.friendship.findMany({
+      where: {
+        receiverId: currentUserId,
+        status: 'PENDING'
+      },
+      include: {
+        requester: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            totalPoints: true,
+            minime: { select: { avatarUrl: true } }
+          }
+        }
+      }
+    });
+
+    // Get current week's start (Monday)
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const weekStart = new Date(now.setDate(diff));
+    weekStart.setHours(0, 0, 0, 0);
+
+    const enriched = await Promise.all(
+      pendingRequests.map(async (req) => {
+        const user = req.requester;
+
+        // Weekly challenge points
+        const submissions = await prisma.submission.findMany({
+          where: {
+            userId: user.id,
+            createdAt: { gte: weekStart }
+          },
+          include: { challenge: true }
+        });
+        const challengePoints = submissions.reduce((sum, s) => sum + (s.challenge?.points || 0), 0);
+
+        // Weekly map points
+        const locationPoints = await prisma.locationPoint.findMany({
+          where: {
+            userId: user.id,
+            createdAt: { gte: weekStart }
+          }
+        });
+        const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
+
+        return {
+          id: user.id,
+          username: user.username,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          avatarUrl: user.minime?.avatarUrl || null,
+          totalPoints: user.totalPoints || 0,
+          thisWeekPoints: challengePoints + mapPoints,
+          profileUrl: `/api/users/${user.id}/profile`
+        };
+      })
+    );
+
+    return res.status(200).json({
+      success: true,
+      message: 'Incoming friend requests fetched',
+      data: enriched
+    });
+  } catch (error) {
+    console.error('Friend request fetch error:', error);
+    return res.status(500).json({ error: 'Failed to load friend requests' });
+  }
+};
 
 // Unblock a user
 exports.unblockUser = async (req, res) => {

@@ -12,6 +12,7 @@ router.use(checkAuth);
 router.post('/friends/request/:userId', friendController.sendFriendRequest);
 router.post('/friends/accept/:userId', friendController.acceptFriendRequest);
 router.post('/friends/decline/:userId', friendController.declineFriendRequest);
+router.get('/friends/requests/incoming', friendController.getFriendRequests);
 
 // Unfriend route
 router.delete('/friends/:userId', friendController.unfriend);
