@@ -9,7 +9,7 @@ router.post('/friends/request/:userId', friendController.sendFriendRequest);
 router.post('/friends/accept/:userId', friendController.acceptFriendRequest);
 router.post('/friends/decline/:userId', friendController.declineFriendRequest);
 router.delete('/friends/:userId', friendController.unfriend);
-router.delete('/friends/request/:userId', friendController.declineFriendRequest);
+
 
 router.post('/block/:userId', friendController.blockUser);
 router.delete('/block/:userId', friendController.unblockUser);
