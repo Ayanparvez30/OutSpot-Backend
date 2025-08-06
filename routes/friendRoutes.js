@@ -5,30 +5,30 @@ const router = express.Router();
 const friendController = require('../controllers/friendController');
 const { checkAuth } = require('../middlewares/authMiddleware');
 
-// Protect all friend/block routes with auth middleware
-router.use(checkAuth);
 
-// Friend request routes
+router.use(checkAuth);
 router.post('/friends/request/:userId', friendController.sendFriendRequest);
 router.post('/friends/accept/:userId', friendController.acceptFriendRequest);
 router.post('/friends/decline/:userId', friendController.declineFriendRequest);
-router.get('/friends/requests/incoming', friendController.getFriendRequests);
-
-// Unfriend route
 router.delete('/friends/:userId', friendController.unfriend);
 
-// Friend list retrieval
+router.post('/users/:userId/block', friendController.blockUser);
+router.delete('/users/:userId/block', friendController.unblockUser);
+router.get('/friends/requests/count', friendController.getPendingFriendRequestCount);
+//oporer routes gulo fix koren
+
+
+
+
+router.get('/friends/requests/incoming', friendController.getFriendRequests);
 router.get('/friends', friendController.getFriendList);
 router.get('/friends/recommended', friendController.getRecommendedFriends);
 router.post('/contacts/sync', friendController.syncContacts);
 
-// Search users
+
 router.get('/friends/search', friendController.searchUsers);
 
-// Block/unblock routes
-router.post('/users/:userId/block', friendController.blockUser);
-router.delete('/users/:userId/block', friendController.unblockUser);
-router.get('/friends/requests/count', friendController.getPendingFriendRequestCount);
+
 
 
 module.exports = router;
