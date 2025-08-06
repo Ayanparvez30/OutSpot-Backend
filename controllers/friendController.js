@@ -256,38 +256,91 @@ exports.unfriend = async (req, res) => {
   await prisma.friendship.delete({ where: { id: friendRecord.id } });
   return res.json({ message: "Unfriended successfully." });
 };
-
-// Get list of friends (accepted friendships) for current user
 exports.getFriendList = async (req, res) => {
   const currentUserId = req.authData.id;
-  // Find all accepted friendships where current user is either requester or receiver
-const friendships = await prisma.friendship.findMany({
-  where: {
-    OR: [
-      {
-        requesterId: currentUserId,
-        status: 'ACCEPTED'
+
+  const friendships = await prisma.friendship.findMany({
+    where: {
+      status: 'ACCEPTED',
+      OR: [
+        { requesterId: currentUserId },
+        { receiverId: currentUserId }
+      ]
+    },
+    include: {
+      requester: {
+        select: {
+          id: true,
+          username: true,
+          firstName: true,
+          lastName: true,
+          totalPoints: true,
+          minime: { select: { avatarUrl: true } }
+        }
       },
-      {
-        receiverId: currentUserId,
-        status: 'ACCEPTED'
+      receiver: {
+        select: {
+          id: true,
+          username: true,
+          firstName: true,
+          lastName: true,
+          totalPoints: true,
+          minime: { select: { avatarUrl: true } }
+        }
       }
-    ]
-  },
-  include: {
-    requester: { select: { id: true, username: true, } },
-    receiver:  { select: { id: true, username: true,  } }
-  }
+    }
+  });
+
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+  const weekStart = new Date(now.setDate(diff));
+  weekStart.setHours(0, 0, 0, 0);
+
+  const friends = await Promise.all(friendships.map(async fr => {
+    const friend = fr.requesterId === currentUserId ? fr.receiver : fr.requester;
+
+    // Weekly challenge points
+    const submissions = await prisma.submission.findMany({
+      where: {
+        userId: friend.id,
+        createdAt: { gte: weekStart }
+      },
+      include: { challenge: true }
+    });
+    const challengePoints = submissions.reduce((sum, s) => sum + (s.challenge?.points || 0), 0);
+
+    // Weekly location points
+    const locationPoints = await prisma.locationPoint.findMany({
+      where: {
+        userId: friend.id,
+        createdAt: { gte: weekStart }
+      }
+    });
+    const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
+
+    const thisWeekPoints = challengePoints + mapPoints;
+
+    return {
+      id: friend.id,
+      username: friend.username,
+      firstName: friend.firstName,
+      lastName: friend.lastName,
+      avatarUrl: friend.minime?.avatarUrl || null,
+      totalPoints: friend.totalPoints || 0,
+      thisWeekPoints,
+      profileUrl: `/api/users/${friend.id}/profile`
+    };
+  }));
+
+return res.status(200).json({
+  success: true,
+  message: "Friends fetched successfully",
+  data: friends
 });
 
-  // Map the friendships to a list of friend user info
-  const friendsList = friendships.map(fr => {
-    // Determine which side is the friend (other than current user)
-    let friendUser = (fr.requesterId === currentUserId) ? fr.receiver : fr.requester;
-    return friendUser;
-  });
-  return res.json(friendsList);
 };
+
 
 // Get count of incoming pending friend requests
 exports.getPendingFriendRequestCount = async (req, res) => {
