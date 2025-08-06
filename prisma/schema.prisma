@@ -8,39 +8,39 @@ datasource db {
 }
 
 model User {
-  id            Int       @id @default(autoincrement())
-  username      String    @unique
-  email         String?   @unique
-  phone         String?   @unique
-  password      String
-  isVerified    Boolean   @default(false)
-  otp           String?
-  otpExpiresAt  DateTime?
-  authorization String?
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
- isProfilePrivate Boolean @default(false)
+  id               Int               @id @default(autoincrement())
+  username         String            @unique
+  email            String?           @unique
+  phone            String?           @unique
+  password         String
+  isVerified       Boolean           @default(false)
+  otp              String?
+  otpExpiresAt     DateTime?
+  authorization    String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  isProfilePrivate Boolean           @default(false)
   // Profile Onboarding
-  firstName    String?
-  lastName     String?
-  bio          String?
-  bodyType     String?
-  bodyShapeUrl String?
-  communities  CommunityMember[] 
-  syncedContacts ContactSync[]
+  firstName        String?
+  lastName         String?
+  bio              String?
+  bodyType         String?
+  bodyShapeUrl     String?
+  communities      CommunityMember[]
+  syncedContacts   ContactSync[]
 
-  messages Message[]
-  chats    UserOnChat[]
-  minime   Minime[]
+  messages           Message[]
+  chats              UserOnChat[]
+  minime             Minime[]
+  communitiesCreated Community[]  @relation("UserCreatedCommunities")
+  media              Media[]      @relation("UserMedia")
+  stories            Story[]
 
-  media   Media[] @relation("UserMedia")
-  stories Story[]
-
-  friendRequestsSent     Friendship[] @relation("friendRequestsSent")
-  friendRequestsReceived Friendship[] @relation("friendRequestsReceived")
-  blocks                 Block[] @relation("blocks")
-  blockedBy              Block[] @relation("blocked")
-  totalPoints            Int     @default(0)
+  friendRequestsSent     Friendship[]    @relation("friendRequestsSent")
+  friendRequestsReceived Friendship[]    @relation("friendRequestsReceived")
+  blocks                 Block[]         @relation("blocks")
+  blockedBy              Block[]         @relation("blocked")
+  totalPoints            Int             @default(0)
   Location               Location?
   submissions            Submission[]
   locationPoints         LocationPoint[]
@@ -58,11 +58,11 @@ model Minime {
   shoes     String?
   glasses   String?
 
-  lipstick String?
-  jewelry  String?
-  bag      String?
-isSaved    Boolean  @default(false)
-  isDraft    Boolean  @default(false)
+  lipstick  String?
+  jewelry   String?
+  bag       String?
+  isSaved   Boolean  @default(false)
+  isDraft   Boolean  @default(false)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -204,16 +204,16 @@ enum FriendshipStatus {
 }
 
 model Challenge {
-  id          Int           @id @default(autoincrement())
-  title       String
-  description String?
-  type        ChallengeType
-  startDate   DateTime
-  endDate     DateTime
-  points      Int
-  requiredPhotos Int         @default(1)
-  createdAt   DateTime      @default(now())
-  submissions Submission[]
+  id             Int           @id @default(autoincrement())
+  title          String
+  description    String?
+  type           ChallengeType
+  startDate      DateTime
+  endDate        DateTime
+  points         Int
+  requiredPhotos Int           @default(1)
+  createdAt      DateTime      @default(now())
+  submissions    Submission[]
 }
 
 model Submission {
@@ -235,12 +235,13 @@ enum ChallengeType {
 model Community {
   id          Int               @id @default(autoincrement())
   name        String
-  description String
+  description String?
+  imageUrl    String?
+  creatorId   Int
+  creator     User              @relation("UserCreatedCommunities", fields: [creatorId], references: [id])
   members     CommunityMember[]
-  media       Media[]
   chats       Chat[]
-
-  createdAt DateTime @default(now())
+  media       Media[] // ✅ inverse of Media.community
 }
 
 model CommunityMember {
@@ -254,12 +255,13 @@ model CommunityMember {
 
   @@unique([userId, communityId])
 }
+
 model ContactSync {
   id        Int      @id @default(autoincrement())
   userId    Int
-  username  String?   // optional
-  phone     String?   // optional
+  username  String? // optional
+  phone     String? // optional
   createdAt DateTime @default(now())
 
-  user      User     @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id])
 }

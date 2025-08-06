@@ -1,9 +1,12 @@
 const express = require('express');
 const router = express.Router();
+const multer = require('multer');
+const upload = multer({ dest: 'uploads/' });
 const { checkAuth } = require('../middlewares/authMiddleware');
 const communityController = require('../controllers/communityController');
-router.post('/communities', checkAuth, communityController.createCommunity);
 
+router.post('/communities', checkAuth, upload.single('image'), communityController.createCommunity);
+router.put('/communities/:communityId', checkAuth, upload.single('image'), communityController.editCommunity);
 router.get('/communities', checkAuth, communityController.getAllCommunities);
 router.post('/communities/join', checkAuth, communityController.joinCommunity);
 router.post('/communities/leave', checkAuth, communityController.leaveCommunity);
