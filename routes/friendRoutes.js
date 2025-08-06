@@ -10,8 +10,8 @@ router.post('/friends/accept/:userId', friendController.acceptFriendRequest);
 router.post('/friends/decline/:userId', friendController.declineFriendRequest);
 router.delete('/friends/:userId', friendController.unfriend);
 
-router.post('/users/:userId/block', friendController.blockUser);
-router.delete('/users/:userId/block', friendController.unblockUser);
+router.post('/block/:userId', friendController.blockUser);
+router.delete('/block/:userId', friendController.unblockUser);
 router.get('/friends/requests/count', friendController.getPendingFriendRequestCount);
 //oporer routes gulo fix koren
 
