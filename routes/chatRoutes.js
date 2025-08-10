@@ -6,8 +6,11 @@ const { checkAuth } = require('../middlewares/authMiddleware');
 // Chat routes
 router.post('/chats', checkAuth, chatController.createChat);
 router.get('/chats', checkAuth, chatController.getMyChats);
-router.get('/chats/:chatId/messages', checkAuth, chatController.getMessages);
-router.get('/chats/:chatId/messages-paginated', checkAuth, chatController.getMessagesPaginated);
+router.get('/chats/messages/:chatId', checkAuth, chatController.getMessages);
+router.get('/chats/messages-paginated/:chatId', checkAuth, chatController.getMessagesPaginated);
+router.get('/chats/:user2Id', checkAuth, chatController.getChatsByUsers);
+
+
 
 // ✅ Image upload support
 const multer = require('multer');

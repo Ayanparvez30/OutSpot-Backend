@@ -84,3 +84,45 @@ exports.getMessagesPaginated = async (req, res) => {
     res.json(messages);
 };
 
+exports.getChatsByUsers = async (req, res) => {
+  const user1Id = req.authData.id; // assuming the current user's ID is user1
+  const user2Id = parseInt(req.params.user2Id, 10); // parse user2Id to an integer
+
+  if (isNaN(user2Id)) {
+    return res.status(400).json({ message: 'Invalid user ID' });
+  }
+
+  try {
+    const chats = await prisma.chat.findMany({
+      where: {
+        users: {
+          every: {
+            userId: {
+              in: [user1Id, user2Id] // Ensure both are integers
+            }
+          }
+        }
+      },
+      include: {
+        users: {
+          include: {
+            user: true
+          }
+        },
+        messages: true
+      },
+    });
+
+    if (chats.length === 0) {
+      return res.status(404).json({ message: 'No chats found for these users' });
+    }
+
+    res.json(chats);
+  } catch (error) {
+    console.error('Error fetching chats:', error);
+    return res.status(500).json({ message: 'Server error' });
+  }
+};
+
+
+
