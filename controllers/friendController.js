@@ -1023,3 +1023,113 @@ exports.getFriendsWithDetailsAndPosts = async (req, res) => {
     }
 };
 
+exports.getFriendProfile = async (req, res) => {
+  const currentUserId = req.authData.id;
+  const friendId = parseInt(req.params.friendId);
+
+  try {
+    // 1. Check if friendId is accepted friend
+    const friendship = await prisma.friendship.findFirst({
+      where: {
+        status: 'ACCEPTED',
+        OR: [
+          { requesterId: currentUserId, receiverId: friendId },
+          { requesterId: friendId, receiverId: currentUserId }
+        ]
+      }
+    });
+
+    if (!friendship) {
+      return res.status(403).json({ error: "Not friends with this user" });
+    }
+
+    // 2. Get friend full profile
+    const friend = await prisma.user.findUnique({
+      where: { id: friendId },
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        bio: true,
+        totalPoints: true,
+        minime: { select: { avatarUrl: true } }
+      }
+    });
+
+    if (!friend) {
+      return res.status(404).json({ error: "User not found" });
+    }
+// 3. Friend's stories (public/profile only, not in vault)
+const friendStories = await prisma.story.findMany({
+  where: {
+    userId: friendId,
+    visibility: 'profile',
+    isInVault: false
+  },
+  include: {
+    user: {
+      select: {
+        id: true,
+        username: true,
+        minime: { select: { avatarUrl: true } }
+      }
+    }
+  },
+  orderBy: { createdAt: 'desc' }
+});
+    // 4. Friend count
+    const friendCount = await prisma.friendship.count({
+      where: {
+        status: 'ACCEPTED',
+        OR: [
+          { requesterId: friendId },
+          { receiverId: friendId }
+        ]
+      }
+    });
+
+    // 5. Communities
+    const communities = await prisma.communityMember.findMany({
+      where: { userId: friendId },
+      include: { community: true }
+    });
+
+    // 6. Weekly points (reuse logic)
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const weekStart = new Date(now.setDate(diff));
+    weekStart.setHours(0, 0, 0, 0);
+
+    const submissions = await prisma.submission.findMany({
+      where: { userId: friendId, createdAt: { gte: weekStart } },
+      include: { challenge: true }
+    });
+    const challengePoints = submissions.reduce((sum, s) => sum + (s.challenge?.points || 0), 0);
+
+    const locationPoints = await prisma.locationPoint.findMany({
+      where: { userId: friendId, createdAt: { gte: weekStart } }
+    });
+    const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
+
+    const thisWeekPoints = challengePoints + mapPoints;
+
+ return res.status(200).json({
+  success: true,
+  message: "Friend profile fetched",
+  data: {
+    ...friend,
+    friendCount,
+    communities: communities.map(c => c.community),
+    thisWeekPoints,
+    stories: friendStories
+  }
+});
+
+
+  } catch (error) {
+    console.error("Error fetching friend profile:", error);
+    return res.status(500).json({ error: "Failed to fetch friend profile" });
+  }
+};

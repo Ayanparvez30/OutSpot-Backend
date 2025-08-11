@@ -30,6 +30,6 @@ router.post('/contacts/sync', friendController.syncContacts);
 router.get('/friends/search', friendController.searchUsers);
 router.get('/users/blocked', friendController.getBlockedUsers);
 router.get('/friends/sent-requests', friendController.getSentFriendRequests);
-
+router.get('/friends/:friendId/profile',friendController.getFriendProfile)
 
 module.exports = router;
