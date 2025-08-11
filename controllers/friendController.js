@@ -924,3 +924,102 @@ exports.getFriendsAndTheirFriendsCount = async (req, res) => {
     }
 };
 
+// Get friends and their details including photos, posts, and community info
+exports.getFriendsWithDetailsAndPosts = async (req, res) => {
+    const currentUserId = req.authData.id;
+
+    try {
+        // Step 1: Get the list of the current user's friends
+        const friendships = await prisma.friendship.findMany({
+            where: {
+                status: 'ACCEPTED',
+                OR: [
+                    { requesterId: currentUserId },
+                    { receiverId: currentUserId }
+                ]
+            },
+        });
+
+        // Extract friend IDs from the friendship records
+        const friendIds = friendships.map(f => f.requesterId === currentUserId ? f.receiverId : f.requesterId);
+
+        // Step 2: Get the list of each friend's friends and their posts/photos
+        const friendsWithDetails = await Promise.all(friendIds.map(async (friendId) => {
+            // Get the friends of each friend (excluding the current user)
+            const friendFriendships = await prisma.friendship.findMany({
+                where: {
+                    status: 'ACCEPTED',
+                    OR: [
+                        { requesterId: friendId },
+                        { receiverId: friendId }
+                    ],
+                    NOT: [
+                        { requesterId: currentUserId },
+                        { receiverId: currentUserId }
+                    ]
+                },
+            });
+
+            // Step 3: Count the unique friends of each friend
+            const friendFriendIds = new Set(friendFriendships.map(f => f.requesterId === friendId ? f.receiverId : f.requesterId));
+
+            // Get the friend's profile details
+            const friendProfile = await prisma.user.findUnique({
+                where: { id: friendId },
+                select: {
+                    username: true,
+                    firstName: true,
+                    lastName: true,
+                    minime: { select: { avatarUrl: true } },
+                    isProfilePrivate: true
+                }
+            });
+
+            const profilePhoto = !friendProfile.isProfilePrivate ? friendProfile.minime?.avatarUrl : null;
+
+            // Get posts from the friend if the profile is non-private
+            let posts = [];
+            if (!friendProfile.isProfilePrivate) {
+                posts = await prisma.media.findMany({
+                    where: { senderId: friendId },
+                    orderBy: { createdAt: 'desc' },
+                    take: 5  // Limit to latest 5 posts
+                });
+            }
+
+            // Get community details for each friend
+            const communities = await prisma.communityMember.findMany({
+                where: { userId: friendId },
+                include: { community: { select: { id: true, name: true } } }
+            });
+
+            return {
+                friendId,
+                friendCount: friendFriendIds.size,
+                profilePhoto,
+                posts,
+                communities
+            };
+        }));
+
+        // Step 4: Combine the friends with the count of their friends, posts, and community details
+        const result = friendships.map((f) => {
+            const friendId = f.requesterId === currentUserId ? f.receiverId : f.requesterId;
+            const friend = friendsWithDetails.find((fc) => fc.friendId === friendId);
+            return {
+                friendId,
+                friendCount: friend ? friend.friendCount : 0,
+                profilePhoto: friend ? friend.profilePhoto : null,
+                posts: friend ? friend.posts : [],
+                communities: friend ? friend.communities : []
+            };
+        });
+
+        res.json(result);
+
+    } catch (error) {
+        console.error("Error fetching friends with details and posts:", error);
+        res.status(500).json({ error: 'Failed to fetch friends with details and posts' });
+    }
+};
+

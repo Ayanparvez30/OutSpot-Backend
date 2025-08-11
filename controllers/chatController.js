@@ -118,16 +118,18 @@ exports.getChatsByUsers = async (req, res) => {
       return res.status(404).json({ message: 'No chats found for these users' });
     }
 
-    // Flatten the response to only get the user details and chatId for each user
-    const chatIds = chats.map(chat => chat.users).flat();
+    // Reformat the response to match the desired output
+    const chatIds = chats.map(chat => {
+      return {
+        id: chat.users[0].id,
+        userId: chat.users[0].userId,
+        chatId: chat.users[0].chatId
+      };
+    });
 
-    res.json(chatIds); // Return only the required fields: id, userId, and chatId
+    res.json(chatIds); // Return the reformatted response
   } catch (error) {
     console.error('Error fetching chats:', error);
     return res.status(500).json({ message: 'Server error' });
   }
 };
-
-
-
-
