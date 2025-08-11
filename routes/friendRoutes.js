@@ -18,6 +18,9 @@ router.get('/friends/requests/count', friendController.getPendingFriendRequestCo
 
 
 
+router.get('/friends/friends-count', friendController.getFriendsOfFriendsCount);
+router.get('/friends/with-friends-count', friendController.getFriendsAndTheirFriendsCount);
+
 
 router.get('/friends/requests/incoming', friendController.getFriendRequests);
 router.get('/friends', friendController.getFriendList);

@@ -810,3 +810,117 @@ exports.getSentFriendRequests = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch sent friend requests" });
   }
 };
+
+// Get count of friends' friends
+exports.getFriendsOfFriendsCount = async (req, res) => {
+    const currentUserId = req.authData.id;
+
+    try {
+        // Step 1: Get the list of the current user's friends
+        const friendships = await prisma.friendship.findMany({
+            where: {
+                status: 'ACCEPTED',
+                OR: [
+                    { requesterId: currentUserId },
+                    { receiverId: currentUserId }
+                ]
+            },
+        });
+
+        // Extract friend IDs from the friendship records
+        const friendIds = friendships.map(f => f.requesterId === currentUserId ? f.receiverId : f.requesterId);
+
+        // Step 2: Get the list of friends' friends
+        const friendsOfFriends = await prisma.friendship.findMany({
+            where: {
+                status: 'ACCEPTED',
+                OR: [
+                    { requesterId: { in: friendIds } },
+                    { receiverId: { in: friendIds } }
+                ]
+            },
+            select: {
+                requesterId: true,
+                receiverId: true
+            }
+        });
+
+        // Extract unique user IDs from friends' friends
+        const friendsOfFriendsIds = new Set();
+        friendsOfFriends.forEach(f => {
+            if (!friendIds.includes(f.requesterId)) friendsOfFriendsIds.add(f.requesterId);
+            if (!friendIds.includes(f.receiverId)) friendsOfFriendsIds.add(f.receiverId);
+        });
+
+        // Step 3: Return the count of unique friends' friends
+        res.json({ count: friendsOfFriendsIds.size });
+    } catch (error) {
+        console.error("Error fetching friends' friends count:", error);
+        res.status(500).json({ error: 'Failed to fetch count' });
+    }
+};
+
+// Get friends and the count of their friends
+exports.getFriendsAndTheirFriendsCount = async (req, res) => {
+    const currentUserId = req.authData.id;
+
+    try {
+        // Step 1: Get the list of the current user's friends
+        const friendships = await prisma.friendship.findMany({
+            where: {
+                status: 'ACCEPTED',
+                OR: [
+                    { requesterId: currentUserId },
+                    { receiverId: currentUserId }
+                ]
+            },
+        });
+
+        // Extract friend IDs from the friendship records
+        const friendIds = friendships.map(f => f.requesterId === currentUserId ? f.receiverId : f.requesterId);
+
+        // Step 2: Get the list of each friend's friends
+        const friendsWithCount = await Promise.all(friendIds.map(async (friendId) => {
+            // Get the friends of each friend (excluding the current user)
+            const friendFriendships = await prisma.friendship.findMany({
+                where: {
+                    status: 'ACCEPTED',
+                    OR: [
+                        { requesterId: friendId },
+                        { receiverId: friendId }
+                    ],
+                    NOT: [
+                        { requesterId: currentUserId },
+                        { receiverId: currentUserId }
+                    ]
+                },
+            });
+
+            // Step 3: Count the unique friends of each friend
+            const friendFriendIds = new Set(friendFriendships.map(f => f.requesterId === friendId ? f.receiverId : f.requesterId));
+
+            // Return the friend's info and the count of their friends
+            return {
+                friendId,
+                friendCount: friendFriendIds.size
+            };
+        }));
+
+        // Step 4: Combine the friends with the count of their friends
+        const result = friendships.map((f) => {
+            const friendId = f.requesterId === currentUserId ? f.receiverId : f.requesterId;
+            const friend = friendsWithCount.find((fc) => fc.friendId === friendId);
+            return {
+                friendId,
+                friendCount: friend ? friend.friendCount : 0
+            };
+        });
+
+        res.json(result);
+
+    } catch (error) {
+        console.error("Error fetching friends and their friends' count:", error);
+        res.status(500).json({ error: 'Failed to fetch friends and their friends count' });
+    }
+};
+
