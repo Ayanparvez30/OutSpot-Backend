@@ -2,15 +2,21 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+/**
+ * Get Monday of the current week (00:00:00)
+ */
 function getStartOfWeek() {
   const now = new Date();
-  const day = now.getDay();
+  const day = now.getDay(); // Sunday = 0, Monday = 1
   const diff = now.getDate() - day + (day === 0 ? -6 : 1);
   const monday = new Date(now.setDate(diff));
   monday.setHours(0, 0, 0, 0);
   return monday;
 }
-//hello
+
+/**
+ * Prize mapping
+ */
 function getPrizeForRank(rank) {
   if (rank === 1) return '🥇 1st Prize';
   if (rank === 2) return '🥈 2nd Prize';
@@ -20,83 +26,13 @@ function getPrizeForRank(rank) {
   return null;
 }
 
-exports.getWeeklyGlobalLeaderboard = async (req, res) => {
-  const userId = req.authData.id;
-  const weekStart = getStartOfWeek();
-
-  const users = await prisma.user.findMany({
-    include: {
-      minime: {
-        where: { isSaved: true },
-        orderBy: { createdAt: 'desc' },
-        take: 1
-      }
-    }
-  });
-
-  const submissions = await prisma.submission.findMany({
-    where: { createdAt: { gte: weekStart } },
-    include: { challenge: true }
-  });
-
+/**
+ * Utility: Calculate points for given user IDs in the current week
+ */
+async function calculateWeeklyPoints(userIds, weekStart) {
   const pointsByUser = {};
-  for (const sub of submissions) {
-    if (!pointsByUser[sub.userId]) pointsByUser[sub.userId] = 0;
-    pointsByUser[sub.userId] += sub.challenge?.points || 0;
-  }
 
-  const locationPoints = await prisma.locationPoint.findMany({
-    where: { createdAt: { gte: weekStart } }
-  });
-
-  for (const loc of locationPoints) {
-    if (!pointsByUser[loc.userId]) pointsByUser[loc.userId] = 0;
-    pointsByUser[loc.userId] += loc.points || 0;
-  }
-
-  const rawLeaderboard = users.map(user => ({
-    userId: user.id,
-    username: user.username,
-    avatarUrl: user.minime[0]?.avatarUrl || null,
-    points: pointsByUser[user.id] || 0
-  }));
-
-  const sorted = rawLeaderboard.sort((a, b) => b.points - a.points);
-
-  const leaderboard = sorted.map((entry, index) => ({
-    ...entry,
-    rank: index + 1,
-    prize: getPrizeForRank(index + 1)
-  }));
-
-  const myInfo = leaderboard.find(u => u.userId === userId) || null;
-  const myRank = myInfo?.rank || null;
-  const prize = myInfo?.prize || null;
-
-  res.json({ leaderboard: leaderboard.slice(0, 50), myRank, myInfo, prize });
-};
-
-exports.getWeeklyCommunityLeaderboard = async (req, res) => {
-  const userId = req.authData.id;
-  const communityId = parseInt(req.params.communityId);
-  const weekStart = getStartOfWeek();
-
-  const members = await prisma.communityMember.findMany({
-    where: { communityId },
-    include: {
-      user: {
-        include: {
-          minime: {
-            where: { isSaved: true },
-            orderBy: { createdAt: 'desc' },
-            take: 1
-          }
-        }
-      }
-    }
-  });
-
-  const userIds = members.map(m => m.userId);
+  // Challenge submissions
   const submissions = await prisma.submission.findMany({
     where: {
       userId: { in: userIds },
@@ -105,12 +41,11 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
     include: { challenge: true }
   });
 
-  const pointsByUser = {};
   for (const sub of submissions) {
-    if (!pointsByUser[sub.userId]) pointsByUser[sub.userId] = 0;
-    pointsByUser[sub.userId] += sub.challenge?.points || 0;
+    pointsByUser[sub.userId] = (pointsByUser[sub.userId] || 0) + (sub.challenge?.points || 0);
   }
 
+  // Location points
   const locationPoints = await prisma.locationPoint.findMany({
     where: {
       userId: { in: userIds },
@@ -119,83 +54,161 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
   });
 
   for (const loc of locationPoints) {
-    if (!pointsByUser[loc.userId]) pointsByUser[loc.userId] = 0;
-    pointsByUser[loc.userId] += loc.points || 0;
+    pointsByUser[loc.userId] = (pointsByUser[loc.userId] || 0) + (loc.points || 0);
   }
 
-  const rawLeaderboard = members.map(m => ({
-    userId: m.userId,
-    username: m.user.username,
-    avatarUrl: m.user.minime[0]?.avatarUrl || null,
-    points: pointsByUser[m.userId] || 0
-  }));
+  return pointsByUser;
+}
 
-  const sorted = rawLeaderboard.sort((a, b) => b.points - a.points);
+/**
+ * Global leaderboard for all users this week
+ */
+exports.getWeeklyGlobalLeaderboard = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const weekStart = getStartOfWeek();
 
-  const leaderboard = sorted.map((entry, index) => ({
-    ...entry,
-    rank: index + 1,
-    prize: getPrizeForRank(index + 1)
-  }));
-
-  const myInfo = leaderboard.find(u => u.userId === userId) || null;
-  const myRank = myInfo?.rank || null;
-  const prize = myInfo?.prize || null;
-
-  res.json({ leaderboard: leaderboard.slice(0, 50), myRank, myInfo, prize });
-};
-
-exports.getWeeklyCommunityRanks = async (req, res) => {
-  const weekStart = getStartOfWeek();
-
-  const communities = await prisma.community.findMany({
-    include: {
-      members: { select: { userId: true } }
-    }
-  });
-
-  const pointsByCommunity = [];
-
-  for (const community of communities) {
-    const memberIds = community.members.map(m => m.userId);
-
-    const submissions = await prisma.submission.findMany({
-      where: {
-        userId: { in: memberIds },
-        createdAt: { gte: weekStart }
-      },
-      include: { challenge: true }
-    });
-
-    const locationPoints = await prisma.locationPoint.findMany({
-      where: {
-        userId: { in: memberIds },
-        createdAt: { gte: weekStart }
+    const users = await prisma.user.findMany({
+      include: {
+        minime: {
+          where: { isSaved: true },
+          orderBy: { createdAt: 'desc' },
+          take: 1
+        }
       }
     });
 
-    let total = 0;
-    for (const sub of submissions) {
-      total += sub.challenge?.points || 0;
-    }
-    for (const loc of locationPoints) {
-      total += loc.points || 0;
-    }
+    const userIds = users.map(u => u.id);
+    const pointsByUser = await calculateWeeklyPoints(userIds, weekStart);
 
-    pointsByCommunity.push({
-      communityId: community.id,
-      name: community.name,
-      points: total
+    const rawLeaderboard = users.map(user => ({
+      userId: user.id,
+      username: user.username,
+      avatarUrl: user.minime[0]?.avatarUrl || null,
+      points: pointsByUser[user.id] || 0
+    }));
+
+    // Sort & rank
+    const sorted = rawLeaderboard
+      .filter(u => u.points > 0) // Optional: only active users
+      .sort((a, b) => b.points - a.points);
+
+    const leaderboard = sorted.map((entry, index) => ({
+      ...entry,
+      rank: index + 1,
+      prize: getPrizeForRank(index + 1)
+    }));
+
+    const myInfo = leaderboard.find(u => u.userId === userId) || null;
+
+    res.json({
+      leaderboard: leaderboard.slice(0, 50),
+      myRank: myInfo?.rank || null,
+      myInfo,
+      prize: myInfo?.prize || null
     });
+  } catch (error) {
+    console.error('Error in getWeeklyGlobalLeaderboard:', error);
+    res.status(500).json({ error: 'Internal server error' });
   }
+};
 
-  const sorted = pointsByCommunity.sort((a, b) => b.points - a.points);
+/**
+ * Leaderboard for members of a specific community
+ */
+exports.getWeeklyCommunityLeaderboard = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const communityId = parseInt(req.params.communityId);
+    const weekStart = getStartOfWeek();
 
-  const ranked = sorted.map((c, index) => ({
-    ...c,
-    rank: index + 1,
-    prize: getPrizeForRank(index + 1)
-  }));
+    const members = await prisma.communityMember.findMany({
+      where: { communityId },
+      include: {
+        user: {
+          include: {
+            minime: {
+              where: { isSaved: true },
+              orderBy: { createdAt: 'desc' },
+              take: 1
+            }
+          }
+        }
+      }
+    });
 
-  res.json({ leaderboard: ranked });
+    const userIds = members.map(m => m.userId);
+    const pointsByUser = await calculateWeeklyPoints(userIds, weekStart);
+
+    const rawLeaderboard = members.map(m => ({
+      userId: m.userId,
+      username: m.user.username,
+      avatarUrl: m.user.minime[0]?.avatarUrl || null,
+      points: pointsByUser[m.userId] || 0
+    }));
+
+    const sorted = rawLeaderboard
+      .filter(u => u.points > 0)
+      .sort((a, b) => b.points - a.points);
+
+    const leaderboard = sorted.map((entry, index) => ({
+      ...entry,
+      rank: index + 1,
+      prize: getPrizeForRank(index + 1)
+    }));
+
+    const myInfo = leaderboard.find(u => u.userId === userId) || null;
+
+    res.json({
+      leaderboard: leaderboard.slice(0, 50),
+      myRank: myInfo?.rank || null,
+      myInfo,
+      prize: myInfo?.prize || null
+    });
+  } catch (error) {
+    console.error('Error in getWeeklyCommunityLeaderboard:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+};
+
+/**
+ * Community ranking based on total member points
+ */
+exports.getWeeklyCommunityRanks = async (req, res) => {
+  try {
+    const weekStart = getStartOfWeek();
+
+    const communities = await prisma.community.findMany({
+      include: { members: { select: { userId: true } } }
+    });
+
+    const pointsByCommunity = [];
+
+    for (const community of communities) {
+      const memberIds = community.members.map(m => m.userId);
+      const pointsByUser = await calculateWeeklyPoints(memberIds, weekStart);
+      const total = Object.values(pointsByUser).reduce((sum, p) => sum + p, 0);
+
+      pointsByCommunity.push({
+        communityId: community.id,
+        name: community.name,
+        points: total
+      });
+    }
+
+    const sorted = pointsByCommunity
+      .filter(c => c.points > 0)
+      .sort((a, b) => b.points - a.points);
+
+    const ranked = sorted.map((c, index) => ({
+      ...c,
+      rank: index + 1,
+      prize: getPrizeForRank(index + 1)
+    }));
+
+    res.json({ leaderboard: ranked });
+  } catch (error) {
+    console.error('Error in getWeeklyCommunityRanks:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 };
