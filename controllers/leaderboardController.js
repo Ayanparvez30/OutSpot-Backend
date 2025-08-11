@@ -10,7 +10,7 @@ function getStartOfWeek() {
   monday.setHours(0, 0, 0, 0);
   return monday;
 }
-
+//hello
 function getPrizeForRank(rank) {
   if (rank === 1) return '🥇 1st Prize';
   if (rank === 2) return '🥈 2nd Prize';
