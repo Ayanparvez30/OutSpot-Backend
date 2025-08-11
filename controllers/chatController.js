@@ -115,7 +115,7 @@ exports.getChatsByUsers = async (req, res) => {
     });
 
     if (chats.length === 0) {
-      return res.status(404).json({ message: 'No chats found for these users' });
+      return res.status(200).json([]);
     }
 
     // Reformat the response to match the desired output
