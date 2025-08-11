@@ -103,26 +103,31 @@ exports.getChatsByUsers = async (req, res) => {
           }
         }
       },
-      include: {
+      select: {
         users: {
-          include: {
-            user: true
+          select: {
+            id: true,
+            userId: true,
+            chatId: true
           }
-        },
-        messages: true
-      },
+        }
+      }
     });
 
     if (chats.length === 0) {
       return res.status(404).json({ message: 'No chats found for these users' });
     }
 
-    res.json(chats);
+    // Flatten the response to only get the user details and chatId for each user
+    const chatIds = chats.map(chat => chat.users).flat();
+
+    res.json(chatIds); // Return only the required fields: id, userId, and chatId
   } catch (error) {
     console.error('Error fetching chats:', error);
     return res.status(500).json({ message: 'Server error' });
   }
 };
+
 
 
 
