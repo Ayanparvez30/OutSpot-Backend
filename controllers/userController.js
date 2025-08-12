@@ -10,22 +10,31 @@ const openai = new OpenAI({
 });
 const multer = require('multer');
 const path = require('path');
+// const upload = multer({
+//   dest: 'uploads/',
+//   fileFilter: (req, file, cb) => {
+//     const ext = path.extname(file.originalname);
+//     if (!['.jpg', '.jpeg', '.png'].includes(ext)) {
+//       return cb(new Error('Only images are allowed'), false);
+//     }
+//     cb(null, true);
+//   }
+// });
+const response = require('../functions/response');
+require('dotenv').config();
+const nodemailer = require('nodemailer');
+const validBodyTypes = ['masculine', 'feminine'];
+const uploadToS3 = require('../utils/s3Upload');
 const upload = multer({
-  dest: 'uploads/',
+  storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname);
+    const ext = path.extname(file.originalname).toLowerCase();
     if (!['.jpg', '.jpeg', '.png'].includes(ext)) {
       return cb(new Error('Only images are allowed'), false);
     }
     cb(null, true);
   }
 });
-const response = require('../functions/response');
-require('dotenv').config();
-const nodemailer = require('nodemailer');
-const validBodyTypes = ['masculine', 'feminine'];
-
-
 exports.saveProfile = async (req, res) => {
   try {
     const { firstName, lastName, bio, bodyType, bodyShapeUrl } = req.body;
@@ -62,52 +71,48 @@ exports.uploadAvatarWithMulter = async (req, res) => {
   try {
     const userId = req.authData.id;
 
-    // 🟢 Handle premade URL only (no file)
+    // Premade URL case
     if (req.body.premadeUrl) {
       const premadeUrl = req.body.premadeUrl;
       if (!premadeUrl.startsWith('http')) {
         return response.response_with_code(res, 400, 'Invalid premade URL');
       }
 
-      // Clear previous MiniMe
       await prisma.minime.deleteMany({ where: { userId } });
 
-   const minime = await prisma.minime.create({
-  data: {
-    userId,
-    avatarUrl: premadeUrl,
-    isSaved: true  
-  }
-});
-
+      const minime = await prisma.minime.create({
+        data: {
+          userId,
+          avatarUrl: premadeUrl,
+          isSaved: true
+        }
+      });
 
       return response.true_status(res, minime, 'MiniMe uploaded from premade URL');
     }
 
-    // 🟡 Else: Handle file upload normally
+    // File upload to S3
     const file = req.files?.[0];
     if (!file) {
       return response.response_with_code(res, 400, 'No image uploaded');
     }
 
-    const fileUrl = `/uploads/${file.filename}`;
-    const fieldName = file.fieldname.toLowerCase();
+    const s3Url = await uploadToS3(file, "avatars");
 
+    const fieldName = file.fieldname.toLowerCase();
     let avatarData = { userId };
 
     if (fieldName === 'selfie') {
-      avatarData.selfieUrl = fileUrl;
-    } else if (fieldName === 'avatar' || fieldName === 'premade') {
-      avatarData.avatarUrl = fileUrl;
+      avatarData.selfieUrl = s3Url;
     } else {
-      avatarData.avatarUrl = fileUrl;
+      avatarData.avatarUrl = s3Url;
     }
 
     await prisma.minime.deleteMany({ where: { userId } });
 
     const minime = await prisma.minime.create({ data: avatarData });
 
-    return response.true_status(res, minime, 'MiniMe uploaded (field-detected)');
+    return response.true_status(res, minime, 'MiniMe uploaded to S3');
   } catch (err) {
     console.error('Upload error:', err);
     return response.response_with_code(res, 500, 'Upload failed');
@@ -384,21 +389,24 @@ const challengeSubmissions = await prisma.submission.findMany({
     res.status(500).json({ error: 'Failed to fetch points' });
   }
 };
+
+
 exports.submitForPoints = async (req, res) => {
   const userId = req.authData.id;
   const { placeName, latitude, longitude } = req.body;
 
   if (!req.file) return res.status(400).json({ error: 'No media uploaded' });
 
-  const mediaUrl = `/uploads/${req.file.filename}`;
-
   try {
-    const points = 5; // 🔁 You can make this dynamic later
+    // Upload to S3 → folder name: "points"
+    const mediaUrl = await uploadToS3(req.file, "points");
+
+    const points = 5; // later dynamic korte parba
 
     await prisma.locationPoint.create({
       data: {
         userId,
-        mediaUrl,
+        mediaUrl, // ✅ S3 URL store hobe
         placeName,
         latitude: latitude ? parseFloat(latitude) : null,
         longitude: longitude ? parseFloat(longitude) : null,
@@ -419,6 +427,7 @@ exports.submitForPoints = async (req, res) => {
     res.status(500).json({ error: 'Submission failed', details: err.message });
   }
 };
+
 const getLevelFromPoints = (points) => {
   if (points >= 400) return { level: 20, title: "Legendary Explorer" };
   if (points >= 300) return { level: 19, title: "City Sniper" };
