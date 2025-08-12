@@ -4,6 +4,7 @@ const router = express.Router();
 const multer = require('multer');
 const { checkAuth } = require('../middlewares/authMiddleware');
 const mediaController = require('../controllers/mediaController');
+const path = require('path');
 
 const upload = multer({
   storage: multer.memoryStorage(), 
