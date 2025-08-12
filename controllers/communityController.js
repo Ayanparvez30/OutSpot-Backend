@@ -1,6 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-
+const uploadToS3 = require('../utils/s3Upload');  
 const ensureCommunityChat = async (communityId) => {
   let chat = await prisma.chat.findFirst({
     where: { communityId, isCommunity: true },
@@ -21,15 +21,22 @@ const ensureCommunityChat = async (communityId) => {
   return chat;
 };
 
+
 exports.createCommunity = async (req, res) => {
   const { name, description } = req.body;
   const creatorId = req.authData.id;
-  const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
+
+  let imageUrl = null;
+  if (req.file) {
+    // file buffer + originalname diye S3 upload
+    imageUrl = await uploadToS3(req.file, 'community-images');
+  }
 
   const community = await prisma.community.create({
     data: { name, description, creatorId, imageUrl },
   });
 
+  // rest of your code ...
   await prisma.communityMember.create({
     data: { userId: creatorId, communityId: community.id },
   });
@@ -52,7 +59,10 @@ exports.editCommunity = async (req, res) => {
   if (!community) return res.status(404).json({ error: 'Community not found' });
   if (community.creatorId !== userId) return res.status(403).json({ error: 'Only creator can edit' });
 
-  const imageUrl = req.file ? `/uploads/${req.file.filename}` : community.imageUrl;
+  let imageUrl = community.imageUrl;
+  if (req.file) {
+    imageUrl = await uploadToS3(req.file, 'community-images');
+  }
 
   const updated = await prisma.community.update({
     where: { id: community.id },
@@ -61,6 +71,46 @@ exports.editCommunity = async (req, res) => {
 
   res.json(updated);
 };
+// exports.createCommunity = async (req, res) => {
+//   const { name, description } = req.body;
+//   const creatorId = req.authData.id;
+//   const imageUrl = req.file ? `/uploads/${req.file.filename}` : null;
+
+//   const community = await prisma.community.create({
+//     data: { name, description, creatorId, imageUrl },
+//   });
+
+//   await prisma.communityMember.create({
+//     data: { userId: creatorId, communityId: community.id },
+//   });
+
+//   const chat = await ensureCommunityChat(community.id);
+//   await prisma.userOnChat.create({
+//     data: { chatId: chat.id, userId: creatorId },
+//   });
+
+//   res.json(community);
+// };
+
+// exports.editCommunity = async (req, res) => {
+//   const { communityId } = req.params;
+//   const { name, description } = req.body;
+//   const userId = req.authData.id;
+
+//   const community = await prisma.community.findUnique({ where: { id: parseInt(communityId) } });
+
+//   if (!community) return res.status(404).json({ error: 'Community not found' });
+//   if (community.creatorId !== userId) return res.status(403).json({ error: 'Only creator can edit' });
+
+//   const imageUrl = req.file ? `/uploads/${req.file.filename}` : community.imageUrl;
+
+//   const updated = await prisma.community.update({
+//     where: { id: community.id },
+//     data: { name, description, imageUrl },
+//   });
+
+//   res.json(updated);
+// };
 
 exports.getAllCommunities = async (req, res) => {
   const q = req.query.q?.trim();

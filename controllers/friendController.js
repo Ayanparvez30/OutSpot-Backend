@@ -1133,5 +1133,3 @@ const friendStories = await prisma.story.findMany({
     return res.status(500).json({ error: "Failed to fetch friend profile" });
   }
 };
-
-//dummy comit
