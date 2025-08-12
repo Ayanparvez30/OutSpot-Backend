@@ -5,6 +5,8 @@ const authController = require('../controllers/authController');
 const authMiddleware = require('../middlewares/authMiddleware');
 const userController = require('../controllers/userController');
 const { checkAuth } = authMiddleware;
+const path = require('path');
+
 const multer = require('multer');
 const storage = multer.memoryStorage();
 const upload = multer({
