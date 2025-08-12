@@ -1,7 +1,7 @@
 // controllers/mediaController.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const path = require('path');
+
 const fs = require('fs');
 const uploadToS3 = require('../utils/s3Upload'); 
 const path = require('path');
