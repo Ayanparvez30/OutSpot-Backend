@@ -2,7 +2,7 @@
 const express = require('express');
 const app = express();
 app.use(express.json());
-const uploadRoutes = require('./routes/uploadRoutes');
+
 const communityRoutes = require('./routes/communityRoutes');
 app.use('/api', communityRoutes);
 const http = require('http');
@@ -26,8 +26,6 @@ app.use((req, res, next) => {
   next();
 });
 
-
-app.use('/api', uploadRoutes);
 const authRoutes = require('./routes/authRoutes');
 const chatRoutes = require('./routes/chatRoutes');
 const friendRoutes = require('./routes/friendRoutes');

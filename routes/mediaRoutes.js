@@ -5,16 +5,20 @@ const multer = require('multer');
 const { checkAuth } = require('../middlewares/authMiddleware');
 const mediaController = require('../controllers/mediaController');
 
-const storage = multer.diskStorage({
-  destination: 'uploads/',
-  filename: (req, file, cb) => {
-    const ext = file.originalname.split('.').pop();
-    cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}.${ext}`);
+const upload = multer({
+  storage: multer.memoryStorage(), 
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!['.jpg', '.jpeg', '.png', '.mp4', '.mov'].includes(ext)) {
+      return cb(new Error('Only images and videos are allowed'), false);
+    }
+    cb(null, true);
   }
 });
-const upload = multer({ storage });
+
 
 router.post('/upload', checkAuth, upload.single('media'), mediaController.uploadMedia);
+
 router.get('/stories', checkAuth, mediaController.getStories);
 router.post('/stories/profile', checkAuth, mediaController.saveToProfile);
 router.post('/stories/vault', checkAuth, mediaController.saveToVault);
