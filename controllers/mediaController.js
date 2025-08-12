@@ -3,49 +3,53 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const path = require('path');
 const fs = require('fs');
+const uploadToS3 = require('../utils/s3Upload'); 
+const path = require('path');
 
 exports.uploadMedia = async (req, res) => {
   const userId = req.authData.id;
-  const { receiverId, groupId, challengeId, type, postToStory } = req.body;
-const { communityId } = req.body;
+  const { receiverId, groupId, challengeId, type, postToStory, communityId, latitude, longitude } = req.body;
+
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  const fileUrl = `/uploads/${req.file.filename}`;
-  console.log('Received postToStory:', postToStory);
+  try {
+    // Upload file buffer to S3 in 'media' folder
+    const s3Url = await uploadToS3(req.file, 'media');
 
-  const media = await prisma.media.create({
-    data: {
-      senderId: userId,
-      fileUrl,
-      type,
-      receiverId: receiverId ? parseInt(receiverId) : null,
-      groupId: groupId ? parseInt(groupId) : null,
-      challengeId: challengeId ? parseInt(challengeId) : null,
-       communityId: communityId ? parseInt(communityId) : null,
+    const media = await prisma.media.create({
+      data: {
+        senderId: userId,
+        fileUrl: s3Url,
+        type,
+        receiverId: receiverId ? parseInt(receiverId) : null,
+        groupId: groupId ? parseInt(groupId) : null,
+        challengeId: challengeId ? parseInt(challengeId) : null,
+        communityId: communityId ? parseInt(communityId) : null,
+      }
+    });
+
+    if ((postToStory + '').trim().toLowerCase() === 'true') {
+      await prisma.story.create({
+        data: {
+          userId,
+          mediaUrl: s3Url,
+          type,
+          visibility: 'profile',
+          isInVault: false,
+          latitude: parseFloat(latitude) || null,
+          longitude: parseFloat(longitude) || null
+        }
+      });
+      console.log('✅ Story saved successfully');
+    } else {
+      console.log('⚠️ Skipped story save');
     }
-  });
 
-  // ✅ Always save to story with visibility = profile (so friends can see)
-const { latitude, longitude } = req.body;
-
-if ((postToStory + '').trim().toLowerCase() === 'true') {
-  await prisma.story.create({
-    data: {
-      userId,
-      mediaUrl: fileUrl,
-      type,
-      visibility: 'profile',
-      isInVault: false,
-      latitude: parseFloat(latitude) || null,
-      longitude: parseFloat(longitude) || null
-    }
-  });
-    console.log('✅ Story saved successfully');
-  } else {
-    console.log('⚠️ Skipped story save');
+    return res.json({ message: 'Media uploaded', media });
+  } catch (error) {
+    console.error('Upload media error:', error);
+    return res.status(500).json({ error: 'Failed to upload media' });
   }
-
-  return res.json({ message: 'Media uploaded', media });
 };
 
 exports.getStories = async (req, res) => {
