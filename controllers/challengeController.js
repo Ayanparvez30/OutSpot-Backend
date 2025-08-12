@@ -1,5 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+
+const uploadToS3 = require('../utils/s3Upload'); 
 exports.createChallenge = async (req, res) => {
   const { title, description, type, startDate, endDate, points, requiredPhotos } = req.body;
 
@@ -87,15 +89,17 @@ exports.getFilteredChallenges = async (req, res) => {
   res.json(filtered);
 };
 
+
 exports.submitToChallenge = async (req, res) => {
   const userId = req.authData.id;
   const { challengeId } = req.body;
 
   if (!req.file) return res.status(400).json({ error: 'No media uploaded' });
 
-  const mediaUrl = `/uploads/${req.file.filename}`;
-
   try {
+    // Upload buffer to S3 (assuming uploadToS3 accepts multer file object)
+    const s3Url = await uploadToS3(req.file, 'challenge-submissions');
+
     const challenge = await prisma.challenge.findUnique({
       where: { id: parseInt(challengeId) }
     });
@@ -104,7 +108,7 @@ exports.submitToChallenge = async (req, res) => {
 
     const requiredCount = challenge.requiredPhotos || 1;
 
-    // Count how many submissions user already made for this challenge
+    // Check existing submissions count
     const existingSubmissions = await prisma.submission.findMany({
       where: { userId, challengeId: parseInt(challengeId) }
     });
@@ -113,16 +117,16 @@ exports.submitToChallenge = async (req, res) => {
       return res.status(409).json({ error: 'Challenge already completed' });
     }
 
-    // Save new submission
+    // Create new submission with S3 URL
     const submission = await prisma.submission.create({
       data: {
         userId,
         challengeId: challenge.id,
-        mediaUrl
+        mediaUrl: s3Url
       }
     });
 
-    // Award points only once per submission (or you can customize this logic)
+    // Award points
     await prisma.user.update({
       where: { id: userId },
       data: {
@@ -146,8 +150,6 @@ exports.submitToChallenge = async (req, res) => {
     res.status(500).json({ error: 'Failed to submit', details: err.message });
   }
 };
-
-
 exports.getSubmissions = async (req, res) => {
   const { challengeId } = req.params;
   const userId = req.authData.id;
