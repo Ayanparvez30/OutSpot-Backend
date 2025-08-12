@@ -1,5 +1,5 @@
 
-
+const uploadToS3 = require('../utils/s3Upload');
 const express = require('express');
 const router = express.Router();
 const authController = require('../controllers/authController');
@@ -7,7 +7,19 @@ const authMiddleware = require('../middlewares/authMiddleware');
 const userController = require('../controllers/userController');
 const { checkAuth } = authMiddleware;
 const multer = require('multer');
-const upload = multer({ dest: 'uploads/' });
+const multer = require('multer');
+const storage = multer.memoryStorage();
+const upload = multer({
+  storage,
+  fileFilter: (req, file, cb) => {
+    const ext = path.extname(file.originalname).toLowerCase();
+    if (!['.jpg', '.jpeg', '.png'].includes(ext)) {
+      return cb(new Error('Only images are allowed'), false);
+    }
+    cb(null, true);
+  }
+});
+
 router.post('/signup', authController.signup);
 
 router.post('/verify-otp', authController.verifyOtp);
