@@ -116,18 +116,97 @@ exports.createChat = async (req, res) => {
 
 
 exports.getMyChats = async (req, res) => {
-    const currentUserId = req.authData.id;
+  const currentUserId = req.authData.id;
 
+  try {
     const chats = await prisma.chat.findMany({
-        where: {
-            users: { some: { userId: currentUserId } },
+      where: {
+        users: { some: { userId: currentUserId } },
+      },
+      include: {
+        users: {
+          include: {
+            user: true,
+          },
         },
-        include: { users: { include: { user: true } }, messages: true },
-        orderBy: { updatedAt: 'desc' }
+        messages: true,
+      },
+      orderBy: { updatedAt: 'desc' },
     });
 
-    res.json(chats);
+    const weekStart = getStartOfWeek();  // Function to get the start of the current week (Monday)
+
+    // Helper function to calculate points for the current week
+    const getThisWeekPoints = async (userId) => {
+      const submissions = await prisma.submission.findMany({
+        where: {
+          userId,
+          createdAt: { gte: weekStart },
+        },
+        include: { challenge: true },
+      });
+
+      const challengePoints = submissions.reduce(
+        (sum, s) => sum + (s.challenge.points || 0),
+        0
+      );
+
+      const locationPoints = await prisma.locationPoint.findMany({
+        where: {
+          userId,
+          createdAt: { gte: weekStart },
+        },
+      });
+
+      const mapPoints = locationPoints.reduce(
+        (sum, p) => sum + (p.points || 0),
+        0
+      );
+
+      return challengePoints + mapPoints;
+    };
+
+    const enrichedChats = await Promise.all(
+      chats.map(async (chat) => {
+        const chatUsers = await Promise.all(
+          chat.users.map(async (userOnChat) => {
+            const user = userOnChat.user;
+            const thisWeekPoints = await getThisWeekPoints(user.id);
+
+            return {
+              id: user.id,
+              username: user.username,
+              firstName: user.firstName || null,
+              lastName: user.lastName || null,
+              avatarUrl: user.minime?.avatarUrl || null,
+              totalPoints: user.totalPoints || 0,
+              thisWeekPoints,
+              profileUrl: `/api/users/${user.id}/profile`,
+            };
+          })
+        );
+
+        return { ...chat, users: chatUsers };
+      })
+    );
+
+    res.json(enrichedChats);
+  } catch (error) {
+    console.error("Error fetching chats:", error);
+    res.status(500).json({ message: "Server error" });
+  }
 };
+
+// Helper function to calculate the start of the week (Monday)
+function getStartOfWeek() {
+  const now = new Date();
+  const day = now.getDay();
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1); // Adjust for Sunday
+  const monday = new Date(now.setDate(diff));
+  monday.setHours(0, 0, 0, 0);
+  return monday;
+}
+
 
 exports.getMessages = async (req, res) => {
     const { chatId } = req.params;
