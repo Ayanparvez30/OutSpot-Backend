@@ -421,7 +421,7 @@ exports.submitForPoints = async (req, res) => {
       }
     });
 
-    res.json({ message: `You received ${points} points!`, points });
+    res.json({ message: `You received ${points} points!`, points,mediaUrl });
   } catch (err) {
     console.error('Submit for points error:', err);
     res.status(500).json({ error: 'Submission failed', details: err.message });
