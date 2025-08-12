@@ -24,12 +24,7 @@ const storage = multer.diskStorage({
 });
 const upload = multer({ storage });
 
-router.post('/chat/upload', checkAuth, upload.single('image'), (req, res) => {
-  if (!req.file) return res.status(400).json({ error: 'No image uploaded' });
-
-  const fileUrl = `/uploads/${req.file.filename}`;
-  return res.json({ imageUrl: fileUrl });
-});
+router.post('/chat/upload', checkAuth, chatController.uploadChatImage);
 
 module.exports = router;
 

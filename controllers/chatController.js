@@ -1,5 +1,77 @@
+const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const { PrismaClient } = require('@prisma/client');
+const fs = require('fs');
+const multer = require('multer');
 const prisma = new PrismaClient();
+
+// Configure AWS SDK v3 S3 client
+const s3Client = new S3Client({
+  region: process.env.AWS_REGION,
+  credentials: {
+    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
+    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
+  },
+});
+
+// Set up multer to store files temporarily
+const upload = multer({ dest: 'uploads/' });
+
+// Function to upload the file to S3 using AWS SDK v3
+async function uploadFileToS3(filePath, bucketName, fileName) {
+  const fileStream = fs.createReadStream(filePath);
+  const uploadParams = {
+    Bucket: bucketName,
+    Key: fileName, // Unique file name
+    Body: fileStream,
+  };
+
+  try {
+    const data = await s3Client.send(new PutObjectCommand(uploadParams));
+    return `https://${bucketName}.s3.amazonaws.com/${fileName}`; // Return the S3 URL
+  } catch (err) {
+    console.error('Error uploading file to S3:', err);
+    throw err;
+  }
+}
+
+// Controller method for uploading chat image
+exports.uploadChatImage = (req, res) => {
+  upload.single('image')(req, res, async (err) => {
+    if (err) {
+      console.error('Error uploading file:', err);
+      return res.status(400).json({ error: 'Error uploading file', details: err.message });
+    }
+
+    if (!req.file) {
+      return res.status(400).json({ error: 'No image uploaded' });
+    }
+
+    const fileName = `${Date.now()}-${Math.round(Math.random() * 1e9)}.${req.file.originalname.split('.').pop()}`;
+    const filePath = req.file.path;
+
+    try {
+      const fileUrl = await uploadFileToS3(filePath, process.env.AWS_BUCKET_NAME, fileName);
+
+      // Save the uploaded file URL to the database
+      const chatImage = await prisma.chatImage.create({
+        data: {
+          userId: req.authData.id, // Assuming `authData` contains the authenticated user's info
+          fileUrl: fileUrl,
+        },
+      });
+
+      return res.json({ message: 'Image uploaded successfully', chatImage });
+    } catch (err) {
+      return res.status(500).json({ error: 'Failed to upload file to S3', details: err.message });
+    }
+  });
+};
+
+
+
+
+//
+
 
 exports.createChat = async (req, res) => {
     const { userIds, name, isGroup } = req.body;

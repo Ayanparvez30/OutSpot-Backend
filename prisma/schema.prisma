@@ -46,6 +46,8 @@ model User {
   locationPoints         LocationPoint[]
 
   LocationHistory LocationHistory[]
+
+  ChatImage ChatImage[]
 }
 
 model Minime {
@@ -67,6 +69,7 @@ model Minime {
   updatedAt DateTime @updatedAt
 
   userId Int
+ 
   user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
@@ -161,6 +164,15 @@ model Message {
 
   createdAt DateTime @default(now())
 }
+
+
+model ChatImage {
+  id      Int    @id @default(autoincrement())
+  userId  Int
+  fileUrl String
+  user    User   @relation(fields: [userId], references: [id])
+}
+
 
 model UserOnChat {
   id     Int  @id @default(autoincrement())
