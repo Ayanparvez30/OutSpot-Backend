@@ -55,7 +55,7 @@ router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
 router
 router.get('/users/:userId/points', checkAuth, userController.getUserPoints);
 
-router.post('/submit-for-points', upload.single('media'), userController.submitForPoints);
+router.post('/submit-for-points', upload.single('media'),checkAuth, userController.submitForPoints);
 
 router.get('/me/achievements', checkAuth, userController.getAchievementStatus);
 
