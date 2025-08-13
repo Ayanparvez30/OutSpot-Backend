@@ -111,18 +111,26 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     return response.response_with_code(res, 500, 'Upload failed');
   }
 };
-// ================== HELPER ==================
+
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
 async function uploadToS3FromUrl(url, keyPrefix) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch image from ${url}`);
-  const arrayBuffer = await res.arrayBuffer();
-  const buffer = Buffer.from(arrayBuffer);
-  const file = {
-    originalname: `${keyPrefix}.png`,
-    buffer,
-    mimetype: 'image/png'
-  };
-  return await uploadToS3(file, 'minimes');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to fetch image from ${url}`);
+
+    const buffer = await res.arrayBuffer(); // fetch buffer from response
+    const file = {
+      originalname: `${keyPrefix}.png`,
+      buffer: Buffer.from(buffer), // convert ArrayBuffer to Node Buffer
+      mimetype: 'image/png',
+    };
+
+    return await uploadToS3(file, 'minimes');
+  } catch (err) {
+    console.error('uploadToS3FromUrl error:', err);
+    throw err;
+  }
 }
 
 // ================== GENERATE MINIME ==================
