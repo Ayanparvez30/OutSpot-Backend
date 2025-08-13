@@ -9,7 +9,6 @@ const multer = require('multer');
 const path = require('path');
 const response = require('../functions/response');
 require('dotenv').config();
-const nodemailer = require('nodemailer');
 const validBodyTypes = ['masculine', 'feminine'];
 const uploadToS3 = require('../utils/s3Upload');
 
