@@ -4,7 +4,6 @@ const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
 const { hashPassword, comparePassword, randomKey, generateOTP } = require('../utils/helper');
 const { OpenAI } = require("openai");
-const fetch = require('node-fetch');
 const multer = require('multer');
 const path = require('path');
 const response = require('../functions/response');
@@ -12,10 +11,12 @@ require('dotenv').config();
 const validBodyTypes = ['masculine', 'feminine'];
 const uploadToS3 = require('../utils/s3Upload');
 
+// Lazy import fetch for CommonJS
+const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
-
 
 const upload = multer({
   storage: multer.memoryStorage(),
@@ -28,16 +29,24 @@ const upload = multer({
   }
 });
 
+// ================== UTILITY ==================
 async function uploadToS3FromUrl(url, keyPrefix) {
-  const res = await fetch(url);
-  if (!res.ok) throw new Error(`Failed to fetch image from ${url}`);
-  const buffer = await res.buffer();
-  const file = {
-    originalname: `${keyPrefix}.png`,
-    buffer,
-    mimetype: 'image/png'
-  };
-  return await uploadToS3(file, 'minimes');
+  try {
+    const res = await fetch(url);
+    if (!res.ok) throw new Error(`Failed to fetch image from ${url}`);
+
+    const buffer = await res.arrayBuffer(); // fetch buffer from response
+    const file = {
+      originalname: `${keyPrefix}.png`,
+      buffer: Buffer.from(buffer), // convert ArrayBuffer to Node Buffer
+      mimetype: 'image/png',
+    };
+
+    return await uploadToS3(file, 'minimes');
+  } catch (err) {
+    console.error('uploadToS3FromUrl error:', err);
+    throw err;
+  }
 }
 
 // ================== PROFILE ==================
@@ -65,6 +74,7 @@ exports.saveProfile = async (req, res) => {
     return response.response_with_code(res, 500, 'Server error');
   }
 };
+
 // ================== AVATAR UPLOAD ==================
 exports.uploadAvatarWithMulter = async (req, res) => {
   try {
@@ -81,7 +91,7 @@ exports.uploadAvatarWithMulter = async (req, res) => {
           userId,
           avatarUrl: premadeUrl,
           isSaved: false,
-          isDraft: true // Mark premade avatars as draft so they can be used
+          isDraft: true
         }
       });
       return response.true_status(res, minime, 'MiniMe uploaded from premade URL');
@@ -92,12 +102,7 @@ exports.uploadAvatarWithMulter = async (req, res) => {
 
     const s3Url = await uploadToS3(file, "avatars");
 
-    // Determine if it's a selfie or general avatar
-    const avatarData = { 
-      userId, 
-      isSaved: false, 
-      isDraft: true // mark uploaded avatars as draft
-    };
+    const avatarData = { userId, isSaved: false, isDraft: true };
     if (file.fieldname.toLowerCase() === 'selfie') avatarData.selfieUrl = s3Url;
     else avatarData.avatarUrl = s3Url;
 
@@ -111,27 +116,6 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     return response.response_with_code(res, 500, 'Upload failed');
   }
 };
-
-const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
-
-async function uploadToS3FromUrl(url, keyPrefix) {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to fetch image from ${url}`);
-
-    const buffer = await res.arrayBuffer(); // fetch buffer from response
-    const file = {
-      originalname: `${keyPrefix}.png`,
-      buffer: Buffer.from(buffer), // convert ArrayBuffer to Node Buffer
-      mimetype: 'image/png',
-    };
-
-    return await uploadToS3(file, 'minimes');
-  } catch (err) {
-    console.error('uploadToS3FromUrl error:', err);
-    throw err;
-  }
-}
 
 // ================== GENERATE MINIME ==================
 exports.generateMinime = async (req, res) => {
@@ -175,7 +159,10 @@ exports.generateMinime = async (req, res) => {
       size: "1024x1024"
     });
 
-    const uploadedImageUrl = await uploadToS3FromUrl(imageResponse.data[0].url, `minime-${userId}-${Date.now()}`);
+    const uploadedImageUrl = await uploadToS3FromUrl(
+      imageResponse.data[0].url,
+      `minime-${userId}-${Date.now()}`
+    );
 
     const newMini = await prisma.minime.create({
       data: {
@@ -200,6 +187,7 @@ exports.regenerateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
     const user = await prisma.user.findUnique({ where: { id: userId } });
+
     const lastMini = await prisma.minime.findFirst({
       where: { userId },
       orderBy: { createdAt: 'desc' }
@@ -228,7 +216,10 @@ exports.regenerateMinime = async (req, res) => {
       size: "1024x1024"
     });
 
-    const uploadedImageUrl = await uploadToS3FromUrl(imageResponse.data[0].url, `minime-${userId}-${Date.now()}`);
+    const uploadedImageUrl = await uploadToS3FromUrl(
+      imageResponse.data[0].url,
+      `minime-${userId}-${Date.now()}`
+    );
 
     const newMini = await prisma.minime.create({
       data: {
@@ -254,7 +245,7 @@ exports.regenerateMinime = async (req, res) => {
   }
 };
 
-
+// ================== SAVE LATEST MINIME ==================
 exports.saveLatestMinime = async (req, res) => {
   const userId = req.authData.id;
   const draft = await prisma.minime.findFirst({
@@ -271,6 +262,7 @@ exports.saveLatestMinime = async (req, res) => {
 
   return response.true_status(res, null, 'MiniMe saved');
 };
+
 
 exports.getCurrentMinime = async (req, res) => {
   const userId = req.authData.id;
