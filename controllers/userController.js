@@ -4,27 +4,20 @@ const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
 const { hashPassword, comparePassword, randomKey, generateOTP } = require('../utils/helper');
 const { OpenAI } = require("openai");
-
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
+const fetch = require('node-fetch');
 const multer = require('multer');
 const path = require('path');
-// const upload = multer({
-//   dest: 'uploads/',
-//   fileFilter: (req, file, cb) => {
-//     const ext = path.extname(file.originalname);
-//     if (!['.jpg', '.jpeg', '.png'].includes(ext)) {
-//       return cb(new Error('Only images are allowed'), false);
-//     }
-//     cb(null, true);
-//   }
-// });
 const response = require('../functions/response');
 require('dotenv').config();
 const nodemailer = require('nodemailer');
 const validBodyTypes = ['masculine', 'feminine'];
 const uploadToS3 = require('../utils/s3Upload');
+
+const openai = new OpenAI({
+  apiKey: process.env.OPENAI_API_KEY,
+});
+
+
 const upload = multer({
   storage: multer.memoryStorage(),
   fileFilter: (req, file, cb) => {
@@ -35,6 +28,20 @@ const upload = multer({
     cb(null, true);
   }
 });
+
+async function uploadToS3FromUrl(url, keyPrefix) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch image from ${url}`);
+  const buffer = await res.buffer();
+  const file = {
+    originalname: `${keyPrefix}.png`,
+    buffer,
+    mimetype: 'image/png'
+  };
+  return await uploadToS3(file, 'minimes');
+}
+
+// ================== PROFILE ==================
 exports.saveProfile = async (req, res) => {
   try {
     const { firstName, lastName, bio, bodyType, bodyShapeUrl } = req.body;
@@ -48,16 +55,9 @@ exports.saveProfile = async (req, res) => {
       return response.response_with_code(res, 400, 'Invalid body type');
     }
 
-    // Update user profile with bodyShapeUrl instead of height/weight
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: {
-        firstName,
-        lastName,
-        bio,
-        bodyType,
-        bodyShapeUrl 
-      },
+      data: { firstName, lastName, bio, bodyType, bodyShapeUrl }
     });
 
     return response.true_status(res, updatedUser, 'Profile saved');
@@ -67,49 +67,32 @@ exports.saveProfile = async (req, res) => {
   }
 };
 
+// ================== AVATAR UPLOAD ==================
 exports.uploadAvatarWithMulter = async (req, res) => {
   try {
     const userId = req.authData.id;
 
-    // Premade URL case
     if (req.body.premadeUrl) {
       const premadeUrl = req.body.premadeUrl;
       if (!premadeUrl.startsWith('http')) {
         return response.response_with_code(res, 400, 'Invalid premade URL');
       }
-
       await prisma.minime.deleteMany({ where: { userId } });
-
       const minime = await prisma.minime.create({
-        data: {
-          userId,
-          avatarUrl: premadeUrl,
-          isSaved: true
-        }
+        data: { userId, avatarUrl: premadeUrl, isSaved: true }
       });
-
       return response.true_status(res, minime, 'MiniMe uploaded from premade URL');
     }
 
-    // File upload to S3
     const file = req.files?.[0];
-    if (!file) {
-      return response.response_with_code(res, 400, 'No image uploaded');
-    }
+    if (!file) return response.response_with_code(res, 400, 'No image uploaded');
 
     const s3Url = await uploadToS3(file, "avatars");
-
-    const fieldName = file.fieldname.toLowerCase();
     let avatarData = { userId };
-
-    if (fieldName === 'selfie') {
-      avatarData.selfieUrl = s3Url;
-    } else {
-      avatarData.avatarUrl = s3Url;
-    }
+    if (file.fieldname.toLowerCase() === 'selfie') avatarData.selfieUrl = s3Url;
+    else avatarData.avatarUrl = s3Url;
 
     await prisma.minime.deleteMany({ where: { userId } });
-
     const minime = await prisma.minime.create({ data: avatarData });
 
     return response.true_status(res, minime, 'MiniMe uploaded to S3');
@@ -118,13 +101,12 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     return response.response_with_code(res, 500, 'Upload failed');
   }
 };
+
+
 exports.generateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
-    const {
-      shirt, pant, shoes, glasses,
-      lipstick, jewelry, bag
-    } = req.body;
+    const { shirt, pant, shoes, glasses, lipstick, jewelry, bag } = req.body;
 
     const user = await prisma.user.findUnique({ where: { id: userId } });
     if (!user || !user.bodyShapeUrl) {
@@ -132,7 +114,6 @@ exports.generateMinime = async (req, res) => {
     }
 
     const isFeminine = user.bodyType === 'feminine';
-
     const lastMini = await prisma.minime.findFirst({
       where: { userId, isSaved: true },
       orderBy: { createdAt: 'desc' }
@@ -141,39 +122,31 @@ exports.generateMinime = async (req, res) => {
     const faceReference = lastMini?.selfieUrl || lastMini?.avatarUrl;
     if (!faceReference) return response.response_with_code(res, 400, 'No face reference available');
 
-    // Clear previous draft
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
-    const prompt = [
-      "Create a full-body 3D cartoon avatar in Pixar-style with realistic soft textures.",
-      `Use the provided body shape image: ${user.bodyShapeUrl}`,
-      `Use the face reference image: ${faceReference}`,
-      `- Shirt: ${shirt || 'none'}`,
-      `- Pant: ${pant || 'none'}`,
-      `- Shoes: ${shoes || 'none'}`,
-      `- Glasses: ${glasses || 'none'}`,
-      ...(isFeminine ? [
-        `- Lipstick: ${lipstick || 'none'}`,
-        `- Jewelry: ${jewelry || 'none'}`,
-        `- Bag: ${bag || 'none'}`
-      ] : []),
-      "Pose reference: standing straight, front-facing, arms relaxed at sides.",
-      "Add 10% padding below the feet to prevent cutoff.",
-      "Use a clean white background."
-    ].join('\n');
+    const prompt = `
+      Create a full-body 3D cartoon avatar in Pixar style.
+      Body shape: ${user.bodyShapeUrl}
+      Face: ${faceReference}
+      Outfit:
+        Shirt: ${shirt || 'none'}
+        Pant: ${pant || 'none'}
+        Shoes: ${shoes || 'none'}
+        Glasses: ${glasses || 'none'}
+      ${isFeminine ? `Lipstick: ${lipstick || 'none'}\nJewelry: ${jewelry || 'none'}\nBag: ${bag || 'none'}` : ''}
+      Standing straight, front-facing, white background.
+    `;
 
-    const imageResponse = await openai.images.generate({ prompt, n: 1, size: "1024x1024" });
+    const imageResponse = await openai.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      size: "1024x1024"
+    });
+
+    const uploadedImageUrl = await uploadToS3FromUrl(imageResponse.data[0].url, `minime-${userId}-${Date.now()}`);
 
     const newMini = await prisma.minime.create({
-      data: {
-        userId,
-        avatarUrl: imageResponse.data[0].url,
-        selfieUrl: faceReference,
-        shirt, pant, shoes, glasses,
-        lipstick, jewelry, bag,
-        isSaved: false,
-        isDraft: true
-      }
+      data: { userId, avatarUrl: uploadedImageUrl, selfieUrl: faceReference, shirt, pant, shoes, glasses, lipstick, jewelry, bag, isSaved: false, isDraft: true }
     });
 
     return response.true_status(res, newMini, 'MiniMe draft generated');
@@ -183,6 +156,7 @@ exports.generateMinime = async (req, res) => {
   }
 };
 
+// ================== REGENERATE MINIME ==================
 exports.regenerateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -196,38 +170,30 @@ exports.regenerateMinime = async (req, res) => {
     if (!user || !draft) return response.response_with_code(res, 404, 'No draft MiniMe found');
 
     const isFeminine = user.bodyType === 'feminine';
-    const faceReference = draft.selfieUrl;
-
     const expressions = ['natural face', 'slight smile', 'happy look'];
-    const prompt = [
-      "Full-body 3D cartoon avatar in Pixar style with soft textures and realistic proportions.",
-      `Body: ${user.bodyShapeUrl}`,
-      `Face: ${faceReference}`,
-      `Clothes: shirt=${draft.shirt}, pant=${draft.pant}, shoes=${draft.shoes}, glasses=${draft.glasses}`,
-      ...(isFeminine ? [`Extras: lipstick=${draft.lipstick}, jewelry=${draft.jewelry}, bag=${draft.bag}`] : []),
-      `Expression: ${expressions[Math.floor(Math.random() * expressions.length)]}`
-    ].join('\n');
 
-    // Delete current draft
+    const prompt = `
+      Full-body 3D cartoon avatar in Pixar style.
+      Body: ${user.bodyShapeUrl}
+      Face: ${draft.selfieUrl}
+      Clothes: shirt=${draft.shirt}, pant=${draft.pant}, shoes=${draft.shoes}, glasses=${draft.glasses}
+      ${isFeminine ? `Lipstick=${draft.lipstick}, Jewelry=${draft.jewelry}, Bag=${draft.bag}` : ''}
+      Expression: ${expressions[Math.floor(Math.random() * expressions.length)]}
+      White background.
+    `;
+
     await prisma.minime.delete({ where: { id: draft.id } });
 
-    const imageResponse = await openai.images.generate({ prompt, n: 1, size: "1024x1024" });
+    const imageResponse = await openai.images.generate({
+      model: "gpt-image-1",
+      prompt,
+      size: "1024x1024"
+    });
+
+    const uploadedImageUrl = await uploadToS3FromUrl(imageResponse.data[0].url, `minime-${userId}-${Date.now()}`);
 
     const newMini = await prisma.minime.create({
-      data: {
-        userId,
-        avatarUrl: imageResponse.data[0].url,
-        selfieUrl: faceReference,
-        shirt: draft.shirt,
-        pant: draft.pant,
-        shoes: draft.shoes,
-        glasses: draft.glasses,
-        lipstick: draft.lipstick,
-        jewelry: draft.jewelry,
-        bag: draft.bag,
-        isSaved: false,
-        isDraft: true
-      }
+      data: { userId, avatarUrl: uploadedImageUrl, selfieUrl: draft.selfieUrl, shirt: draft.shirt, pant: draft.pant, shoes: draft.shoes, glasses: draft.glasses, lipstick: draft.lipstick, jewelry: draft.jewelry, bag: draft.bag, isSaved: false, isDraft: true }
     });
 
     return response.true_status(res, newMini, 'MiniMe regenerated');
@@ -236,6 +202,7 @@ exports.regenerateMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'Regeneration failed');
   }
 };
+
 
 exports.saveLatestMinime = async (req, res) => {
   const userId = req.authData.id;

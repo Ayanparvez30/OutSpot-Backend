@@ -62,7 +62,7 @@ router.get('/me/achievements', checkAuth, userController.getAchievementStatus);
 router.post(
   '/minime/upload-avatar',
   checkAuth,
-upload.any() // accept any key
+upload.any()
 ,
   userController.uploadAvatarWithMulter
 );
