@@ -151,9 +151,9 @@ exports.getCommunityDetails = async (req, res) => {
           lastName: true,
           bio: true,
           totalPoints: true,
-        minime: {
+          minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+  where: { isSaved: true } 
 }
 
         },

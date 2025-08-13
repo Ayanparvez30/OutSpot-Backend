@@ -161,9 +161,9 @@ exports.getSubmissions = async (req, res) => {
     },
     include: {
       user: {
-        select: { id: true, username: true, minime: {
+        select: { id: true, username: true,      minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+  where: { isSaved: true } 
 }
  }
       }

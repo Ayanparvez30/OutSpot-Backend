@@ -299,7 +299,10 @@ exports.getUserProfile = async (req, res) => {
       lastName: true,
       bio: true,
       isProfilePrivate: true,
-      minime: { select: { avatarUrl: true } }
+     minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true } 
+}
     }
   });
 
