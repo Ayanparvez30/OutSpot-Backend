@@ -65,7 +65,11 @@ exports.searchUsers = async (req, res) => {
         firstName: true,
         lastName: true,
         totalPoints: true,
-        minime: { select: { avatarUrl: true } }
+  minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } 
+}
+
       },
       take: 30
     });
@@ -325,7 +329,11 @@ exports.getFriendList = async (req, res) => {
           firstName: true,
           lastName: true,
           totalPoints: true,
-          minime: { select: { avatarUrl: true } }
+        minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
         }
       },
       receiver: {
@@ -335,7 +343,11 @@ exports.getFriendList = async (req, res) => {
           firstName: true,
           lastName: true,
           totalPoints: true,
-          minime: { select: { avatarUrl: true } }
+    minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
         }
       }
     }
@@ -468,7 +480,11 @@ exports.getFriendRequests = async (req, res) => {
             firstName: true,
             lastName: true,
             totalPoints: true,
-            minime: { select: { avatarUrl: true } }
+          minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
           }
         }
       }
@@ -585,7 +601,11 @@ exports.getRecommendedFriends = async (req, res) => {
     select: {
       id: true,
       username: true,
-      minime: { select: { avatarUrl: true } }
+minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
     }
   });
 
@@ -602,13 +622,21 @@ exports.getRecommendedFriends = async (req, res) => {
       requester: {
         select: {
           id: true, username: true,
-          minime: { select: { avatarUrl: true } }
+   minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
         }
       },
       receiver: {
         select: {
           id: true, username: true,
-          minime: { select: { avatarUrl: true } }
+         minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
         }
       }
     }
@@ -631,7 +659,11 @@ exports.getRecommendedFriends = async (req, res) => {
         select: {
           id: true,
           username: true,
-          minime: { select: { avatarUrl: true } }
+    minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
         }
       }
     }
@@ -716,7 +748,11 @@ exports.syncContacts = async (req, res) => {
       id: true,
       username: true,
       phone: true,
-      minime: { select: { avatarUrl: true } }
+      minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
     }
   });
 
@@ -740,8 +776,11 @@ exports.getBlockedUsers = async (req, res) => {
             username: true,
             firstName: true,
             lastName: true,
-            totalPoints: true,
-            minime: { select: { avatarUrl: true } }
+       minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
           }
         }
       }
@@ -785,7 +824,11 @@ exports.getSentFriendRequests = async (req, res) => {
             firstName: true,
             lastName: true,
             totalPoints: true,
-            minime: { select: { avatarUrl: true } }
+    minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
           }
         }
       }
@@ -842,7 +885,11 @@ exports.getFriendProfile = async (req, res) => {
         lastName: true,
         bio: true,
         totalPoints: true,
-        minime: { select: { avatarUrl: true } }
+        minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } 
+}
+
       }
     });
 
@@ -861,7 +908,11 @@ const friendStories = await prisma.story.findMany({
       select: {
         id: true,
         username: true,
-        minime: { select: { avatarUrl: true } }
+    minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } 
+}
+
       }
     }
   },

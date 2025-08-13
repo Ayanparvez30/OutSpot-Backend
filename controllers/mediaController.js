@@ -213,7 +213,11 @@ exports.getFriendLocations = async (req, res) => {
           select: {
             id: true,
             username: true,
-            minime: { select: { avatarUrl: true } }
+       minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+
           }
         }
       }
@@ -282,7 +286,11 @@ exports.getStoriesWithLocation = async (req, res) => {
     },
     include: {
       user: {
-        select: { id: true, username: true, minime: { select: { avatarUrl: true } } }
+        select: { id: true, username: true, minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } // saved drafts (generated)
+}
+ }
       }
     },
     orderBy: { createdAt: 'desc' }

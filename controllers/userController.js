@@ -513,7 +513,11 @@ exports.getProfile = async (req, res) => {
         bio: true,
         bodyType: true,
         bodyShapeUrl: true,
-        minime: { select: { avatarUrl: true } }
+     minime: {
+  select: { avatarUrl: true },
+  where: { isSaved: true, isDraft: true } 
+}
+
       }
     });
 
