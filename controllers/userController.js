@@ -175,20 +175,18 @@ exports.generateMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'Failed to generate MiniMe');
   }
 };
-
-
-// ================== REGENERATE MINIME ==================
 exports.regenerateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
     const user = await prisma.user.findUnique({ where: { id: userId } });
 
-    const draft = await prisma.minime.findFirst({
-      where: { userId, isSaved: false, isDraft: true },
+    // Get last MiniMe of any type
+    const lastMini = await prisma.minime.findFirst({
+      where: { userId },
       orderBy: { createdAt: 'desc' }
     });
 
-    if (!user || !draft) return response.response_with_code(res, 404, 'No draft MiniMe found');
+    if (!user || !lastMini) return response.response_with_code(res, 404, 'No MiniMe available');
 
     const isFeminine = user.bodyType === 'feminine';
     const expressions = ['natural face', 'slight smile', 'happy look'];
@@ -196,14 +194,15 @@ exports.regenerateMinime = async (req, res) => {
     const prompt = `
       Full-body 3D cartoon avatar in Pixar style.
       Body: ${user.bodyShapeUrl}
-      Face: ${draft.selfieUrl || draft.avatarUrl}
-      Clothes: shirt=${draft.shirt}, pant=${draft.pant}, shoes=${draft.shoes}, glasses=${draft.glasses}
-      ${isFeminine ? `Lipstick=${draft.lipstick}, Jewelry=${draft.jewelry}, Bag=${draft.bag}` : ''}
+      Face: ${lastMini.selfieUrl || lastMini.avatarUrl}
+      Clothes: shirt=${lastMini.shirt}, pant=${lastMini.pant}, shoes=${lastMini.shoes}, glasses=${lastMini.glasses}
+      ${isFeminine ? `Lipstick=${lastMini.lipstick}, Jewelry=${lastMini.jewelry}, Bag=${lastMini.bag}` : ''}
       Expression: ${expressions[Math.floor(Math.random() * expressions.length)]}
       White background.
     `;
 
-    await prisma.minime.delete({ where: { id: draft.id } });
+    // Remove previous draft if exists
+    await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
     const imageResponse = await openai.images.generate({
       model: "gpt-image-1",
@@ -217,14 +216,14 @@ exports.regenerateMinime = async (req, res) => {
       data: {
         userId,
         avatarUrl: uploadedImageUrl,
-        selfieUrl: draft.selfieUrl,
-        shirt: draft.shirt,
-        pant: draft.pant,
-        shoes: draft.shoes,
-        glasses: draft.glasses,
-        lipstick: draft.lipstick,
-        jewelry: draft.jewelry,
-        bag: draft.bag,
+        selfieUrl: lastMini.selfieUrl,
+        shirt: lastMini.shirt,
+        pant: lastMini.pant,
+        shoes: lastMini.shoes,
+        glasses: lastMini.glasses,
+        lipstick: lastMini.lipstick,
+        jewelry: lastMini.jewelry,
+        bag: lastMini.bag,
         isSaved: false,
         isDraft: true
       }
@@ -236,6 +235,7 @@ exports.regenerateMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'Regeneration failed');
   }
 };
+
 
 exports.saveLatestMinime = async (req, res) => {
   const userId = req.authData.id;
