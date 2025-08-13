@@ -65,7 +65,6 @@ exports.saveProfile = async (req, res) => {
     return response.response_with_code(res, 500, 'Server error');
   }
 };
-
 // ================== AVATAR UPLOAD ==================
 exports.uploadAvatarWithMulter = async (req, res) => {
   try {
@@ -78,7 +77,12 @@ exports.uploadAvatarWithMulter = async (req, res) => {
       }
       await prisma.minime.deleteMany({ where: { userId } });
       const minime = await prisma.minime.create({
-        data: { userId, avatarUrl: premadeUrl, isSaved: true }
+        data: {
+          userId,
+          avatarUrl: premadeUrl,
+          isSaved: false,
+          isDraft: true // Mark premade avatars as draft so they can be used
+        }
       });
       return response.true_status(res, minime, 'MiniMe uploaded from premade URL');
     }
@@ -87,11 +91,18 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     if (!file) return response.response_with_code(res, 400, 'No image uploaded');
 
     const s3Url = await uploadToS3(file, "avatars");
-    let avatarData = { userId };
+
+    // Determine if it's a selfie or general avatar
+    const avatarData = { 
+      userId, 
+      isSaved: false, 
+      isDraft: true // mark uploaded avatars as draft
+    };
     if (file.fieldname.toLowerCase() === 'selfie') avatarData.selfieUrl = s3Url;
     else avatarData.avatarUrl = s3Url;
 
-    await prisma.minime.deleteMany({ where: { userId } });
+    await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
+
     const minime = await prisma.minime.create({ data: avatarData });
 
     return response.true_status(res, minime, 'MiniMe uploaded to S3');
@@ -114,23 +125,16 @@ exports.generateMinime = async (req, res) => {
 
     const isFeminine = user.bodyType === 'feminine';
 
-    // Try to get the last saved MiniMe
-    let lastMini = await prisma.minime.findFirst({
-      where: { userId, isSaved: true },
+    // Get the last MiniMe, ANY type (saved, draft, uploaded avatar)
+    const lastMini = await prisma.minime.findFirst({
+      where: { userId },
       orderBy: { createdAt: 'desc' }
     });
-
-    // Fallback to draft MiniMe if no saved one exists
-    if (!lastMini) {
-      lastMini = await prisma.minime.findFirst({
-        where: { userId, isDraft: true },
-        orderBy: { createdAt: 'desc' }
-      });
-    }
 
     const faceReference = lastMini?.selfieUrl || lastMini?.avatarUrl;
     if (!faceReference) return response.response_with_code(res, 400, 'No face reference available');
 
+    // Remove previous draft MiniMes
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
     const prompt = `
@@ -158,7 +162,7 @@ exports.generateMinime = async (req, res) => {
       data: {
         userId,
         avatarUrl: uploadedImageUrl,
-        selfieUrl: faceReference,
+        selfieUrl: lastMini.selfieUrl,
         shirt, pant, shoes, glasses, lipstick, jewelry, bag,
         isSaved: false,
         isDraft: true
@@ -171,6 +175,7 @@ exports.generateMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'Failed to generate MiniMe');
   }
 };
+
 
 // ================== REGENERATE MINIME ==================
 exports.regenerateMinime = async (req, res) => {
