@@ -50,7 +50,7 @@ exports.uploadChatImage = (req, res) => {
     const filePath = req.file.path;
 
     try {
-      const fileUrl = await uploadFileToS3(filePath, process.env.AWS_BUCKET_NAME, fileName);
+      const fileUrl = await uploadFileToS3(filePath, process.env.S3_BUCKET_NAME, fileName);
 
       // Save the uploaded file URL to the database
       const chatImage = await prisma.chatImage.create({
