@@ -111,6 +111,19 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     return response.response_with_code(res, 500, 'Upload failed');
   }
 };
+// ================== HELPER ==================
+async function uploadToS3FromUrl(url, keyPrefix) {
+  const res = await fetch(url);
+  if (!res.ok) throw new Error(`Failed to fetch image from ${url}`);
+  const arrayBuffer = await res.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  const file = {
+    originalname: `${keyPrefix}.png`,
+    buffer,
+    mimetype: 'image/png'
+  };
+  return await uploadToS3(file, 'minimes');
+}
 
 // ================== GENERATE MINIME ==================
 exports.generateMinime = async (req, res) => {
@@ -125,7 +138,6 @@ exports.generateMinime = async (req, res) => {
 
     const isFeminine = user.bodyType === 'feminine';
 
-    // Get the last MiniMe, ANY type (saved, draft, uploaded avatar)
     const lastMini = await prisma.minime.findFirst({
       where: { userId },
       orderBy: { createdAt: 'desc' }
@@ -134,7 +146,6 @@ exports.generateMinime = async (req, res) => {
     const faceReference = lastMini?.selfieUrl || lastMini?.avatarUrl;
     if (!faceReference) return response.response_with_code(res, 400, 'No face reference available');
 
-    // Remove previous draft MiniMes
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
     const prompt = `
@@ -175,12 +186,12 @@ exports.generateMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'Failed to generate MiniMe');
   }
 };
+
+// ================== REGENERATE MINIME ==================
 exports.regenerateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
     const user = await prisma.user.findUnique({ where: { id: userId } });
-
-    // Get last MiniMe of any type
     const lastMini = await prisma.minime.findFirst({
       where: { userId },
       orderBy: { createdAt: 'desc' }
@@ -201,7 +212,6 @@ exports.regenerateMinime = async (req, res) => {
       White background.
     `;
 
-    // Remove previous draft if exists
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
     const imageResponse = await openai.images.generate({
