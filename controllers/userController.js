@@ -151,7 +151,7 @@ exports.generateMinime = async (req, res) => {
     `;
 
     const imageResponse = await openai.images.generate({
-      model: "gpt-image-1",
+      // model: "gpt-image-1",
       prompt,
       size: "1024x1024"
     });
@@ -205,7 +205,7 @@ exports.regenerateMinime = async (req, res) => {
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
     const imageResponse = await openai.images.generate({
-      model: "gpt-image-1",
+      // model: "gpt-image-1",
       prompt,
       size: "1024x1024"
     });
