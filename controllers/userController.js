@@ -101,7 +101,7 @@ exports.uploadAvatarWithMulter = async (req, res) => {
   }
 };
 
-
+// ================== GENERATE MINIME ==================
 exports.generateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -113,10 +113,20 @@ exports.generateMinime = async (req, res) => {
     }
 
     const isFeminine = user.bodyType === 'feminine';
-    const lastMini = await prisma.minime.findFirst({
+
+    // Try to get the last saved MiniMe
+    let lastMini = await prisma.minime.findFirst({
       where: { userId, isSaved: true },
       orderBy: { createdAt: 'desc' }
     });
+
+    // Fallback to draft MiniMe if no saved one exists
+    if (!lastMini) {
+      lastMini = await prisma.minime.findFirst({
+        where: { userId, isDraft: true },
+        orderBy: { createdAt: 'desc' }
+      });
+    }
 
     const faceReference = lastMini?.selfieUrl || lastMini?.avatarUrl;
     if (!faceReference) return response.response_with_code(res, 400, 'No face reference available');
@@ -145,7 +155,14 @@ exports.generateMinime = async (req, res) => {
     const uploadedImageUrl = await uploadToS3FromUrl(imageResponse.data[0].url, `minime-${userId}-${Date.now()}`);
 
     const newMini = await prisma.minime.create({
-      data: { userId, avatarUrl: uploadedImageUrl, selfieUrl: faceReference, shirt, pant, shoes, glasses, lipstick, jewelry, bag, isSaved: false, isDraft: true }
+      data: {
+        userId,
+        avatarUrl: uploadedImageUrl,
+        selfieUrl: faceReference,
+        shirt, pant, shoes, glasses, lipstick, jewelry, bag,
+        isSaved: false,
+        isDraft: true
+      }
     });
 
     return response.true_status(res, newMini, 'MiniMe draft generated');
@@ -174,7 +191,7 @@ exports.regenerateMinime = async (req, res) => {
     const prompt = `
       Full-body 3D cartoon avatar in Pixar style.
       Body: ${user.bodyShapeUrl}
-      Face: ${draft.selfieUrl}
+      Face: ${draft.selfieUrl || draft.avatarUrl}
       Clothes: shirt=${draft.shirt}, pant=${draft.pant}, shoes=${draft.shoes}, glasses=${draft.glasses}
       ${isFeminine ? `Lipstick=${draft.lipstick}, Jewelry=${draft.jewelry}, Bag=${draft.bag}` : ''}
       Expression: ${expressions[Math.floor(Math.random() * expressions.length)]}
@@ -192,7 +209,20 @@ exports.regenerateMinime = async (req, res) => {
     const uploadedImageUrl = await uploadToS3FromUrl(imageResponse.data[0].url, `minime-${userId}-${Date.now()}`);
 
     const newMini = await prisma.minime.create({
-      data: { userId, avatarUrl: uploadedImageUrl, selfieUrl: draft.selfieUrl, shirt: draft.shirt, pant: draft.pant, shoes: draft.shoes, glasses: draft.glasses, lipstick: draft.lipstick, jewelry: draft.jewelry, bag: draft.bag, isSaved: false, isDraft: true }
+      data: {
+        userId,
+        avatarUrl: uploadedImageUrl,
+        selfieUrl: draft.selfieUrl,
+        shirt: draft.shirt,
+        pant: draft.pant,
+        shoes: draft.shoes,
+        glasses: draft.glasses,
+        lipstick: draft.lipstick,
+        jewelry: draft.jewelry,
+        bag: draft.bag,
+        isSaved: false,
+        isDraft: true
+      }
     });
 
     return response.true_status(res, newMini, 'MiniMe regenerated');
@@ -201,7 +231,6 @@ exports.regenerateMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'Regeneration failed');
   }
 };
-
 
 exports.saveLatestMinime = async (req, res) => {
   const userId = req.authData.id;
