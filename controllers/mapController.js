@@ -183,7 +183,6 @@ exports.getStoriesWithLocation = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch stories with location' });
   }
 };
-
 exports.searchOnMap = async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
@@ -194,31 +193,42 @@ exports.searchOnMap = async (req, res) => {
         OR: [
           { username:  { contains: q } },
           { firstName: { contains: q } },
-          { lastName:  { contains: q} }
+          { lastName:  { contains: q } }
         ]
       },
-      select: { id: true, username: true, minime: { where: { isSaved: true }, select: { avatarUrl: true }, take: 1 }, location: true },
+      select: {
+        id: true,
+        username: true,
+        minime: {
+          where: { isSaved: true },
+          select: { avatarUrl: true },
+          take: 1
+        },
+        // 👇 Location relation থেকে শুধু lat/lng আনবো
+        Location: { select: { latitude: true, longitude: true } }
+      },
       take: 20
     });
 
     const places = await prisma.locationPoint.findMany({
-      where: { placeName: { contains: q, mode: 'insensitive' } },
+      where: { placeName: { contains: q } },
       select: { id: true, placeName: true, latitude: true, longitude: true, mediaUrl: true },
       take: 20
     });
 
-    res.json({
+    return res.json({
       users: users.map(u => ({
         id: u.id,
         username: u.username,
         avatarUrl: u.minime?.[0]?.avatarUrl || null,
-        latitude: u.location?.latitude ?? null,
-        longitude: u.location?.longitude ?? null
+        // 👇 capital L
+        latitude:  u.Location?.latitude  ?? null,
+        longitude: u.Location?.longitude ?? null
       })),
       places
     });
   } catch (error) {
     console.error('Error searching map:', error);
-    res.status(500).json({ error: 'Failed to search' });
+    return res.status(500).json({ error: 'Failed to search' });
   }
 };
