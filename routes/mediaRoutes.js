@@ -26,12 +26,7 @@ router.post('/stories/vault', checkAuth, mediaController.saveToVault);
 router.delete('/stories/:storyId', checkAuth, mediaController.removeStory);
 router.get('/debug-stories', checkAuth, mediaController.debugAllStories);
 router.get('/stories/vault', checkAuth, mediaController.getVaultStories);
-// Update own location
-router.post('/location', checkAuth, mediaController.updateLocation);
-// Get locations of friends
-router.get('/friends/locations', checkAuth, mediaController.getFriendLocations);
-router.get('/trail/:userId', checkAuth, mediaController.getVisitedTrail);
-router.get('/stories/with-location', checkAuth, mediaController.getStoriesWithLocation);
+
 
 
 

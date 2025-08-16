@@ -106,7 +106,10 @@ enum StoryVisibility {
   private
   profile
 }
-
+enum StoryType {
+  IMAGE
+  VIDEO
+}
 model Location {
   id        Int      @id @default(autoincrement())
   userId    Int      @unique
