@@ -6,11 +6,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
-// static
 app.use('/uploads', express.static('uploads'));
 app.use('/pose', express.static('public/pose'));
 
-// healthcheck
+
 app.get('/health', (req, res) => res.json({ ok: true }));
 
 app.use((req, res, next) => {
@@ -18,7 +17,6 @@ app.use((req, res, next) => {
   next();
 });
 
-// ROUTES
 const communityRoutes   = require('./routes/communityRoutes');
 const challengeRoutes   = require('./routes/challengeRoutes');
 const leaderboardRoutes = require('./routes/leaderboardRoutes');
