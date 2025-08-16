@@ -92,7 +92,7 @@ model Story {
   id         Int             @id @default(autoincrement())
   userId     Int
   mediaUrl   String
-  type       String
+  type       StoryType
   visibility StoryVisibility
   isInVault  Boolean         @default(false)
   createdAt  DateTime        @default(now())

@@ -8,36 +8,50 @@ const path = require('path');
 
 exports.uploadMedia = async (req, res) => {
   const userId = req.authData.id;
-  const { receiverId, groupId, challengeId, type, postToStory, communityId, latitude, longitude } = req.body;
+  let { receiverId, groupId, challengeId, type, postToStory, communityId, latitude, longitude } = req.body;
 
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
-    
+   
+    type = (type || '').toString().trim().toUpperCase();
+    const ALLOWED = new Set(['IMAGE', 'VIDEO']);
+    if (!ALLOWED.has(type)) {
+      return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
+    }
+
+    // 2) booleans / numbers
+    const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
+    const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
+    const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
+
+    // 3) upload
     const s3Url = await uploadToS3(req.file, 'media');
 
+    // 4) save media
     const media = await prisma.media.create({
       data: {
         senderId: userId,
         fileUrl: s3Url,
-        type,
-        receiverId: receiverId ? parseInt(receiverId) : null,
-        groupId: groupId ? parseInt(groupId) : null,
-        challengeId: challengeId ? parseInt(challengeId) : null,
-        communityId: communityId ? parseInt(communityId) : null,
+        type, 
+        receiverId: receiverId ? parseInt(receiverId, 10) : null,
+        groupId: groupId ? parseInt(groupId, 10) : null,
+        challengeId: challengeId ? parseInt(challengeId, 10) : null,
+        communityId: communityId ? parseInt(communityId, 10) : null,
       }
     });
 
-    if ((postToStory + '').trim().toLowerCase() === 'true') {
+    // 5) (optional) story create with location
+    if (postToStoryBool) {
       await prisma.story.create({
         data: {
           userId,
           mediaUrl: s3Url,
-          type,
+          type,              // must match Story.type enum
           visibility: 'profile',
           isInVault: false,
-          latitude: parseFloat(latitude) || null,
-          longitude: parseFloat(longitude) || null
+          latitude: lat,
+          longitude: lng
         }
       });
       console.log('✅ Story saved successfully');
@@ -51,6 +65,7 @@ exports.uploadMedia = async (req, res) => {
     return res.status(500).json({ error: 'Failed to upload media' });
   }
 };
+
 
 exports.getStories = async (req, res) => {
   const userId = req.authData.id;
