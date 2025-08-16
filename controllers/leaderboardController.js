@@ -60,9 +60,7 @@ async function calculateWeeklyPoints(userIds, weekStart) {
   return pointsByUser;
 }
 
-/**
- * Global leaderboard for all users this week
- */
+
 exports.getWeeklyGlobalLeaderboard = async (req, res) => {
   try {
     const userId = req.authData.id;

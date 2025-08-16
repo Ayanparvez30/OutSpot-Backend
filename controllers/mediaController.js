@@ -1,4 +1,4 @@
-// controllers/mediaController.js
+
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
@@ -13,7 +13,7 @@ exports.uploadMedia = async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
-    // Upload file buffer to S3 in 'media' folder
+    
     const s3Url = await uploadToS3(req.file, 'media');
 
     const media = await prisma.media.create({

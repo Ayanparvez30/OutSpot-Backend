@@ -411,15 +411,15 @@ exports.submitForPoints = async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No media uploaded' });
 
   try {
-    // Upload to S3 → folder name: "points"
+  
     const mediaUrl = await uploadToS3(req.file, "points");
 
-    const points = 5; // later dynamic korte parba
+    const points = 5; 
 
     await prisma.locationPoint.create({
       data: {
         userId,
-        mediaUrl, // ✅ S3 URL store hobe
+        mediaUrl, 
         placeName,
         latitude: latitude ? parseFloat(latitude) : null,
         longitude: longitude ? parseFloat(longitude) : null,
@@ -462,7 +462,7 @@ const getPointsForNextLevel = (currentPoints) => {
       return thresholds[i] - currentPoints;
     }
   }
-  return 0; // Already maxed out
+  return 0; 
 };
 exports.getAchievementStatus = async (req, res) => {
   const userId = req.authData.id;

@@ -134,9 +134,7 @@ exports.getMyChats = async (req, res) => {
       orderBy: { updatedAt: 'desc' },
     });
 
-    const weekStart = getStartOfWeek();  // Function to get the start of the current week (Monday)
-
-    // Helper function to calculate points for the current week
+    const weekStart = getStartOfWeek();  
     const getThisWeekPoints = async (userId) => {
       const submissions = await prisma.submission.findMany({
         where: {
