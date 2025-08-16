@@ -192,9 +192,9 @@ exports.searchOnMap = async (req, res) => {
     const users = await prisma.user.findMany({
       where: {
         OR: [
-          { username:  { contains: q, mode: 'insensitive' } },
-          { firstName: { contains: q, mode: 'insensitive' } },
-          { lastName:  { contains: q, mode: 'insensitive' } }
+          { username:  { contains: q } },
+          { firstName: { contains: q } },
+          { lastName:  { contains: q} }
         ]
       },
       select: { id: true, username: true, minime: { where: { isSaved: true }, select: { avatarUrl: true }, take: 1 }, location: true },
