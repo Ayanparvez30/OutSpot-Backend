@@ -44,7 +44,7 @@ model User {
   Location               Location?
   submissions            Submission[]
   locationPoints         LocationPoint[]
-
+firebaseUid   String? 
   LocationHistory LocationHistory[]
 
   ChatImage ChatImage[]

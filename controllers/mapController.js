@@ -204,7 +204,7 @@ exports.searchOnMap = async (req, res) => {
           select: { avatarUrl: true },
           take: 1
         },
-        // 👇 Location relation থেকে শুধু lat/lng আনবো
+     
         Location: { select: { latitude: true, longitude: true } }
       },
       take: 20
@@ -221,7 +221,7 @@ exports.searchOnMap = async (req, res) => {
         id: u.id,
         username: u.username,
         avatarUrl: u.minime?.[0]?.avatarUrl || null,
-        // 👇 capital L
+     
         latitude:  u.Location?.latitude  ?? null,
         longitude: u.Location?.longitude ?? null
       })),
