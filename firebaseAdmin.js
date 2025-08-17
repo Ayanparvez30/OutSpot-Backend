@@ -1,26 +1,25 @@
 // firebaseAdmin.js
-require('dotenv').config(); // make sure this is BEFORE anything else that imports this file
+require('dotenv').config(); // make sure .env loads before reading vars
 const admin = require('firebase-admin');
 
-const { FIREBASE_PROJECT_ID, FIREBASE_CLIENT_EMAIL, FIREBASE_PRIVATE_KEY_BASE64 } = process.env;
+const projectId   = process.env.FIREBASE_PROJECT_ID;
+const clientEmail = process.env.FIREBASE_CLIENT_EMAIL;
+let   privateKey  = process.env.FIREBASE_PRIVATE_KEY;
 
-if (!FIREBASE_PROJECT_ID || !FIREBASE_CLIENT_EMAIL || !FIREBASE_PRIVATE_KEY_BASE64) {
+if (!projectId || !clientEmail || !privateKey) {
   throw new Error('Missing FIREBASE_* env vars. Check .env is loaded and variables are set.');
 }
 
-const privateKey = Buffer.from(FIREBASE_PRIVATE_KEY_BASE64, 'base64').toString('utf8').trim();
+// If the key is quoted and contains literal \n, normalize it
+privateKey = privateKey.replace(/^"|"$/g, '').replace(/\\n/g, '\n').trim();
 
 if (!privateKey.includes('BEGIN PRIVATE KEY') || !privateKey.includes('END PRIVATE KEY')) {
-  throw new Error('Decoded private key is malformed. Check your Base64 content.');
+  throw new Error('FIREBASE_PRIVATE_KEY looks malformed (BEGIN/END missing).');
 }
 
 if (!admin.apps.length) {
   admin.initializeApp({
-    credential: admin.credential.cert({
-      projectId: FIREBASE_PROJECT_ID,
-      clientEmail: FIREBASE_CLIENT_EMAIL,
-      privateKey,
-    }),
+    credential: admin.credential.cert({ projectId, clientEmail, privateKey }),
   });
 }
 
