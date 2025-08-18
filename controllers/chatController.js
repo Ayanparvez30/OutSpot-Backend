@@ -297,7 +297,7 @@ exports.addUsersToGroup = async (req, res) => {
     const chat = await prisma.chat.findUnique({
       where: { id: parseInt(chatId) },
       include: {
-        users: true,  // Include users to check roles
+        users: true,
       },
     });
 
@@ -305,33 +305,29 @@ exports.addUsersToGroup = async (req, res) => {
       return res.status(404).json({ message: 'Group chat not found' });
     }
 
-    // Ensure the current user is an admin
-    const currentUserRole = chat.users.find(
-      (u) => u.userId === currentUserId
-    )?.role;
+    // Check if the user is already in the group
+    const existingUsersInGroup = chat.users.map(user => user.userId);
+    const usersToAdd = userIds.filter(userId => !existingUsersInGroup.includes(userId));
 
-    if (currentUserRole !== 'admin') {
-      return res.status(403).json({ message: 'Only admins can add users' });
+    if (usersToAdd.length === 0) {
+      return res.status(400).json({ message: 'All users are already in the group' });
     }
 
     // Add users to the group chat
     const addedUsers = [];
-    for (const userId of userIds) {
+    for (const userId of usersToAdd) {
       const userExists = await prisma.user.findUnique({ where: { id: userId } });
       if (userExists) {
         addedUsers.push(userId);
       }
     }
 
-    // Add new users as 'members' (admins are not added here)
+    // Update the chat by adding the users
     await prisma.chat.update({
       where: { id: parseInt(chatId) },
       data: {
         users: {
-          create: addedUsers.map((userId) => ({
-            userId,
-            role: 'member',  // Set new users as 'member'
-          })),
+          create: addedUsers.map(userId => ({ userId })),
         },
       },
     });
