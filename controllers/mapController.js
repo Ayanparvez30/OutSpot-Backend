@@ -41,7 +41,6 @@ exports.updateLocation = async (req, res) => {
     res.status(500).json({ error: 'Failed to update location' });
   }
 };
-
 exports.getFriendLocations = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -62,6 +61,9 @@ exports.getFriendLocations = async (req, res) => {
           select: {
             id: true,
             username: true,
+            firstName: true,
+            lastName: true,
+            totalPoints: true,
             minime: {
               select: { avatarUrl: true },
               where: { isSaved: true },
@@ -72,19 +74,56 @@ exports.getFriendLocations = async (req, res) => {
       }
     });
 
-    res.json(locations.map(r => ({
-      userId: r.userId,
-      username: r.user.username,
-      avatarUrl: r.user.minime?.[0]?.avatarUrl || null,
-      latitude: r.latitude,
-      longitude: r.longitude
-    })));
+    const now = new Date();
+    const day = now.getDay();
+    const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+    const weekStart = new Date(now.setDate(diff));
+    weekStart.setHours(0, 0, 0, 0);
+
+    const locationsWithDetails = await Promise.all(locations.map(async (r) => {
+      const friend = r.user;
+
+      // Weekly challenge points
+      const submissions = await prisma.submission.findMany({
+        where: {
+          userId: friend.id,
+          createdAt: { gte: weekStart }
+        },
+        include: { challenge: true }
+      });
+      const challengePoints = submissions.reduce((sum, s) => sum + (s.challenge?.points || 0), 0);
+
+      // Weekly location points
+      const locationPoints = await prisma.locationPoint.findMany({
+        where: {
+          userId: friend.id,
+          createdAt: { gte: weekStart }
+        }
+      });
+      const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
+
+      const thisWeekPoints = challengePoints + mapPoints;
+
+      return {
+        userId: r.userId,
+        username: r.user.username,
+        firstName: r.user.firstName,
+        lastName: r.user.lastName,
+        avatarUrl: r.user.minime?.[0]?.avatarUrl || null,
+        totalPoints: r.user.totalPoints || 0,
+        thisWeekPoints,
+        profileUrl: `/api/users/${r.userId}/profile`,
+        latitude: r.latitude,
+        longitude: r.longitude
+      };
+    }));
+
+    res.json(locationsWithDetails);
   } catch (error) {
     console.error('Error fetching friend locations:', error);
     res.status(500).json({ error: 'Failed to fetch friend locations' });
   }
 };
-
 
 exports.getVisitedTrail = async (req, res) => {
   try {
