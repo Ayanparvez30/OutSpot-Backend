@@ -74,45 +74,98 @@ exports.uploadChatImage = (req, res) => {
 
 
 exports.createChat = async (req, res) => {
-    const { userIds, name, isGroup } = req.body;
-    const currentUserId = req.authData.id;
+  const { userIds, name, isGroup } = req.body;
+  const currentUserId = req.authData.id;
 
-    if (!Array.isArray(userIds) || userIds.length === 0) {
-        return res.status(400).json({ message: 'User IDs required' });
+  if (!Array.isArray(userIds) || userIds.length === 0) {
+    return res.status(400).json({ message: 'User IDs required' });
+  }
+
+  // ✅ Only allow private chats between friends (existing logic)
+  if (!isGroup && userIds.length === 1) {
+    const targetUserId = userIds[0];
+
+    const isFriend = await prisma.friendship.findFirst({
+      where: {
+        status: 'ACCEPTED',
+        OR: [
+          { requesterId: currentUserId, receiverId: targetUserId },
+          { requesterId: targetUserId, receiverId: currentUserId },
+        ],
+      },
+    });
+    if (!isFriend) {
+      return res.status(403).json({ message: 'You can only start chats with friends.' });
     }
 
-    // ✅ Only allow private chats between friends
-    if (!isGroup && userIds.length === 1) {
-        const targetUserId = userIds[0];
-
-        const isFriend = await prisma.friendship.findFirst({
-            where: {
-                status: 'ACCEPTED',
-                OR: [
-                    { requesterId: currentUserId, receiverId: targetUserId },
-                    { requesterId: targetUserId, receiverId: currentUserId },
-                ],
-            },
-        });
-
-        if (!isFriend) {
-            return res.status(403).json({ message: 'You can only start chats with friends.' });
-        }
-    }
-
-    const chat = await prisma.chat.create({
-        data: {
-            name,
-            isGroup: isGroup || false,
-            users: {
-                create: userIds.concat(currentUserId).map(userId => ({ userId })),
-            },
+    // 🔁 Reuse existing DM if present (exactly these two users, not a group)
+    const existing = await prisma.chat.findFirst({
+      where: {
+        isGroup: false,
+        users: {
+          // every participant must be in [currentUserId, targetUserId]
+          every: { userId: { in: [currentUserId, targetUserId] } },
         },
-        include: { users: true }
+      },
+      include: { users: true }
     });
 
-    res.json(chat);
+    if (existing && existing.users.length === 2 &&
+        existing.users.some(u => u.userId === currentUserId) &&
+        existing.users.some(u => u.userId === targetUserId)) {
+      return res.json(existing); // ✅ return the existing chat instead of creating a new one
+    }
+  }
+
+  // ✳️ Create new chat (DM or group)
+  const chat = await prisma.chat.create({
+    data: {
+      name,
+      isGroup: !!isGroup,
+      users: {
+        create: userIds.concat(currentUserId).map(userId => ({ userId })),
+      },
+    },
+    include: { users: true }
+  });
+
+  res.json(chat);
 };
+
+
+exports.deleteChat = async (req, res) => {
+  const { chatId } = req.params;
+  const currentUserId = req.authData.id;
+
+  try {
+    // Check if chat exists and user is part of it
+    const chat = await prisma.chat.findUnique({
+      where: { id: parseInt(chatId) },
+      include: { users: true }
+    });
+
+    if (!chat) {
+      return res.status(404).json({ message: 'Chat not found' });
+    }
+
+    // Only participants can delete the chat
+    const isParticipant = chat.users.some(u => u.userId === currentUserId);
+    if (!isParticipant) {
+      return res.status(403).json({ message: 'You are not part of this chat' });
+    }
+
+    // Delete the chat → cascades will clean messages + userOnChat
+    await prisma.chat.delete({
+      where: { id: chat.id }
+    });
+
+    return res.json({ message: 'Chat deleted successfully' });
+  } catch (error) {
+    console.error('Error deleting chat:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 
 
 exports.getMyChats = async (req, res) => {

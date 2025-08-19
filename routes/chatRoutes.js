@@ -4,7 +4,9 @@ const chatController = require('../controllers/chatController');
 const { checkAuth } = require('../middlewares/authMiddleware');
 
 // Chat routes
-router.post('/chats', checkAuth, chatController.createChat);
+router.post('/chats/create', checkAuth, chatController.createChat);
+router.delete('/chats/delete/:chatId', checkAuth, chatController.deleteChat);
+
 router.get('/chats', checkAuth, chatController.getMyChats);
 router.get('/chats/messages/:chatId', checkAuth, chatController.getMessages);
 router.get('/chats/messages-paginated/:chatId', checkAuth, chatController.getMessagesPaginated);
