@@ -233,55 +233,86 @@ exports.getMessagesPaginated = async (req, res) => {
     res.json(messages);
 };
 
-exports.getChatsByUsers = async (req, res) => {
-  const user1Id = req.authData.id; // assuming the current user's ID is user1
-  const user2Id = parseInt(req.params.user2Id, 10); // parse user2Id to an integer
 
-  if (isNaN(user2Id)) {
-    return res.status(400).json({ message: 'Invalid user ID' });
-  }
+exports.getChatsByUsers = async (req, res) => {
+  const user1Id = req.authData.id;
+  const user2Id = parseInt(req.params.user2Id, 10);
+  if (isNaN(user2Id)) return res.status(400).json({ message: 'Invalid user ID' });
 
   try {
     const chats = await prisma.chat.findMany({
       where: {
         users: {
-          every: {
-            userId: {
-              in: [user1Id, user2Id] // Ensure both are integers
-            }
-          }
+          every: { userId: { in: [user1Id, user2Id] } } // all users are either me or user2
         }
       },
-      select: {
-        users: {
-          select: {
-            id: true,
-            userId: true,
-            chatId: true
-          }
-        }
-      }
+      include: { users: { select: { userId: true } } }
     });
 
-    if (chats.length === 0) {
-      return res.status(200).json([]);
-    }
+    // filter out any chat that doesn't contain BOTH users
+    const result = chats
+      .filter(c => {
+        const set = new Set(c.users.map(u => u.userId));
+        return set.has(user1Id) && set.has(user2Id) && set.size <= 2;
+      })
+      .map(c => ({ chatId: c.id }));
 
-    // Reformat the response to match the desired output
-    const chatIds = chats.map(chat => {
-      return {
-        id: chat.users[0].id,
-        userId: chat.users[0].userId,
-        chatId: chat.users[0].chatId
-      };
-    });
-
-    res.json(chatIds); // Return the reformatted response
-  } catch (error) {
-    console.error('Error fetching chats:', error);
-    return res.status(500).json({ message: 'Server error' });
+    res.json(result);
+  } catch (e) {
+    console.error('Error fetching chats:', e);
+    res.status(500).json({ message: 'Server error' });
   }
 };
+
+// exports.getChatsByUsers = async (req, res) => {
+//   const user1Id = req.authData.id; // assuming the current user's ID is user1
+//   const user2Id = parseInt(req.params.user2Id, 10); // parse user2Id to an integer
+
+//   if (isNaN(user2Id)) {
+//     return res.status(400).json({ message: 'Invalid user ID' });
+//   }
+
+//   try {
+//     const chats = await prisma.chat.findMany({
+//       where: {
+//         users: {
+//           every: {
+//             userId: {
+//               in: [user1Id, user2Id] // Ensure both are integers
+//             }
+//           }
+//         }
+//       },
+//       select: {
+//         users: {
+//           select: {
+//             id: true,
+//             userId: true,
+//             chatId: true
+//           }
+//         }
+//       }
+//     });
+
+//     if (chats.length === 0) {
+//       return res.status(200).json([]);
+//     }
+
+//     // Reformat the response to match the desired output
+//     const chatIds = chats.map(chat => {
+//       return {
+//         id: chat.users[0].id,
+//         userId: chat.users[0].userId,
+//         chatId: chat.users[0].chatId
+//       };
+//     });
+
+//     res.json(chatIds); // Return the reformatted response
+//   } catch (error) {
+//     console.error('Error fetching chats:', error);
+//     return res.status(500).json({ message: 'Server error' });
+//   }
+// };
 
 exports.addUsersToGroup = async (req, res) => {
   const { chatId } = req.params;
@@ -338,3 +369,52 @@ exports.addUsersToGroup = async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
+exports.getGroupMembers = async (req, res) => {
+  const { chatId } = req.params;
+
+  try {
+    const chat = await prisma.chat.findUnique({
+      where: { id: parseInt(chatId) },
+      include: {
+        users: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                totalPoints: true,
+                minime: {
+                  select: { avatarUrl: true },
+                  where: { isSaved: true }
+                }
+              }
+            }
+          }
+        }
+      }
+    });
+
+    if (!chat || !chat.isGroup) {
+      return res.status(404).json({ message: 'Group not found' });
+    }
+
+    const members = chat.users.map(u => ({
+      id: u.user.id,
+      username: u.user.username,
+      firstName: u.user.firstName,
+      lastName: u.user.lastName,
+      avatarUrl: u.user.minime?.avatarUrl || null,
+      totalPoints: u.user.totalPoints || 0,
+      profileUrl: `/api/users/${u.user.id}/profile`
+    }));
+
+    return res.json({ members });
+  } catch (error) {
+    console.error("Error fetching group members:", error);
+    return res.status(500).json({ message: "Internal server error" });
+  }
+};
+
