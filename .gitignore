@@ -4,3 +4,4 @@ node_modules
 
 /generated/prisma
 uploads
+prisma/schema-prisma.txt
