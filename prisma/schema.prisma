@@ -48,6 +48,8 @@ model User {
   LocationHistory LocationHistory[]
 
   ChatImage ChatImage[]
+
+  Chat Chat[]
 }
 
 model Minime {
@@ -154,6 +156,10 @@ model Chat {
   messages  Message[]
   updatedAt DateTime  @updatedAt
   createdAt DateTime  @default(now())
+
+    
+  createdById Int?
+  createdBy   User? @relation(fields: [createdById], references: [id])
 }
 
 model Message {
@@ -177,14 +183,25 @@ model ChatImage {
 }
 
 
+enum ChatRole {
+  ADMIN
+  MEMBER
+}
+
+
 model UserOnChat {
-  id     Int  @id @default(autoincrement())
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId Int
-  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  chatId Int
+  id       Int     @id @default(autoincrement())
+  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId   Int
+  chat     Chat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId   Int
+
+  // NEW ↓
+  role     ChatRole @default(MEMBER)
+  joinedAt DateTime @default(now())
 
   @@unique([userId, chatId])
+  @@index([chatId, role]) // handy for permission checks like “who are admins in this chat?”
 }
 
 model Friendship {

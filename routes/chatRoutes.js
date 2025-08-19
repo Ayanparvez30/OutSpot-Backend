@@ -14,8 +14,13 @@ router.get('/chats/:user2Id', checkAuth, chatController.getChatsByUsers);
 router.put('/chats/addUser/:chatId', checkAuth, chatController.addUsersToGroup);
 router.get('/chats/groupMembers/:chatId', checkAuth, chatController.getGroupMembers);
 
+// add users (admin only now)
+router.put('/chats/addUser/:chatId', checkAuth, chatController.addUsersToGroup);
 
-
+// remove user (admin only)
+router.delete('/chats/:chatId/users/:userId', checkAuth, chatController.removeUserFromGroup);
+// NEW: self-leave
+router.delete('/chats/leave/:chatId', checkAuth, chatController.leaveGroup);
 
 // ✅ Image upload support
 const multer = require('multer');

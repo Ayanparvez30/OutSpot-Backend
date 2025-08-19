@@ -81,10 +81,9 @@ exports.createChat = async (req, res) => {
     return res.status(400).json({ message: 'User IDs required' });
   }
 
-  // ✅ Only allow private chats between friends (existing logic)
+  // ✅ Only allow private chats between friends (kept from your code)
   if (!isGroup && userIds.length === 1) {
     const targetUserId = userIds[0];
-
     const isFriend = await prisma.friendship.findFirst({
       where: {
         status: 'ACCEPTED',
@@ -97,40 +96,28 @@ exports.createChat = async (req, res) => {
     if (!isFriend) {
       return res.status(403).json({ message: 'You can only start chats with friends.' });
     }
-
-    // 🔁 Reuse existing DM if present (exactly these two users, not a group)
-    const existing = await prisma.chat.findFirst({
-      where: {
-        isGroup: false,
-        users: {
-          // every participant must be in [currentUserId, targetUserId]
-          every: { userId: { in: [currentUserId, targetUserId] } },
-        },
-      },
-      include: { users: true }
-    });
-
-    if (existing && existing.users.length === 2 &&
-        existing.users.some(u => u.userId === currentUserId) &&
-        existing.users.some(u => u.userId === targetUserId)) {
-      return res.json(existing); // ✅ return the existing chat instead of creating a new one
-    }
   }
 
-  // ✳️ Create new chat (DM or group)
+  // Build membership rows with roles
+  const memberIds = userIds.concat(currentUserId);
+  const membersCreate = memberIds.map((uid) => ({
+    userId: uid,
+    role: uid === currentUserId ? 'ADMIN' : 'MEMBER',   // 🔑 creator = ADMIN
+  }));
+
   const chat = await prisma.chat.create({
     data: {
       name,
       isGroup: !!isGroup,
-      users: {
-        create: userIds.concat(currentUserId).map(userId => ({ userId })),
-      },
+      createdById: currentUserId, // optional if you added it
+      users: { create: membersCreate },
     },
-    include: { users: true }
+    include: { users: { include: { user: true } } }
   });
 
   res.json(chat);
 };
+
 
 
 exports.deleteChat = async (req, res) => {
@@ -367,61 +354,135 @@ exports.getChatsByUsers = async (req, res) => {
 //   }
 // };
 
+// controllers/chatController.js
 exports.addUsersToGroup = async (req, res) => {
   const { chatId } = req.params;
-  const { userIds } = req.body;  // Array of user IDs to add to the group
+  const { userIds } = req.body;
   const currentUserId = req.authData.id;
 
   if (!Array.isArray(userIds) || userIds.length === 0) {
     return res.status(400).json({ message: 'User IDs required' });
   }
 
-  try {
-    // Ensure that the current user is the chat owner or has appropriate permissions
-    const chat = await prisma.chat.findUnique({
-      where: { id: parseInt(chatId) },
-      include: {
-        users: true,
-      },
-    });
+  const chat = await prisma.chat.findUnique({
+    where: { id: parseInt(chatId, 10) },
+    include: { users: true },
+  });
+  if (!chat || !chat.isGroup) {
+    return res.status(404).json({ message: 'Group chat not found' });
+  }
 
-    if (!chat || !chat.isGroup) {
-      return res.status(404).json({ message: 'Group chat not found' });
-    }
+  // ✅ must be admin
+  const me = chat.users.find(u => u.userId === currentUserId);
+  if (!me || me.role !== 'ADMIN') {
+    return res.status(403).json({ message: 'Only admins can add users.' });
+  }
 
-    // Check if the user is already in the group
-    const existingUsersInGroup = chat.users.map(user => user.userId);
-    const usersToAdd = userIds.filter(userId => !existingUsersInGroup.includes(userId));
+  const existing = new Set(chat.users.map(u => u.userId));
+  const toAdd = userIds.filter(id => !existing.has(id));
 
-    if (usersToAdd.length === 0) {
-      return res.status(400).json({ message: 'All users are already in the group' });
-    }
+  if (!toAdd.length) {
+    return res.status(400).json({ message: 'All users are already in the group' });
+  }
 
-    // Add users to the group chat
-    const addedUsers = [];
-    for (const userId of usersToAdd) {
-      const userExists = await prisma.user.findUnique({ where: { id: userId } });
-      if (userExists) {
-        addedUsers.push(userId);
+  await prisma.chat.update({
+    where: { id: chat.id },
+    data: {
+      users: {
+        create: toAdd.map((id) => ({ userId: id, role: 'MEMBER' }))
       }
     }
+  });
 
-    // Update the chat by adding the users
-    await prisma.chat.update({
-      where: { id: parseInt(chatId) },
-      data: {
-        users: {
-          create: addedUsers.map(userId => ({ userId })),
-        },
-      },
-    });
-
-    return res.json({ message: 'Users added to the group chat' });
-  } catch (error) {
-    console.error('Error adding users:', error);
-    return res.status(500).json({ message: 'Internal server error' });
-  }
+  return res.json({ message: 'Users added to the group chat' });
 };
+
+// controllers/chatController.js
+exports.removeUserFromGroup = async (req, res) => {
+  const { chatId, userId } = req.params;
+  const currentUserId = req.authData.id;
+
+  const chat = await prisma.chat.findUnique({
+    where: { id: parseInt(chatId, 10) },
+    include: { users: true }
+  });
+  if (!chat || !chat.isGroup) {
+    return res.status(404).json({ message: 'Group chat not found' });
+  }
+
+  const me = chat.users.find(u => u.userId === currentUserId);
+  if (!me || me.role !== 'ADMIN') {
+    return res.status(403).json({ message: 'Only admins can remove users.' });
+  }
+
+  const targetUserId = parseInt(userId, 10);
+  const target = chat.users.find(u => u.userId === targetUserId);
+  if (!target) {
+    return res.status(404).json({ message: 'User is not in this group.' });
+  }
+
+  // If target is ADMIN, make sure they’re not the last admin
+  if (target.role === 'ADMIN') {
+    const adminCount = chat.users.filter(u => u.role === 'ADMIN').length;
+
+    // disallow removing the last admin while others still remain
+    const otherMembersExist = chat.users.some(u => u.userId !== targetUserId);
+    if (adminCount <= 1 && otherMembersExist) {
+      return res.status(400).json({ message: 'Cannot remove the last admin. Promote another user first.' });
+    }
+  }
+
+  await prisma.userOnChat.delete({
+    where: { id: target.id } // id is the join row id
+  });
+
+  return res.json({ message: 'User removed from group.' });
+};
+
+
+exports.leaveGroup = async (req, res) => {
+  const { chatId } = req.params;
+  const currentUserId = req.authData.id;
+
+  const chat = await prisma.chat.findUnique({
+    where: { id: parseInt(chatId, 10) },
+    include: { users: true }
+  });
+  if (!chat || !chat.isGroup) {
+    return res.status(404).json({ message: 'Group chat not found' });
+  }
+
+  const myRow = chat.users.find(u => u.userId === currentUserId);
+  if (!myRow) return res.status(403).json({ message: 'You are not in this group' });
+
+  // If I'm admin, ensure at least one admin remains (if others remain)
+  const otherUsers = chat.users.filter(u => u.userId !== currentUserId);
+  const adminCount = chat.users.filter(u => u.role === 'ADMIN').length;
+
+  await prisma.$transaction(async (tx) => {
+    if (otherUsers.length === 0) {
+      // I’m the last member → delete the chat
+      await tx.chat.delete({ where: { id: chat.id } });
+      return;
+    }
+
+    if (myRow.role === 'ADMIN' && adminCount <= 1) {
+      // Promote first remaining member to ADMIN (oldest join row)
+      const candidate = otherUsers
+        .sort((a, b) => a.id - b.id)[0]; // deterministic pick
+      await tx.userOnChat.update({
+        where: { id: candidate.id },
+        data: { role: 'ADMIN' }
+      });
+    }
+
+    // Remove myself
+    await tx.userOnChat.delete({ where: { id: myRow.id } });
+  });
+
+  return res.json({ message: 'You left the group.' });
+};
+
 
 exports.getGroupMembers = async (req, res) => {
   const { chatId } = req.params;
