@@ -61,14 +61,13 @@ exports.createCommunity = async (req, res) => {
 
   res.json(community);
 };
-
 exports.editCommunity = async (req, res) => {
   const { communityId } = req.params;
   const { name } = req.body;
   const userId = req.authData.id;
 
-  const community = await prisma.community.findUnique({ where: { id: parseInt(communityId) } });
-
+  const id = Number(communityId);
+  const community = await prisma.community.findUnique({ where: { id } });
   if (!community) return res.status(404).json({ error: 'Community not found' });
   if (community.creatorId !== userId) return res.status(403).json({ error: 'Only creator can edit' });
 
@@ -78,12 +77,19 @@ exports.editCommunity = async (req, res) => {
   }
 
   const updated = await prisma.community.update({
-    where: { id: community.id },
-    data: { name,imageUrl },
+    where: { id },
+    data: { name, imageUrl },
+  });
+
+
+  await prisma.chat.updateMany({
+    where: { communityId: id, isCommunity: true },
+    data: { name: updated.name },
   });
 
   res.json(updated);
 };
+
 // exports.createCommunity = async (req, res) => {
 //   const { name, description } = req.body;
 //   const creatorId = req.authData.id;
