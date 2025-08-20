@@ -14,7 +14,7 @@ router.delete('/block/:userId', friendController.unblockUser);
 router.get('/friends/requests/count', friendController.getPendingFriendRequestCount);
 router.get('/friends/sent-requests', friendController.getSentFriendRequests);
 router.get('/users/blocked', friendController.getBlockedUsers);
-//Abdullah
+
 
 
 router.get('/friends/requests/incoming', friendController.getFriendRequests);
