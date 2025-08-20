@@ -2,8 +2,16 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const uploadToS3 = require('../utils/s3Upload');  
 const ensureCommunityChat = async (communityId) => {
+  const id = Number(communityId);
+
+  const community = await prisma.community.findUnique({
+    where: { id },
+    select: { name: true },
+  });
+  if (!community) throw new Error('Community not found');
+
   let chat = await prisma.chat.findFirst({
-    where: { communityId, isCommunity: true },
+    where: { communityId: id, isCommunity: true },
   });
 
   if (!chat) {
@@ -11,10 +19,16 @@ const ensureCommunityChat = async (communityId) => {
       data: {
         isGroup: true,
         isCommunity: true,
-        communityId,
-        name: `Community-${communityId}`,
+        communityId: id,
+        name: community.name,      
         users: { create: [] },
       },
+    });
+  } else if (chat.name !== community.name) {
+
+    chat = await prisma.chat.update({
+      where: { id: chat.id },
+      data: { name: community.name },
     });
   }
 
