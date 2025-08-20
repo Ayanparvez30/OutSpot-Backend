@@ -267,7 +267,7 @@ enum ChallengeType {
 model Community {
   id          Int               @id @default(autoincrement())
   name        String
-  description String?
+  
   imageUrl    String?
   creatorId   Int
   creator     User              @relation("UserCreatedCommunities", fields: [creatorId], references: [id])
