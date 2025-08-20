@@ -23,7 +23,7 @@ const ensureCommunityChat = async (communityId) => {
 
 
 exports.createCommunity = async (req, res) => {
-  const { name, description } = req.body;
+  const { name} = req.body;
   const creatorId = req.authData.id;
 
   let imageUrl = null;
@@ -33,10 +33,9 @@ exports.createCommunity = async (req, res) => {
   }
 
   const community = await prisma.community.create({
-    data: { name, description, creatorId, imageUrl },
+    data: { name, creatorId, imageUrl },
   });
 
-  // rest of your code ...
   await prisma.communityMember.create({
     data: { userId: creatorId, communityId: community.id },
   });
@@ -51,7 +50,7 @@ exports.createCommunity = async (req, res) => {
 
 exports.editCommunity = async (req, res) => {
   const { communityId } = req.params;
-  const { name, description } = req.body;
+  const { name } = req.body;
   const userId = req.authData.id;
 
   const community = await prisma.community.findUnique({ where: { id: parseInt(communityId) } });
@@ -66,7 +65,7 @@ exports.editCommunity = async (req, res) => {
 
   const updated = await prisma.community.update({
     where: { id: community.id },
-    data: { name, description, imageUrl },
+    data: { name,imageUrl },
   });
 
   res.json(updated);
@@ -133,7 +132,7 @@ exports.getCommunityDetails = async (req, res) => {
     select: {
       id: true,
       name: true,
-      description: true,
+    
       imageUrl: true,
     }
   });
