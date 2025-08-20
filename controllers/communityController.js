@@ -28,7 +28,7 @@ exports.createCommunity = async (req, res) => {
 
   let imageUrl = null;
   if (req.file) {
-    // file buffer + originalname diye S3 upload
+
     imageUrl = await uploadToS3(req.file, 'community-images');
   }
 
@@ -240,4 +240,43 @@ exports.getCommunityChatId = async (req, res) => {
 
   if (!chat) return res.status(404).json({ error: 'Community chat not found' });
   res.json({ chatId: chat.id });
+};
+exports.getMyRecentCommunities = async (req, res) => {
+  const userId = req.authData.id;
+
+  const [created, joined] = await Promise.all([
+    prisma.community.findMany({
+      where: { creatorId: userId },
+      orderBy: { id: 'desc' },  // createdAt থাকলে createdAt ব্যবহার করুন
+      include: { _count: { select: { members: true } } }
+    }),
+    prisma.communityMember.findMany({
+      where: { userId },
+      orderBy: { joinedAt: 'desc' },
+      include: {
+        community: { include: { _count: { select: { members: true } } } }
+      }
+    })
+  ]);
+
+  const merged = [
+    ...created.map(c => ({
+      id: c.id,
+      name: c.name,
+      imageUrl: c.imageUrl,
+      membersCount: c._count.members,
+      type: 'created',
+      at: c.createdAt ?? null
+    })),
+    ...joined.map(m => ({
+      id: m.community.id,
+      name: m.community.name,
+      imageUrl: m.community.imageUrl,
+      membersCount: m.community._count.members,
+      type: 'joined',
+      at: m.joinedAt
+    }))
+  ].sort((a, b) => new Date(b.at) - new Date(a.at));
+
+  res.json(merged);
 };

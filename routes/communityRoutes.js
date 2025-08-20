@@ -14,5 +14,5 @@ router.post('/communities/join', checkAuth, communityController.joinCommunity);
 router.post('/communities/leave', checkAuth, communityController.leaveCommunity);
 router.get('/communities/:communityId', checkAuth, communityController.getCommunityDetails);
 router.get('/communities/:communityId/chat-id', checkAuth, communityController.getCommunityChatId);
-
+router.get('/communities/recent', checkAuth, communityController.getMyRecentCommunities);
 module.exports = router;
