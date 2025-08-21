@@ -159,8 +159,7 @@ exports.getVisitedTrail = async (req, res) => {
   }
 };
 
-
-exports.getStoriesWithLocation = async (req, res) => {
+exports.getRecentStoriesWithLocation = async (req, res) => {
   try {
     const userId = req.authData.id;
     const { minLat, minLng, maxLat, maxLng } = req.query;
@@ -175,7 +174,7 @@ exports.getStoriesWithLocation = async (req, res) => {
           visibility: 'profile',
           user: {
             OR: [
-              { friendRequestsSent:     { some: { receiverId: userId,  status: 'ACCEPTED' } } },
+              { friendRequestsSent: { some: { receiverId: userId, status: 'ACCEPTED' } } },
               { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } }
             ]
           }
@@ -185,8 +184,8 @@ exports.getStoriesWithLocation = async (req, res) => {
 
     if ([minLat, minLng, maxLat, maxLng].every(v => v !== undefined)) {
       whereBase.AND = [
-        { latitude:  { gte: parseFloat(minLat) } },
-        { latitude:  { lte: parseFloat(maxLat) } },
+        { latitude: { gte: parseFloat(minLat) } },
+        { latitude: { lte: parseFloat(maxLat) } },
         { longitude: { gte: parseFloat(minLng) } },
         { longitude: { lte: parseFloat(maxLng) } },
       ];
@@ -203,7 +202,8 @@ exports.getStoriesWithLocation = async (req, res) => {
           }
         }
       },
-      orderBy: { createdAt: 'desc' }
+      orderBy: { createdAt: 'desc' },
+      take: 1 
     });
 
     res.json(stories.map(s => ({
@@ -222,6 +222,7 @@ exports.getStoriesWithLocation = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch stories with location' });
   }
 };
+
 exports.searchOnMap = async (req, res) => {
   try {
     const q = (req.query.q || '').trim();
