@@ -7,14 +7,14 @@ const {
   updateLocation,
   getFriendLocations,
   getVisitedTrail,
-  getStoriesWithLocation,
+  getRecentStoriesWithLocation,
   searchOnMap
 } = require('../controllers/mapController');
 
 router.post('/map/location',  checkAuth, updateLocation);
 router.get('/map/friends',    checkAuth, getFriendLocations);
 router.get('/map/trail/:userId', checkAuth, getVisitedTrail);
-router.get('/map/stories/recent',    checkAuth, getRecentStoriesWithLocation);
+router.get('/map/stories/recent',    checkAuth,getRecentStoriesWithLocation);
 router.get('/map/search',     checkAuth, searchOnMap);
 
 module.exports = router;
