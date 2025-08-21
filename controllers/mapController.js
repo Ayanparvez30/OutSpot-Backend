@@ -158,38 +158,52 @@ exports.getVisitedTrail = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch visited trail' });
   }
 };
-
 exports.getRecentStoriesWithLocation = async (req, res) => {
   try {
     const userId = req.authData.id;
     const { minLat, minLng, maxLat, maxLng } = req.query;
 
+    // Fetch all friendships where status is ACCEPTED
+    const friendships = await prisma.friendship.findMany({
+      where: {
+        status: 'ACCEPTED',
+        OR: [{ requesterId: userId }, { receiverId: userId }]
+      }
+    });
+
+    // Get IDs of friends
+    const friendIds = friendships.map(f => f.requesterId === userId ? f.receiverId : f.requesterId);
+
     const whereBase = {
-      latitude: { not: null },
-      longitude: { not: null },
-      isInVault: false,
+
       OR: [
-        { userId },
+        { userId }, 
+        { userId: { in: friendIds } },
         {
-          visibility: 'profile',
+          visibility: 'profile', 
           user: {
             OR: [
-              { friendRequestsSent: { some: { receiverId: userId, status: 'ACCEPTED' } } },
-              { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } }
+              { friendRequestsSent: { some: { receiverId: userId, status: 'ACCEPTED' } } }, 
+              { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } } 
             ]
           }
         }
-      ]
+      ],
+      latitude: { not: null },
+      longitude: { not: null },
+      isInVault: false, 
     };
+
 
     if ([minLat, minLng, maxLat, maxLng].every(v => v !== undefined)) {
       whereBase.AND = [
         { latitude: { gte: parseFloat(minLat) } },
         { latitude: { lte: parseFloat(maxLat) } },
         { longitude: { gte: parseFloat(minLng) } },
-        { longitude: { lte: parseFloat(maxLng) } },
+        { longitude: { lte: parseFloat(maxLng) } }
       ];
     }
+
 
     const stories = await prisma.story.findMany({
       where: whereBase,
@@ -205,6 +219,7 @@ exports.getRecentStoriesWithLocation = async (req, res) => {
       orderBy: { createdAt: 'desc' },
       take: 1 
     });
+
 
     res.json(stories.map(s => ({
       id: s.id,
@@ -222,6 +237,7 @@ exports.getRecentStoriesWithLocation = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch stories with location' });
   }
 };
+
 
 exports.searchOnMap = async (req, res) => {
   try {

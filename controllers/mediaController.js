@@ -66,7 +66,6 @@ exports.uploadMedia = async (req, res) => {
   }
 };
 
-
 exports.getStories = async (req, res) => {
   const userId = req.authData.id;
   console.log('Fetching stories for userId:', userId);
@@ -95,7 +94,11 @@ exports.getStories = async (req, res) => {
       user: {
         select: {
           id: true,
-          username: true
+          username: true,
+        minime: {
+              select: { avatarUrl: true }, 
+              where: { isSaved: true }
+            }
         }
       }
     },
