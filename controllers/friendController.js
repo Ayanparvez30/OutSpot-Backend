@@ -1,6 +1,8 @@
 const { PrismaClient } = require('@prisma/client');
 const nodemailer = require('nodemailer');
 const prisma = new PrismaClient();
+
+
 exports.searchUsers = async (req, res) => {
   const currentUserId = req.authData.id;
   const query = req.query.q;
@@ -761,7 +763,6 @@ exports.syncContacts = async (req, res) => {
   });
 };
 
-// Get blocked users
 exports.getBlockedUsers = async (req, res) => {
   const currentUserId = req.authData.id;
 
@@ -775,11 +776,10 @@ exports.getBlockedUsers = async (req, res) => {
             username: true,
             firstName: true,
             lastName: true,
-          minime: {
-  select: { avatarUrl: true },
-  where: { isSaved: true } 
-}
-
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true }  // Ensure you're filtering by isSaved
+            }
           }
         }
       }
@@ -790,7 +790,7 @@ exports.getBlockedUsers = async (req, res) => {
       username: block.blocked.username,
       firstName: block.blocked.firstName,
       lastName: block.blocked.lastName,
-      avatarUrl: block.blocked.minime?.avatarUrl || null,
+      avatarUrl: block.blocked.minime?.avatarUrl || null,  // Handle if no Minime
       totalPoints: block.blocked.totalPoints || 0
     }));
 
@@ -804,6 +804,7 @@ exports.getBlockedUsers = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch blocked users" });
   }
 };
+
 
 exports.getSentFriendRequests = async (req, res) => {
   const currentUserId = req.authData.id;
