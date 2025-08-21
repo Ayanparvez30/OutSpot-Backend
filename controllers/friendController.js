@@ -778,7 +778,7 @@ exports.getBlockedUsers = async (req, res) => {
             lastName: true,
             minime: {
               select: { avatarUrl: true },
-              where: { isSaved: true }  // Ensure you're filtering by isSaved
+              where: { isSaved: true }  
             }
           }
         }
@@ -790,7 +790,7 @@ exports.getBlockedUsers = async (req, res) => {
       username: block.blocked.username,
       firstName: block.blocked.firstName,
       lastName: block.blocked.lastName,
-      avatarUrl: block.blocked.minime?.avatarUrl || null,  // Handle if no Minime
+      avatarUrl: block.blocked.minime?.avatarUrl,
       totalPoints: block.blocked.totalPoints || 0
     }));
 
