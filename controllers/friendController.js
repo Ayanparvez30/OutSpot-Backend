@@ -776,8 +776,8 @@ exports.getBlockedUsers = async (req, res) => {
             firstName: true,
             lastName: true,
             minime: {
-              select: { avatarUrl: true },
-              where: { isSaved: true }  
+              select: { avatarUrl: true }, 
+              where: { isSaved: true }
             }
           }
         }
@@ -789,7 +789,7 @@ exports.getBlockedUsers = async (req, res) => {
       username: block.blocked.username,
       firstName: block.blocked.firstName,
       lastName: block.blocked.lastName,
-      avatarUrl: block.blocked.minime?.avatarUrl || null, // Display avatar if available, else null
+      avatarUrl: block.blocked.minime.length > 0 ? block.blocked.minime[0].avatarUrl : null, // Handle avatarUrl presence
       totalPoints: block.blocked.totalPoints || 0
     }));
 
@@ -803,7 +803,6 @@ exports.getBlockedUsers = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch blocked users" });
   }
 };
-
 
 
 exports.getSentFriendRequests = async (req, res) => {
