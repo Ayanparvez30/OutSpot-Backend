@@ -762,7 +762,6 @@ exports.syncContacts = async (req, res) => {
     matched: matchedUsers
   });
 };
-
 exports.getBlockedUsers = async (req, res) => {
   const currentUserId = req.authData.id;
 
@@ -790,7 +789,7 @@ exports.getBlockedUsers = async (req, res) => {
       username: block.blocked.username,
       firstName: block.blocked.firstName,
       lastName: block.blocked.lastName,
-      avatarUrl: block.blocked.minime?.avatarUrl,
+      avatarUrl: block.blocked.minime?.avatarUrl || null, // Display avatar if available, else null
       totalPoints: block.blocked.totalPoints || 0
     }));
 
@@ -804,6 +803,7 @@ exports.getBlockedUsers = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch blocked users" });
   }
 };
+
 
 
 exports.getSentFriendRequests = async (req, res) => {
