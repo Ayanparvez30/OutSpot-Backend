@@ -81,42 +81,40 @@ exports.createChat = async (req, res) => {
     return res.status(400).json({ message: 'User IDs required' });
   }
 
-  // ✅ Only allow private chats between friends (kept from your code)
+  // Remove the friendship check
   if (!isGroup && userIds.length === 1) {
     const targetUserId = userIds[0];
-    const isFriend = await prisma.friendship.findFirst({
-      where: {
-        status: 'ACCEPTED',
-        OR: [
-          { requesterId: currentUserId, receiverId: targetUserId },
-          { requesterId: targetUserId, receiverId: currentUserId },
-        ],
-      },
-    });
-    if (!isFriend) {
-      return res.status(403).json({ message: 'You can only start chats with friends.' });
-    }
+    // Remove the "friend check" section entirely.
+    // Comment or delete the friendship validation logic.
   }
 
   // Build membership rows with roles
   const memberIds = userIds.concat(currentUserId);
   const membersCreate = memberIds.map((uid) => ({
     userId: uid,
-    role: uid === currentUserId ? 'ADMIN' : 'MEMBER',   // 🔑 creator = ADMIN
+    role: uid === currentUserId ? 'ADMIN' : 'MEMBER', // 🔑 creator = ADMIN
   }));
 
-  const chat = await prisma.chat.create({
-    data: {
-      name,
-      isGroup: !!isGroup,
-      createdById: currentUserId, // optional if you added it
-      users: { create: membersCreate },
-    },
-    include: { users: { include: { user: true } } }
-  });
+  try {
+    // Create the chat in the database
+    const chat = await prisma.chat.create({
+      data: {
+        name,
+        isGroup: !!isGroup,
+        createdById: currentUserId, // optional if you added it
+        users: { create: membersCreate },
+      },
+      include: { users: { include: { user: true } } },
+    });
 
-  res.json(chat);
+    // Return the chat info in the response
+    return res.json(chat);
+  } catch (error) {
+    console.error('Error creating chat:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
 };
+
 
 
 
