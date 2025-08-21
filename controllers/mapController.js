@@ -175,26 +175,26 @@ exports.getRecentStoriesWithLocation = async (req, res) => {
     const friendIds = friendships.map(f => f.requesterId === userId ? f.receiverId : f.requesterId);
 
     const whereBase = {
-
+      // Get stories of the logged-in user, friends, and public stories with 'profile' visibility
       OR: [
-        { userId }, 
-        { userId: { in: friendIds } },
+        { userId }, // Get stories of the logged-in user
+        { userId: { in: friendIds } }, // Get stories of friends
         {
-          visibility: 'profile', 
+          visibility: 'profile', // Publicly visible stories
           user: {
             OR: [
-              { friendRequestsSent: { some: { receiverId: userId, status: 'ACCEPTED' } } }, 
-              { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } } 
+              { friendRequestsSent: { some: { receiverId: userId, status: 'ACCEPTED' } } }, // Sent requests accepted
+              { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } } // Received requests accepted
             ]
           }
         }
       ],
       latitude: { not: null },
       longitude: { not: null },
-      isInVault: false, 
+      isInVault: false, // Ensure the story is not in the vault
     };
 
-
+    // Apply geographical boundaries if provided
     if ([minLat, minLng, maxLat, maxLng].every(v => v !== undefined)) {
       whereBase.AND = [
         { latitude: { gte: parseFloat(minLat) } },
@@ -204,7 +204,7 @@ exports.getRecentStoriesWithLocation = async (req, res) => {
       ];
     }
 
-
+    // Fetch all stories that match the conditions, ordered by 'createdAt' in descending order
     const stories = await prisma.story.findMany({
       where: whereBase,
       include: {
@@ -216,11 +216,10 @@ exports.getRecentStoriesWithLocation = async (req, res) => {
           }
         }
       },
-      orderBy: { createdAt: 'desc' },
-      take: 1 
+      orderBy: { createdAt: 'desc' }, // Sort by the most recent stories first
     });
 
-
+    // Map and return the stories with details
     res.json(stories.map(s => ({
       id: s.id,
       userId: s.userId,
