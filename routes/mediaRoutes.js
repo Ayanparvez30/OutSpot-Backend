@@ -1,9 +1,8 @@
-// routes/mediaRoutes.js
 const express = require('express');
 const router = express.Router();
 const multer = require('multer');
 const { checkAuth } = require('../middlewares/authMiddleware');
-const mediaController = require('../controllers/mediaController');
+const mediaController = require('../controllers/mediaController');  // Ensure this is correctly imported
 const path = require('path');
 
 const upload = multer({
@@ -17,17 +16,12 @@ const upload = multer({
   }
 });
 
-
 router.post('/upload', checkAuth, upload.single('media'), mediaController.uploadMedia);
-
 router.get('/stories', checkAuth, mediaController.getStories);
 router.post('/stories/profile', checkAuth, mediaController.saveToProfile);
-router.post('/stories/vault', checkAuth, mediaController.saveToVault);
+router.post('/stories/vault', checkAuth, mediaController.saveToVault); 
 router.delete('/stories/:storyId', checkAuth, mediaController.removeStory);
-router.get('/debug-stories', checkAuth, mediaController.debugAllStories);
 router.get('/stories/vault', checkAuth, mediaController.getVaultStories);
-
-
-
+router.get('/stories/saved', checkAuth, mediaController.getSavedStories);  
 
 module.exports = router;

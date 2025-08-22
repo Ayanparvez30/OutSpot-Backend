@@ -35,6 +35,7 @@ model User {
   communitiesCreated Community[]  @relation("UserCreatedCommunities")
   media              Media[]      @relation("UserMedia")
   stories            Story[]
+  savedStories       SavedStory[]
 
   friendRequestsSent     Friendship[]    @relation("friendRequestsSent")
   friendRequestsReceived Friendship[]    @relation("friendRequestsReceived")
@@ -89,6 +90,22 @@ model Media {
   sender    User       @relation("UserMedia", fields: [senderId], references: [id], onDelete: Cascade)
   community Community? @relation(fields: [communityId], references: [id], onDelete: Cascade)
 }
+enum StoryVisibility {
+  private
+  profile
+}
+
+enum StoryType {
+  IMAGE
+  VIDEO
+}
+
+enum StoryStatus {
+  DRAFT
+  ACTIVE
+  SAVED
+  VAULT
+}
 
 model Story {
   id         Int             @id @default(autoincrement())
@@ -96,22 +113,29 @@ model Story {
   mediaUrl   String
   type       StoryType
   visibility StoryVisibility
-  isInVault  Boolean         @default(false)
-  createdAt  DateTime        @default(now())
+  status     StoryStatus       @default(DRAFT)
+  createdAt  DateTime          @default(now())
   latitude   Float?
   longitude  Float?
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  savedBy SavedStory[]
 }
 
-enum StoryVisibility {
-  private
-  profile
+model SavedStory {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  storyId   Int
+  status    StoryStatus
+  createdAt DateTime @default(now())
+
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
+  story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, storyId, status])   
 }
-enum StoryType {
-  IMAGE
-  VIDEO
-}
+
+
 model Location {
   id        Int      @id @default(autoincrement())
   userId    Int      @unique

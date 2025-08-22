@@ -1,7 +1,7 @@
 const express = require('express');
 const http = require('http');
 const cors = require('cors');
-
+const cron = require('node-cron');
 const app = express();
 app.use(cors());
 app.use(express.json());
@@ -39,6 +39,18 @@ app.use('/api', mapRoutes);
 const server = http.createServer(app);
 const { initSocket } = require('./utils/socket');
 initSocket(server);
+
+
+cron.schedule('0 * * * *', async () => { 
+  const expiry = new Date(Date.now() - 24 * 60 * 60 * 1000);
+  await prisma.story.deleteMany({
+    where: {
+      status: 'ACTIVE',
+      createdAt: { lt: expiry }
+    }
+  });
+  console.log('✅ Expired stories deleted');
+});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {

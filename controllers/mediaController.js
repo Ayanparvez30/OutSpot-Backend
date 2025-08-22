@@ -13,22 +13,18 @@ exports.uploadMedia = async (req, res) => {
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
-   
     type = (type || '').toString().trim().toUpperCase();
     const ALLOWED = new Set(['IMAGE', 'VIDEO']);
     if (!ALLOWED.has(type)) {
       return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
     }
 
-    // 2) booleans / numbers
     const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
     const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
     const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
 
-    // 3) upload
     const s3Url = await uploadToS3(req.file, 'media');
 
-    // 4) save media
     const media = await prisma.media.create({
       data: {
         senderId: userId,
@@ -41,22 +37,18 @@ exports.uploadMedia = async (req, res) => {
       }
     });
 
-    // 5) (optional) story create with location
     if (postToStoryBool) {
       await prisma.story.create({
         data: {
           userId,
           mediaUrl: s3Url,
-          type,              // must match Story.type enum
+          type,
           visibility: 'profile',
-          isInVault: false,
+          status: 'ACTIVE',
           latitude: lat,
           longitude: lng
         }
       });
-      console.log('✅ Story saved successfully');
-    } else {
-      console.log('⚠️ Skipped story save');
     }
 
     return res.json({ message: 'Media uploaded', media });
@@ -66,118 +58,235 @@ exports.uploadMedia = async (req, res) => {
   }
 };
 
-exports.getStories = async (req, res) => {
-  const userId = req.authData.id;
-  console.log('Fetching stories for userId:', userId);
-
-  const stories = await prisma.story.findMany({
-    where: {
-      OR: [
-        { userId },
-        {
-          AND: [
-            { visibility: 'profile' },
-            { isInVault: false },
-            {
-              user: {
-                OR: [
-                  { friendRequestsSent: { some: { receiverId: userId, status: 'ACCEPTED' } } },
-                  { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } }
-                ]
-              }
-            }
-          ]
-        }
-      ]
-    },
-    include: {
-      user: {
-        select: {
-          id: true,
-          username: true,
-        minime: {
-              select: { avatarUrl: true }, 
-              where: { isSaved: true }
-            }
-        }
-      }
-    },
-    orderBy: {
-      createdAt: 'desc'
-    }
-  });
-
-  console.log('Stories found:', stories.length);
-  res.json({ stories });
-};
-
-exports.debugAllStories = async (req, res) => {
-  const stories = await prisma.story.findMany({
-    include: {
-      user: true
-    }
-  });
-  res.json(stories);
-};
-
 exports.saveToProfile = async (req, res) => {
-  const userId = req.authData.id;
+  const authenticatedUserId = req.authData.id;
   const { storyId } = req.body;
 
-  await prisma.story.update({
-    where: { id: storyId, userId },
-    data: { visibility: 'profile' }
-  });
+  try {
+    const story = await prisma.story.findUnique({
+      where: { id: storyId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            friendRequestsSent: true,
+            friendRequestsReceived: true,
+            username: true
+          }
+        }
+      }
+    });
+    if (!story) return res.status(404).json({ error: 'Story not found' });
 
-  res.json({ message: 'Story saved to profile.' });
+    const isOwner = story.userId === authenticatedUserId;
+    const isFriend =
+      story.user.friendRequestsSent?.some(r => r.receiverId === authenticatedUserId && r.status === 'ACCEPTED') ||
+      story.user.friendRequestsReceived?.some(r => r.requesterId === authenticatedUserId && r.status === 'ACCEPTED');
+
+    if (!isOwner && !(isFriend && story.visibility === 'profile')) {
+      return res.status(403).json({ error: 'You can only save your own stories or friends’ profile-visible stories' });
+    }
+
+    const existingSaved = await prisma.savedStory.findUnique({
+      where: {
+        userId_storyId_status: {
+          userId: authenticatedUserId,
+          storyId,
+          status: 'SAVED'
+        }
+      }
+    });
+    if (existingSaved) return res.status(400).json({ error: 'Already saved to profile' });
+
+    const savedStory = await prisma.savedStory.create({
+      data: { userId: authenticatedUserId, storyId, status: 'SAVED' }
+    });
+
+
+    res.json({
+      message: `Saved to your profile.`,
+      savedStory
+    });
+  } catch (error) {
+    console.error('Error saving story to profile:', error);
+    res.status(500).json({ error: 'Failed to save story to profile' });
+  }
+};
+
+
+exports.getSavedStories = async (req, res) => {
+  const userId = req.authData.id;
+  const { targetUserId } = req.query;
+  const uid = targetUserId ? parseInt(targetUserId, 10) : userId;
+
+  try {
+    const savedStories = await prisma.savedStory.findMany({
+      where: { userId: uid, status: 'SAVED' },
+      include: {
+        story: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                minime: { select: { avatarUrl: true } }
+              }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json({ savedStories: savedStories.map(s => s.story) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch saved stories' });
+  }
 };
 
 exports.saveToVault = async (req, res) => {
   const userId = req.authData.id;
   const { storyId } = req.body;
 
-  await prisma.story.update({
-    where: { id: storyId, userId },
-    data: { isInVault: true }
-  });
+  try {
+    const story = await prisma.story.findUnique({
+      where: { id: storyId },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            friendRequestsSent: true,
+            friendRequestsReceived: true
+          }
+        }
+      }
+    });
+    if (!story) return res.status(404).json({ error: 'Story not found' });
 
-  res.json({ message: 'Story saved to vault.' });
+    const isOwner = story.userId === userId;
+    const isFriend =
+      story.user.friendRequestsSent?.some(r => r.receiverId === userId && r.status === 'ACCEPTED') ||
+      story.user.friendRequestsReceived?.some(r => r.requesterId === userId && r.status === 'ACCEPTED');
+
+   
+    if (!isOwner && !(isFriend && story.visibility === 'profile')) {
+      return res.status(403).json({ error: 'You do not have permission to save this story to your vault' });
+    }
+
+    const existingVaultStory = await prisma.savedStory.findUnique({
+      where: {
+        userId_storyId_status: {
+          userId,
+          storyId,
+          status: 'VAULT'
+        }
+      }
+    });
+    if (existingVaultStory) return res.status(400).json({ error: 'Already saved to vault' });
+
+    const savedStory = await prisma.savedStory.create({
+      data: { userId, storyId, status: 'VAULT' }
+    });
+
+    res.json({
+      message: `Saved to your vault`,
+      savedStory
+    });
+  } catch (error) {
+    console.error('Error saving story to vault:', error);
+    res.status(500).json({ error: 'Failed to save story to vault' });
+  }
 };
 
 exports.getVaultStories = async (req, res) => {
   const userId = req.authData.id;
 
-  const vaultStories = await prisma.story.findMany({
-    where: {
-      userId,
-      isInVault: true
-    },
-    include: {
-      user: {
-        select: {
-          id: true,
-          username: true
+  try {
+    const vaultStories = await prisma.savedStory.findMany({
+      where: { userId, status: 'VAULT' },
+      include: {
+        story: {
+          include: {
+            user: { select: { id: true, username: true, minime: { select: { avatarUrl: true } } } }
+          }
         }
-      }
-    },
-    orderBy: {
-      createdAt: 'desc'
-    }
-  });
+      },
+      orderBy: { createdAt: 'desc' }
+    });
 
-  res.json({ vault: vaultStories });
+    res.json({ vaultStories: vaultStories.map(s => s.story) });
+  } catch (error) {
+    console.error(error);
+    res.status(500).json({ error: 'Failed to fetch vault stories' });
+  }
 };
+
 
 exports.removeStory = async (req, res) => {
   const userId = req.authData.id;
   const { storyId } = req.params;
 
-  const story = await prisma.story.findUnique({ where: { id: parseInt(storyId) } });
-  if (!story || story.userId !== userId) {
-    return res.status(403).json({ error: 'Unauthorized' });
+  try {
+    const story = await prisma.story.findUnique({ where: { id: parseInt(storyId, 10) } });
+    if (!story || story.userId !== userId) {
+      return res.status(403).json({ error: 'Unauthorized' });
+    }
+    await prisma.story.delete({ where: { id: story.id } });
+    res.json({ message: 'Story removed successfully.' });
+  } catch (error) {
+    console.error('Error removing story:', error);
+    res.status(500).json({ error: 'Failed to remove story' });
   }
-
-  await prisma.story.delete({ where: { id: story.id } });
-  res.json({ message: 'Story removed successfully.' });
 };
 
+
+exports.getStories = async (req, res) => {
+  const userId = req.authData.id;
+  const twentyFourHoursAgo = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+  try {
+    const stories = await prisma.story.findMany({
+      where: {
+        status: 'ACTIVE',
+        createdAt: { gte: twentyFourHoursAgo },
+        OR: [
+  
+          { userId },
+
+          {
+            visibility: 'profile',
+            user: {
+              OR: [
+                { friendRequestsSent:     { some: { receiverId: userId,    status: 'ACCEPTED' } } },
+                { friendRequestsReceived: { some: { requesterId: userId,   status: 'ACCEPTED' } } }
+              ]
+            }
+          }
+        ]
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            longitude: true,
+            latitude: true,
+            minime: { select: { avatarUrl: true } }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    res.json({ stories });
+  } catch (error) {
+    console.error('Error fetching stories:', error);
+    res.status(500).json({ error: 'Failed to fetch stories' });
+  }
+};
