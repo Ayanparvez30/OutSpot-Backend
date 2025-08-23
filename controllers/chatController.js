@@ -86,21 +86,6 @@ exports.createPrivateChat = async (req, res) => {
       return res.status(400).json({ message: 'targetUserId is required' });
     }
 
-    // ✅ Check friendship
-    const isFriend = await prisma.friendship.findFirst({
-      where: {
-        status: 'ACCEPTED',
-        OR: [
-          { requesterId: currentUserId, receiverId: targetUserId },
-          { requesterId: targetUserId, receiverId: currentUserId }
-        ]
-      }
-    });
-
-    if (!isFriend) {
-      return res.status(403).json({ message: 'You can only start private chats with friends.' });
-    }
-
     // ✅ Check if private chat already exists
     const existingChat = await prisma.chat.findFirst({
       where: {
@@ -114,8 +99,14 @@ exports.createPrivateChat = async (req, res) => {
 
     if (existingChat) {
       const memberIds = existingChat.users.map(u => u.userId);
-      if (memberIds.includes(currentUserId) && memberIds.includes(Number(targetUserId))) {
-        return res.json({ message: 'Private chat already exists', chatId: existingChat.id });
+      if (
+        memberIds.includes(currentUserId) &&
+        memberIds.includes(Number(targetUserId))
+      ) {
+        return res.json({
+          message: 'Private chat already exists',
+          chatId: existingChat.id
+        });
       }
     }
 
@@ -138,6 +129,7 @@ exports.createPrivateChat = async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 
 
