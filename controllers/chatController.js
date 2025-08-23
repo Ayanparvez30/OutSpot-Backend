@@ -1,7 +1,10 @@
 const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
+const path = require('path');
+const multer = require('multer');
+const uploadToS3 = require('../utils/s3Upload'); // your existing util
+
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
-const multer = require('multer');
 const prisma = new PrismaClient();
 
 // Configure AWS SDK v3 S3 client
@@ -115,6 +118,53 @@ exports.createChat = async (req, res) => {
   }
 };
 
+
+
+exports.createGroupChat = (req, res) => {
+  upload.single('image')(req, res, async (err) => {
+    if (err) {
+      console.error('Upload error:', err);
+      return res.status(400).json({ error: 'File upload failed', details: err.message });
+    }
+
+    const { userIds, name, isGroup } = req.body;
+    const currentUserId = req.authData.id;
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ message: 'User IDs required' });
+    }
+
+    try {
+      // Upload group profile pic if provided
+      let imageUrl = null;
+      if (req.file) {
+        imageUrl = await uploadToS3(req.file, 'chat-images');
+      }
+
+      const memberIds = userIds.concat(currentUserId);
+      const membersCreate = memberIds.map(uid => ({
+        userId: uid,
+        role: uid === currentUserId ? 'ADMIN' : 'MEMBER',
+      }));
+
+      const chat = await prisma.chat.create({
+        data: {
+          name,
+          isGroup: !!isGroup,
+          createdById: currentUserId, // optional if you keep this
+          imageUrl,                   // ✅ save imageUrl (nullable)
+          users: { create: membersCreate },
+        },
+        include: { users: { include: { user: true } } },
+      });
+
+      return res.json(chat);
+    } catch (error) {
+      console.error('Error creating chat:', error);
+      return res.status(500).json({ message: 'Internal server error' });
+    }
+  });
+};
 
 
 
@@ -538,5 +588,61 @@ exports.getGroupMembers = async (req, res) => {
     console.error("Error fetching group members:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
+};
+
+exports.editGroupChat = (req, res) => {
+  upload.single('image')(req, res, async (err) => {
+    if (err) {
+      console.error('Upload error:', err);
+      return res.status(400).json({ error: 'File upload failed', details: err.message });
+    }
+
+    const { chatId } = req.params;
+    const { name } = req.body;
+    const currentUserId = req.authData.id;
+
+    try {
+      const chat = await prisma.chat.findUnique({
+        where: { id: parseInt(chatId, 10) },
+        include: { users: true },
+      });
+
+      if (!chat || !chat.isGroup) {
+        return res.status(404).json({ message: 'Group chat not found' });
+      }
+
+      // ✅ Must be ADMIN to edit group
+      const me = chat.users.find(u => u.userId === currentUserId);
+      if (!me || me.role !== 'ADMIN') {
+        return res.status(403).json({ message: 'Only admins can edit the group' });
+      }
+
+      // Upload new image if provided
+      let imageUrl = chat.imageUrl || null; // you’ll need to add `imageUrl` column to Chat model
+      if (req.file) {
+        imageUrl = await uploadToS3(req.file, 'chat-images');
+      }
+
+      const updated = await prisma.chat.update({
+        where: { id: chat.id },
+        data: {
+          name: name || chat.name,
+          imageUrl, // make sure Chat model has this column
+        },
+        include: {
+          users: {
+            include: {
+              user: { select: { id: true, username: true } }
+            }
+          }
+        }
+      });
+
+      return res.json({ message: 'Group chat updated', chat: updated });
+    } catch (error) {
+      console.error('Error editing group chat:', error);
+      return res.status(500).json({ message: 'Internal server error' });
+    }
+  });
 };
 

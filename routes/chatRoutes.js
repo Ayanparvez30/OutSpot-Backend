@@ -35,6 +35,11 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 router.post('/chat/upload', checkAuth, chatController.uploadChatImage);
-
+router.post(
+  '/chats/createGroupChat',
+  checkAuth,
+  multer({ storage: multer.memoryStorage() }).single('image'),
+  chatController.createGroupChat
+);
 module.exports = router;
 
