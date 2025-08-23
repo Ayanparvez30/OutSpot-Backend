@@ -164,7 +164,21 @@ exports.getMyChats = async (req, res) => {
       include: {
         users: {
           include: {
-            user: true,
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                totalPoints: true,
+                minime: {
+                  select: { avatarUrl: true },
+                  where: { isSaved: true },
+                  orderBy: { createdAt: 'desc' },
+                  take: 1
+                }
+              }
+            }
           },
         },
         messages: true,
@@ -172,13 +186,11 @@ exports.getMyChats = async (req, res) => {
       orderBy: { updatedAt: 'desc' },
     });
 
-    const weekStart = getStartOfWeek();  
+    const weekStart = getStartOfWeek();
+
     const getThisWeekPoints = async (userId) => {
       const submissions = await prisma.submission.findMany({
-        where: {
-          userId,
-          createdAt: { gte: weekStart },
-        },
+        where: { userId, createdAt: { gte: weekStart } },
         include: { challenge: true },
       });
 
@@ -188,10 +200,7 @@ exports.getMyChats = async (req, res) => {
       );
 
       const locationPoints = await prisma.locationPoint.findMany({
-        where: {
-          userId,
-          createdAt: { gte: weekStart },
-        },
+        where: { userId, createdAt: { gte: weekStart } },
       });
 
       const mapPoints = locationPoints.reduce(
@@ -214,7 +223,7 @@ exports.getMyChats = async (req, res) => {
               username: user.username,
               firstName: user.firstName || null,
               lastName: user.lastName || null,
-              avatarUrl: user.minime?.avatarUrl || null,
+              avatarUrl: user.minime?.[0]?.avatarUrl || null, // ✅ FIXED
               totalPoints: user.totalPoints || 0,
               thisWeekPoints,
               profileUrl: `/api/users/${user.id}/profile`,
@@ -232,6 +241,7 @@ exports.getMyChats = async (req, res) => {
     res.status(500).json({ message: "Server error" });
   }
 };
+
 
 // Helper function to calculate the start of the week (Monday)
 function getStartOfWeek() {
