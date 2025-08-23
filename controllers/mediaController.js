@@ -112,16 +112,56 @@ exports.saveToProfile = async (req, res) => {
     res.status(500).json({ error: 'Failed to save story to profile' });
   }
 };
-
-
 exports.getSavedStories = async (req, res) => {
-  const userId = req.authData.id;
+  const requesterId = req.authData.id;
   const { targetUserId } = req.query;
-  const uid = targetUserId ? parseInt(targetUserId, 10) : userId;
+  const uid = targetUserId ? parseInt(targetUserId, 10) : requesterId;
 
   try {
+    // target user info + privacy
+    const targetUser = await prisma.user.findUnique({
+      where: { id: uid },
+      select: { id: true, isProfilePrivate: true }
+    });
+    if (!targetUser) return res.status(404).json({ error: 'User not found' });
+
+    const isOwner = uid === requesterId;
+
+    // are they friends?
+    let isFriend = false;
+    if (!isOwner) {
+      const friendship = await prisma.friendship.findFirst({
+        where: {
+          status: 'ACCEPTED',
+          OR: [
+            { requesterId: requesterId, receiverId: uid },
+            { requesterId: uid, receiverId: requesterId }
+          ]
+        }
+      });
+      isFriend = Boolean(friendship);
+    }
+
+    // profile privacy gate
+    if (!isOwner && targetUser.isProfilePrivate && !isFriend) {
+      return res.status(403).json({ error: 'This profile is private' });
+    }
+
+    // visibility filter: owner দেখলে সব saved (SAVED) দেখতে পারবে,
+    // অন্য কেউ দেখলে কেবল সেই saved যেগুলোর story.visibility = 'profile' এবং story.status != 'VAULT'
     const savedStories = await prisma.savedStory.findMany({
-      where: { userId: uid, status: 'SAVED' },
+      where: {
+        userId: uid,
+        status: 'SAVED',
+        ...(isOwner
+          ? {}
+          : {
+              story: {
+                visibility: 'profile',
+                NOT: { status: 'VAULT' }
+              }
+            })
+      },
       include: {
         story: {
           include: {
@@ -131,7 +171,13 @@ exports.getSavedStories = async (req, res) => {
                 username: true,
                 firstName: true,
                 lastName: true,
-                minime: { select: { avatarUrl: true } }
+                // Minime[] হওয়ায় ১টা avatar নাও
+                minime: {
+                  where: { isSaved: true },
+                  select: { avatarUrl: true },
+                  take: 1,
+                  orderBy: { updatedAt: 'desc' }
+                }
               }
             }
           }
@@ -140,7 +186,25 @@ exports.getSavedStories = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    res.json({ savedStories: savedStories.map(s => s.story) });
+    // response সাজাও (minime array safe read)
+    const stories = savedStories.map(s => {
+      const u = s.story.user;
+      const avatarUrl =
+        Array.isArray(u.minime) && u.minime.length > 0 ? u.minime[0]?.avatarUrl || null : null;
+
+      return {
+        ...s.story,
+        user: {
+          id: u.id,
+          username: u.username,
+          firstName: u.firstName,
+          lastName: u.lastName,
+          avatarUrl
+        }
+      };
+    });
+
+    res.json({ savedStories: stories });
   } catch (error) {
     console.error(error);
     res.status(500).json({ error: 'Failed to fetch saved stories' });
@@ -211,7 +275,7 @@ exports.getVaultStories = async (req, res) => {
       include: {
         story: {
           include: {
-            user: { select: { id: true, username: true, minime: { select: { avatarUrl: true } } } }
+            user: { select: { id: true, firstName: true, lastName: true,  username: true, minime: { select: { avatarUrl: true } } } }
           }
         }
       },

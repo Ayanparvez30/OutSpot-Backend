@@ -11,8 +11,20 @@ router.post('/communities', checkAuth, upload.single('image'), communityControll
 router.put('/communities/:communityId', checkAuth, upload.single('image'), communityController.editCommunity);
 router.get('/communities', checkAuth, communityController.getAllCommunities);
 router.post('/communities/join', checkAuth, communityController.joinCommunity);
-router.post('/communities/leave', checkAuth, communityController.leaveCommunity);
+
 router.get('/communities/:communityId', checkAuth, communityController.getCommunityDetails);
 router.get('/communities/:communityId/chat-id', checkAuth, communityController.getCommunityChatId);
-router.get('/communities/recent', checkAuth, communityController.getMyRecentCommunities);
+
+
+
+router.post('/communities/leave', checkAuth, communityController.leaveCommunity);
+
+
+// Only the creator can delete a community
+router.delete('/communities/:communityId', checkAuth, communityController.deleteCommunity);
+
+
+// Recent communities for the current user (created + joined), sorted by recency
+router.get('/communities/my/recent', checkAuth, communityController.getMyRecentCommunities);
+
 module.exports = router;

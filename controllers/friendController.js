@@ -900,7 +900,7 @@ const friendStories = await prisma.story.findMany({
   where: {
     userId: friendId,
     visibility: 'profile',
-   
+      NOT: { status: 'VAULT' }
   },
   include: {
     user: {

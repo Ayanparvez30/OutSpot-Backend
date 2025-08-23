@@ -117,7 +117,6 @@ exports.uploadAvatarWithMulter = async (req, res) => {
   }
 };
 
-// ================== GENERATE MINIME ==================
 exports.generateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -335,7 +334,7 @@ exports.getUserProfile = async (req, res) => {
     where: {
       userId: profileUserId,
       visibility: 'profile',
-      isInVault: false
+       NOT: { status: 'VAULT' }
     },
     orderBy: { createdAt: 'desc' }
   });

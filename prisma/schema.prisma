@@ -263,7 +263,7 @@ enum FriendshipStatus {
 model Challenge {
   id             Int           @id @default(autoincrement())
   title          String
- 
+  description    String? 
   type           ChallengeType
   startDate      DateTime
   endDate        DateTime

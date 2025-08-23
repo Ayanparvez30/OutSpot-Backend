@@ -45,85 +45,123 @@ exports.getFriendLocations = async (req, res) => {
   try {
     const userId = req.authData.id;
 
+    // 1) Friends
     const friendships = await prisma.friendship.findMany({
       where: {
         status: 'ACCEPTED',
         OR: [{ requesterId: userId }, { receiverId: userId }]
-      }
+      },
+      select: { requesterId: true, receiverId: true }
     });
 
-    const friendIds = friendships.map(f => f.requesterId === userId ? f.receiverId : f.requesterId);
+    if (friendships.length === 0) {
+      return res.json([]);
+    }
 
-    const locations = await prisma.location.findMany({
-      where: { userId: { in: friendIds } },
-      include: {
-        user: {
+    const friendIds = friendships.map(f =>
+      f.requesterId === userId ? f.receiverId : f.requesterId
+    );
+
+    // 2) Friends + their latest profile avatar + last known location (LEFT JOIN style)
+    const friends = await prisma.user.findMany({
+      where: { id: { in: friendIds } },
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        totalPoints: true,
+        // pick first saved minime avatar (most recent)
+        minime: {
+          where: { isSaved: true },
+          select: { avatarUrl: true },
+          take: 1,
+          orderBy: { updatedAt: 'desc' }
+        },
+        // LEFT relation
+        Location: {
           select: {
-            id: true,
-            username: true,
-            firstName: true,
-            lastName: true,
-            totalPoints: true,
-            minime: {
-              select: { avatarUrl: true },
-              where: { isSaved: true },
-              take: 1
-            }
+            latitude: true,
+            longitude: true,
+            updatedAt: true
           }
         }
       }
     });
 
+    // 3) Weekly points (batch)
     const now = new Date();
     const day = now.getDay();
     const diff = now.getDate() - day + (day === 0 ? -6 : 1);
     const weekStart = new Date(now.setDate(diff));
     weekStart.setHours(0, 0, 0, 0);
 
-    const locationsWithDetails = await Promise.all(locations.map(async (r) => {
-      const friend = r.user;
+    // Submissions for all friends
+    const allSubs = await prisma.submission.findMany({
+      where: {
+        userId: { in: friendIds },
+        createdAt: { gte: weekStart }
+      },
+      select: {
+        userId: true,
+        challenge: { select: { points: true } }
+      }
+    });
 
-      // Weekly challenge points
-      const submissions = await prisma.submission.findMany({
-        where: {
-          userId: friend.id,
-          createdAt: { gte: weekStart }
-        },
-        include: { challenge: true }
-      });
-      const challengePoints = submissions.reduce((sum, s) => sum + (s.challenge?.points || 0), 0);
+    // LocationPoints for all friends
+    const allLocPts = await prisma.locationPoint.findMany({
+      where: {
+        userId: { in: friendIds },
+        createdAt: { gte: weekStart }
+      },
+      select: { userId: true, points: true }
+    });
 
-      // Weekly location points
-      const locationPoints = await prisma.locationPoint.findMany({
-        where: {
-          userId: friend.id,
-          createdAt: { gte: weekStart }
-        }
-      });
-      const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
+    // Aggregate
+    const subMap = new Map(); // userId -> sum
+    for (const s of allSubs) {
+      const prev = subMap.get(s.userId) || 0;
+      subMap.set(s.userId, prev + (s.challenge?.points || 0));
+    }
 
+    const locMap = new Map(); // userId -> sum
+    for (const p of allLocPts) {
+      const prev = locMap.get(p.userId) || 0;
+      locMap.set(p.userId, prev + (p.points || 0));
+    }
+
+    // 4) Shape response (include all friends, even if no Location row)
+    const data = friends.map(u => {
+      const avatarUrl =
+        Array.isArray(u.minime) && u.minime.length > 0 ? u.minime[0]?.avatarUrl || null : null;
+
+      const challengePoints = subMap.get(u.id) || 0;
+      const mapPoints = locMap.get(u.id) || 0;
       const thisWeekPoints = challengePoints + mapPoints;
 
       return {
-        userId: r.userId,
-        username: r.user.username,
-        firstName: r.user.firstName,
-        lastName: r.user.lastName,
-        avatarUrl: r.user.minime?.[0]?.avatarUrl || null,
-        totalPoints: r.user.totalPoints || 0,
+        userId: u.id,
+        username: u.username,
+        firstName: u.firstName,
+        lastName: u.lastName,
+        avatarUrl,
+        totalPoints: u.totalPoints || 0,
         thisWeekPoints,
-        profileUrl: `/api/users/${r.userId}/profile`,
-        latitude: r.latitude,
-        longitude: r.longitude
+        profileUrl: `/api/users/${u.id}/profile`,
+        latitude: u.Location?.latitude ?? null,
+        longitude: u.Location?.longitude ?? null,
+        lastUpdatedAt: u.Location?.updatedAt ?? null
       };
-    }));
+    });
 
-    res.json(locationsWithDetails);
+ 
+    res.json(data);
   } catch (error) {
     console.error('Error fetching friend locations:', error);
     res.status(500).json({ error: 'Failed to fetch friend locations' });
   }
 };
+
 
 exports.getVisitedTrail = async (req, res) => {
   try {
@@ -191,7 +229,7 @@ exports.getRecentStoriesWithLocation = async (req, res) => {
       ],
       latitude: { not: null },
       longitude: { not: null },
-      isInVault: false, // Ensure the story is not in the vault
+   NOT: { status: 'VAULT' }
     };
 
     // Apply geographical boundaries if provided
