@@ -1,3 +1,4 @@
+
 const express = require('express');
 const router = express.Router();
 const chatController = require('../controllers/chatController');
@@ -32,7 +33,7 @@ const storage = multer.diskStorage({
     cb(null, `${Date.now()}-${Math.round(Math.random() * 1e9)}${ext}`);
   }
 });
-const upload = multer({ storage });
+
 
 router.post('/chat/upload', checkAuth, chatController.uploadChatImage);
 

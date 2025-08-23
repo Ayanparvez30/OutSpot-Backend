@@ -86,7 +86,7 @@ exports.createPrivateChat = async (req, res) => {
       return res.status(400).json({ message: 'targetUserId is required' });
     }
 
-    // ✅ Check friendship before allowing private chat
+    // ✅ Check friendship
     const isFriend = await prisma.friendship.findFirst({
       where: {
         status: 'ACCEPTED',
@@ -101,29 +101,32 @@ exports.createPrivateChat = async (req, res) => {
       return res.status(403).json({ message: 'You can only start private chats with friends.' });
     }
 
-    // ✅ Check if chat already exists
+    // ✅ Check if private chat already exists
     const existingChat = await prisma.chat.findFirst({
       where: {
         isGroup: false,
         users: {
-          every: { userId: { in: [currentUserId, targetUserId] } }
+          some: { userId: currentUserId }
         }
       },
       include: { users: true }
     });
 
     if (existingChat) {
-      return res.json({ message: 'Private chat already exists', chatId: existingChat.id });
+      const memberIds = existingChat.users.map(u => u.userId);
+      if (memberIds.includes(currentUserId) && memberIds.includes(Number(targetUserId))) {
+        return res.json({ message: 'Private chat already exists', chatId: existingChat.id });
+      }
     }
 
-    // ✅ Create new private chat
+    // ✅ Create new chat
     const chat = await prisma.chat.create({
       data: {
         isGroup: false,
         users: {
           create: [
             { userId: currentUserId, role: 'ADMIN' },
-            { userId: targetUserId, role: 'ADMIN' }
+            { userId: parseInt(targetUserId), role: 'ADMIN' }
           ]
         }
       }
@@ -139,6 +142,7 @@ exports.createPrivateChat = async (req, res) => {
 
 
 
+
 exports.createGroupChat = async (req, res) => {
   try {
     const currentUserId = req.authData.id;
@@ -148,7 +152,6 @@ exports.createGroupChat = async (req, res) => {
       return res.status(400).json({ message: 'Group name is required' });
     }
 
-    // Parse userIds if sent as string "[4,5]"
     if (typeof userIds === 'string') {
       try {
         userIds = JSON.parse(userIds);
@@ -161,15 +164,33 @@ exports.createGroupChat = async (req, res) => {
       return res.status(400).json({ message: 'At least one userId required' });
     }
 
-    // ✅ Upload group image if provided
+    // ✅ Build full member list
+    const allMemberIds = [...new Set(userIds.concat(currentUserId))].map(id => parseInt(id));
+
+    // ✅ Check if such a group already exists (same member set)
+    const candidateChats = await prisma.chat.findMany({
+      where: { isGroup: true },
+      include: { users: true }
+    });
+
+    for (const chat of candidateChats) {
+      const chatMemberIds = chat.users.map(u => u.userId).sort();
+      if (
+        chatMemberIds.length === allMemberIds.length &&
+        chatMemberIds.every((id, idx) => id === allMemberIds.sort()[idx])
+      ) {
+        return res.json({ message: 'Group chat already exists', chat });
+      }
+    }
+
+    // ✅ Upload image if provided
     let imageUrl = null;
     if (req.file) {
       imageUrl = await uploadToS3(req.file, 'chat-images');
     }
 
-    // Build members list
-    const memberIds = userIds.concat(currentUserId);
-    const membersCreate = memberIds.map(uid => ({
+    // ✅ Create group chat
+    const membersCreate = allMemberIds.map(uid => ({
       userId: uid,
       role: uid === currentUserId ? 'ADMIN' : 'MEMBER'
     }));
@@ -191,6 +212,7 @@ exports.createGroupChat = async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 
 
