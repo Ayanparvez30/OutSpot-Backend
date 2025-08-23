@@ -4,7 +4,7 @@ const chatController = require('../controllers/chatController');
 const { checkAuth } = require('../middlewares/authMiddleware');
 
 // Chat routes
-router.post('/chats/create', checkAuth, chatController.createChat);
+router.post('/chats/create', checkAuth, chatController.createPrivateChat);
 router.delete('/chats/delete/:chatId', checkAuth, chatController.deleteChat);
 
 router.get('/chats', checkAuth, chatController.getMyChats);
@@ -35,11 +35,13 @@ const storage = multer.diskStorage({
 const upload = multer({ storage });
 
 router.post('/chat/upload', checkAuth, chatController.uploadChatImage);
+
 router.post(
   '/chats/createGroupChat',
   checkAuth,
   multer({ storage: multer.memoryStorage() }).single('image'),
   chatController.createGroupChat
 );
+
 module.exports = router;
 
