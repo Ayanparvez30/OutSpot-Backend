@@ -275,9 +275,13 @@ exports.getStories = async (req, res) => {
             username: true,
             firstName: true,
             lastName: true,
-            longitude: true,
-            latitude: true,
-            minime: { select: { avatarUrl: true } }
+            minime: { select: { avatarUrl: true } },
+                        Location: {         // ✅ relation object
+              select: {
+                latitude: true,
+                longitude: true
+              }
+            }
           }
         }
       },
