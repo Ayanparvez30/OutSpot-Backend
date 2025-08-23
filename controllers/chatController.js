@@ -76,47 +76,55 @@ exports.uploadChatImage = (req, res) => {
 //
 
 
+// controllers/chatController.js
 exports.createChat = async (req, res) => {
-  const { userIds, name, isGroup } = req.body;
-  const currentUserId = req.authData.id;
-
-  if (!Array.isArray(userIds) || userIds.length === 0) {
-    return res.status(400).json({ message: 'User IDs required' });
-  }
-
-  // Remove the friendship check
-  if (!isGroup && userIds.length === 1) {
-    const targetUserId = userIds[0];
-    // Remove the "friend check" section entirely.
-    // Comment or delete the friendship validation logic.
-  }
-
-  // Build membership rows with roles
-  const memberIds = userIds.concat(currentUserId);
-  const membersCreate = memberIds.map((uid) => ({
-    userId: uid,
-    role: uid === currentUserId ? 'ADMIN' : 'MEMBER', // 🔑 creator = ADMIN
-  }));
-
   try {
-    // Create the chat in the database
+    let { userIds, name, isGroup } = req.body;
+    const currentUserId = req.authData.id;
+
+    // Parse userIds if stringified (e.g. "[4]")
+    if (typeof userIds === 'string') {
+      try {
+        userIds = JSON.parse(userIds);
+      } catch {
+        userIds = [parseInt(userIds, 10)];
+      }
+    }
+
+    if (!Array.isArray(userIds) || userIds.length === 0) {
+      return res.status(400).json({ message: 'User IDs required' });
+    }
+
+    // ✅ Upload group image if provided
+    let imageUrl = null;
+    if (req.file) {
+      imageUrl = await uploadToS3(req.file, 'chat-images');
+    }
+
+    const memberIds = userIds.concat(currentUserId);
+    const membersCreate = memberIds.map(uid => ({
+      userId: uid,
+      role: uid === currentUserId ? 'ADMIN' : 'MEMBER',
+    }));
+
     const chat = await prisma.chat.create({
       data: {
         name,
         isGroup: !!isGroup,
-        createdById: currentUserId, // optional if you added it
+        imageUrl,
+        createdById: currentUserId, // optional
         users: { create: membersCreate },
       },
       include: { users: { include: { user: true } } },
     });
 
-    // Return the chat info in the response
-    return res.json(chat);
+    return res.json({ message: 'Group chat created', chat });
   } catch (error) {
     console.error('Error creating chat:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 
 
