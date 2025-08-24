@@ -22,5 +22,7 @@ router.get('/friends', friendController.getFriendList);
 router.get('/friends/recommended', friendController.getRecommendedFriends);
 router.post('/contacts/sync', friendController.syncContacts);
 router.get('/friends/search', friendController.searchUsers);
-router.get('/friends-profile/:friendId',friendController.getFriendProfile)
+router.get('/friends-profile/:friendId', friendController.getFriendProfile);
+router.get('/users/profile/:userId', friendController.getUserProfile);
+
 module.exports = router;
