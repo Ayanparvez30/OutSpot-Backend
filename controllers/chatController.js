@@ -205,6 +205,60 @@ exports.createGroupChat = async (req, res) => {
   }
 };
 
+exports.updateGroupChat = async (req, res) => {
+  try {
+    const currentUserId = req.authData.id;
+    const { chatId } = req.params;
+    const { name } = req.body;
+
+    // 1. Find chat and membership
+    const chat = await prisma.chat.findUnique({
+      where: { id: parseInt(chatId, 10) },
+      include: {
+        users: {
+          where: { userId: currentUserId },
+          select: { role: true }
+        }
+      }
+    });
+
+    if (!chat || !chat.isGroup) {
+      return res.status(404).json({ message: 'Group chat not found' });
+    }
+
+    // 2. Ensure user is ADMIN
+    const membership = chat.users[0];
+    if (!membership || membership.role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Only group admins can update this chat' });
+    }
+
+    // 3. Handle image upload (optional)
+    let imageUrl = chat.imageUrl;
+    if (req.file) {
+      imageUrl = await uploadToS3(req.file, 'chat-images');
+    }
+
+    // 4. Update chat
+    const updatedChat = await prisma.chat.update({
+      where: { id: chat.id },
+      data: {
+        name: name || chat.name,
+        imageUrl
+      },
+      include: {
+        users: {
+          include: { user: true }
+        }
+      }
+    });
+
+    return res.json({ message: 'Group chat updated', chat: updatedChat });
+  } catch (error) {
+    console.error('Error updating group chat:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
 
 
 

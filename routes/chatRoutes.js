@@ -4,7 +4,6 @@ const router = express.Router();
 const chatController = require('../controllers/chatController');
 const { checkAuth } = require('../middlewares/authMiddleware');
 
-// Chat routes
 router.post('/chats/create', checkAuth, chatController.createPrivateChat);
 router.delete('/chats/delete/:chatId', checkAuth, chatController.deleteChat);
 
@@ -44,5 +43,11 @@ router.post(
   chatController.createGroupChat
 );
 
-module.exports = router;
+router.put(
+  '/chats/:chatId',
+  checkAuth,
+  multer({ storage: multer.memoryStorage() }).single('image'),  chatController.updateGroupChat
+);
+
+module.exports = router; 
 
