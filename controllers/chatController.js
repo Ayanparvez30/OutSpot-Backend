@@ -637,6 +637,53 @@ exports.leaveGroup = async (req, res) => {
 };
 
 
+// exports.getGroupMembers = async (req, res) => {
+//   const { chatId } = req.params;
+
+//   try {
+//     const chat = await prisma.chat.findUnique({
+//       where: { id: parseInt(chatId) },
+//       include: {
+//         users: {
+//           include: {
+//             user: {
+//               select: {
+//                 id: true,
+//                 username: true,
+//                 firstName: true,
+//                 lastName: true,
+//                 totalPoints: true,
+//                 minime: {
+//                   select: { avatarUrl: true },
+//                   where: { isSaved: true }
+//                 }
+//               }
+//             }
+//           }
+//         }
+//       }
+//     });
+
+//     if (!chat || !chat.isGroup) {
+//       return res.status(404).json({ message: 'Group not found' });
+//     }
+
+//     const members = chat.users.map(u => ({
+//       id: u.user.id,
+//       username: u.user.username,
+//       firstName: u.user.firstName,
+//       lastName: u.user.lastName,
+//       avatarUrl: u.user.minime?.avatarUrl || null,
+//       totalPoints: u.user.totalPoints || 0,
+//       profileUrl: `/api/users/${u.user.id}/profile`
+//     }));
+
+//     return res.json({ members });
+//   } catch (error) {
+//     console.error("Error fetching group members:", error);
+//     return res.status(500).json({ message: "Internal server error" });
+//   }
+// };
 exports.getGroupMembers = async (req, res) => {
   const { chatId } = req.params;
 
@@ -655,7 +702,9 @@ exports.getGroupMembers = async (req, res) => {
                 totalPoints: true,
                 minime: {
                   select: { avatarUrl: true },
-                  where: { isSaved: true }
+                  where: { isSaved: true },
+                  orderBy: { createdAt: 'desc' },
+                  take: 1
                 }
               }
             }
@@ -673,17 +722,24 @@ exports.getGroupMembers = async (req, res) => {
       username: u.user.username,
       firstName: u.user.firstName,
       lastName: u.user.lastName,
-      avatarUrl: u.user.minime?.avatarUrl || null,
+      avatarUrl: u.user.minime?.[0]?.avatarUrl || null,
       totalPoints: u.user.totalPoints || 0,
       profileUrl: `/api/users/${u.user.id}/profile`
     }));
 
-    return res.json({ members });
+    return res.json({
+      groupId: chat.id,
+      groupName: chat.name,
+      groupImage: chat.imageUrl || null,
+      createdById: chat.createdById,
+      members
+    });
   } catch (error) {
     console.error("Error fetching group members:", error);
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 exports.editGroupChat = (req, res) => {
   upload.single('image')(req, res, async (err) => {
