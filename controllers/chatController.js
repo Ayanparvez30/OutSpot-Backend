@@ -160,20 +160,20 @@ exports.createGroupChat = async (req, res) => {
     const allMemberIds = [...new Set(userIds.concat(currentUserId))].map(id => parseInt(id));
 
     // ✅ Check if such a group already exists (same member set)
-    const candidateChats = await prisma.chat.findMany({
-      where: { isGroup: true },
-      include: { users: true }
-    });
+    // const candidateChats = await prisma.chat.findMany({
+    //   where: { isGroup: true },
+    //   include: { users: true }
+    // });
 
-    for (const chat of candidateChats) {
-      const chatMemberIds = chat.users.map(u => u.userId).sort();
-      if (
-        chatMemberIds.length === allMemberIds.length &&
-        chatMemberIds.every((id, idx) => id === allMemberIds.sort()[idx])
-      ) {
-        return res.json({ message: 'Group chat already exists', chat });
-      }
-    }
+    // for (const chat of candidateChats) {
+    //   const chatMemberIds = chat.users.map(u => u.userId).sort();
+    //   if (
+    //     chatMemberIds.length === allMemberIds.length &&
+    //     chatMemberIds.every((id, idx) => id === allMemberIds.sort()[idx])
+    //   ) {
+    //     return res.json({ message: 'Group chat already exists', chat });
+    //   }
+    // }
 
     // ✅ Upload image if provided
     let imageUrl = null;
