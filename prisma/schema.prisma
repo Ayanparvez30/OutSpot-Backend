@@ -120,6 +120,9 @@ model Story {
 
   user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
   savedBy SavedStory[]
+
+  @@index([status, createdAt])
+  @@index([userId, createdAt])
 }
 
 model SavedStory {
@@ -311,6 +314,8 @@ model CommunityMember {
   community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
 
   @@unique([userId, communityId])
+    @@index([userId, communityId])
+
 }
 
 model ContactSync {

@@ -2,13 +2,15 @@ const express = require('express');
 const http = require('http');
 const cors = require('cors');
 const cron = require('node-cron');
+const { PrismaClient } = require('@prisma/client');
+const prisma = new PrismaClient();
+
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 app.use('/uploads', express.static('uploads'));
 app.use('/pose', express.static('public/pose'));
-
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 
@@ -35,25 +37,41 @@ app.use('/api', chatRoutes);
 app.use('/api', friendRoutes);
 app.use('/api', mapRoutes);
 
-// SOCKET
+// ---- Story expiry cron ----
+// TTL minutes (same logic as controller)
+const STORY_TTL_MINUTES = Number(
+  process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
+);
+
+// dev: every minute; prod: top of hour
+const CRON_EXPR = process.env.NODE_ENV === 'development' ? '* * * * *' : '0 * * * *';
+
+cron.schedule(CRON_EXPR, async () => { 
+  try {
+    const expiry = new Date(Date.now() - STORY_TTL_MINUTES * 60 * 1000);
+
+    // ✅ DO NOT delete stories that are referenced by any SavedStory (SAVED or VAULT)
+    const result = await prisma.story.deleteMany({
+      where: {
+        status: 'ACTIVE',
+        createdAt: { lt: expiry },
+        savedBy: { none: {} } // keep if has any saved/vault link
+      }
+    });
+
+    console.log(`✅ Expired stories deleted (kept saved/vault): ${result.count}`);
+  } catch (e) {
+    console.error('❌ Cron error:', e);
+  }
+});
+
 const server = http.createServer(app);
 const { initSocket } = require('./utils/socket');
 initSocket(server);
-
-
-cron.schedule('0 * * * *', async () => { 
-  const expiry = new Date(Date.now() - 24 * 60 * 60 * 1000);
-  await prisma.story.deleteMany({
-    where: {
-      status: 'ACTIVE',
-      createdAt: { lt: expiry }
-    }
-  });
-  console.log('✅ Expired stories deleted');
-});
 
 const PORT = process.env.PORT || 3000;
 server.listen(PORT, '0.0.0.0', () => {
   console.log(`✅ Server running on ${PORT}`);
   console.log(`ℹ️  Health: GET http://localhost:${PORT}/health`);
+  console.log(`ℹ️  Story TTL (minutes): ${STORY_TTL_MINUTES} | Cron: ${CRON_EXPR}`);
 });
