@@ -196,53 +196,75 @@ exports.getVisitedTrail = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch visited trail' });
   }
 };
+// controllers/mediaController.js → replace only this handler
 exports.getRecentStoriesWithLocation = async (req, res) => {
   try {
     const userId = req.authData.id;
     const { minLat, minLng, maxLat, maxLng } = req.query;
 
-    // Fetch all friendships where status is ACCEPTED
-    const friendships = await prisma.friendship.findMany({
-      where: {
-        status: 'ACCEPTED',
-        OR: [{ requesterId: userId }, { receiverId: userId }]
-      }
+    // TTL minutes for feed window (dev: 5, prod: 24h)
+    const STORY_TTL_MINUTES = Number(
+      process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
+    );
+    const windowAgo = new Date(Date.now() - STORY_TTL_MINUTES * 60 * 1000);
+
+    // 1) Communities of requester
+    const myCommunities = await prisma.communityMember.findMany({
+      where: { userId },
+      select: { communityId: true }
     });
+    const communityIds = myCommunities.map(c => c.communityId);
+    const hasCommunities = communityIds.length > 0;
 
-    // Get IDs of friends
-    const friendIds = friendships.map(f => f.requesterId === userId ? f.receiverId : f.requesterId);
+    // 2) Friend condition (either direction, ACCEPTED)
+    const friendOR = [
+      { friendRequestsSent:     { some: { receiverId: userId,  status: 'ACCEPTED' } } },
+      { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } }
+    ];
 
-    const whereBase = {
-      // Get stories of the logged-in user, friends, and public stories with 'profile' visibility
-      OR: [
-        { userId }, // Get stories of the logged-in user
-        { userId: { in: friendIds } }, // Get stories of friends
-        {
-          visibility: 'profile', // Publicly visible stories
-          user: {
-            OR: [
-              { friendRequestsSent: { some: { receiverId: userId, status: 'ACCEPTED' } } }, // Sent requests accepted
-              { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } } // Received requests accepted
-            ]
-          }
-        }
-      ],
-      latitude: { not: null },
-      longitude: { not: null },
-   NOT: { status: 'VAULT' }
+    // 3) Same-community condition
+    const sameCommunityCond = hasCommunities
+      ? { communities: { some: { communityId: { in: communityIds } } } }
+      : undefined;
+
+    // 4) Exclude blocked (either way)
+    const notBlocked = {
+      NOT: [
+        { user: { blockedBy: { some: { blockerId: userId } } } }, // I blocked them
+        { user: { blocks:    { some: { blockedId:  userId } } } } // They blocked me
+      ]
     };
 
-    // Apply geographical boundaries if provided
+    // 5) Base where
+    const whereBase = {
+      status: 'ACTIVE',
+      createdAt: { gte: windowAgo },
+      latitude: { not: null },
+      longitude: { not: null },
+      ...notBlocked,
+      OR: [
+        // a) My own stories
+        { userId },
+
+        // b) Friends' profile-visible stories
+        { visibility: 'profile', user: { OR: friendOR } },
+
+        // c) Same-community users' profile-visible stories
+        ...(hasCommunities ? [{ visibility: 'profile', user: sameCommunityCond }] : [])
+      ]
+    };
+
+    // 6) Optional bounding box filter
     if ([minLat, minLng, maxLat, maxLng].every(v => v !== undefined)) {
       whereBase.AND = [
-        { latitude: { gte: parseFloat(minLat) } },
-        { latitude: { lte: parseFloat(maxLat) } },
+        { latitude:  { gte: parseFloat(minLat) } },
+        { latitude:  { lte: parseFloat(maxLat) } },
         { longitude: { gte: parseFloat(minLng) } },
         { longitude: { lte: parseFloat(maxLng) } }
       ];
     }
 
-    // Fetch all stories that match the conditions, ordered by 'createdAt' in descending order
+    // 7) Fetch stories
     const stories = await prisma.story.findMany({
       where: whereBase,
       include: {
@@ -250,25 +272,33 @@ exports.getRecentStoriesWithLocation = async (req, res) => {
           select: {
             id: true,
             username: true,
-            minime: { select: { avatarUrl: true }, where: { isSaved: true }, take: 1 }
+            // latest saved avatar only
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              take: 1,
+              orderBy: { updatedAt: 'desc' }
+            }
           }
         }
       },
-      orderBy: { createdAt: 'desc' }, // Sort by the most recent stories first
+      orderBy: { createdAt: 'desc' }
     });
 
-    // Map and return the stories with details
-    res.json(stories.map(s => ({
+    // 8) Return in the requested flat array format
+    const payload = stories.map(s => ({
       id: s.id,
       userId: s.userId,
-      username: s.user.username,
-      avatarUrl: s.user.minime?.[0]?.avatarUrl || null,
+      username: s.user?.username || null,
+      avatarUrl: s.user?.minime?.[0]?.avatarUrl || null,
       mediaUrl: s.mediaUrl,
       type: s.type,
       latitude: s.latitude,
       longitude: s.longitude,
       createdAt: s.createdAt
-    })));
+    }));
+
+    res.json(payload);
   } catch (error) {
     console.error('Error fetching stories with location:', error);
     res.status(500).json({ error: 'Failed to fetch stories with location' });
