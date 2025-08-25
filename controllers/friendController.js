@@ -1079,16 +1079,18 @@ exports.getUserProfile = async (req, res) => {
 
     // 8. Restrict profile fields if not friend/self
     const profileData = {
-      id: user.id,
-      username: user.username,
-      minime: user.minime,
-      friendCount,
-      communities: isSelf || isFriend ? communities.map(c => c.community) : [],
-      thisWeekPoints: isSelf || isFriend ? thisWeekPoints : null,
-      bio: isSelf || isFriend ? user.bio : null,
-      totalPoints: isSelf || isFriend ? user.totalPoints : null,
-      stories
-    };
+  id: user.id,
+  username: user.username,
+  firstName: isSelf || isFriend ? user.firstName : null,
+  lastName: isSelf || isFriend ? user.lastName : null,
+  minime: user.minime,
+  friendCount,
+  communities: isSelf || isFriend ? communities.map(c => c.community) : [],
+  thisWeekPoints: isSelf || isFriend ? thisWeekPoints : null,
+  bio: isSelf || isFriend ? user.bio : null,
+  totalPoints: isSelf || isFriend ? user.totalPoints : null,
+  stories
+  };
 
     return res.status(200).json({
       success: true,
