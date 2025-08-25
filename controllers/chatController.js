@@ -400,16 +400,55 @@ function getStartOfWeek() {
 
 
 exports.getMessages = async (req, res) => {
-    const { chatId } = req.params;
+  const { chatId } = req.params;
 
+  try {
     const messages = await prisma.message.findMany({
-        where: { chatId: parseInt(chatId) },
-        include: { sender: true },
-        orderBy: { createdAt: 'asc' }
+      where: { chatId: parseInt(chatId) },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            email: true,
+            phone: true,
+            isVerified: true,
+            bio: true,
+            bodyType: true,
+            bodyShapeUrl: true,
+            totalPoints: true,
+            createdAt: true,
+            updatedAt: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { createdAt: 'desc' },
+              take: 1
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'asc' }
     });
 
-    res.json(messages);
+    // Flatten avatarUrl (instead of array)
+    const formatted = messages.map(m => ({
+      ...m,
+      sender: {
+        ...m.sender,
+        avatarUrl: m.sender.minime?.[0]?.avatarUrl || null
+      }
+    }));
+
+    res.json(formatted);
+  } catch (error) {
+    console.error('getMessages error:', error);
+    res.status(500).json({ message: 'Failed to fetch messages' });
+  }
 };
+
 exports.getMessagesPaginated = async (req, res) => {
     const { chatId } = req.params;
     const { page = 1, limit = 20 } = req.query;
