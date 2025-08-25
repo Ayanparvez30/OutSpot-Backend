@@ -80,44 +80,40 @@ exports.uploadChatImage = (req, res) => {
 exports.createPrivateChat = async (req, res) => {
   try {
     const currentUserId = req.authData.id;
-    const { targetUserId } = req.body;
+    const { targetUserIds } = req.body; // <-- now an array
 
-    if (!targetUserId) {
-      return res.status(400).json({ message: 'targetUserId is required' });
+    if (!targetUserIds || !Array.isArray(targetUserIds) || targetUserIds.length === 0) {
+      return res.status(400).json({ message: 'targetUserIds is required and must be an array' });
     }
 
-    // ✅ Check if private chat already exists
+    // ✅ Check if private chat already exists (between exactly these 2 users)
     const existingChat = await prisma.chat.findFirst({
       where: {
         isGroup: false,
         users: {
-          some: { userId: currentUserId }
+          every: {
+            userId: { in: [currentUserId, ...targetUserIds.map(Number)] }
+          }
         }
       },
       include: { users: true }
     });
 
     if (existingChat) {
-      const memberIds = existingChat.users.map(u => u.userId);
-      if (
-        memberIds.includes(currentUserId) &&
-        memberIds.includes(Number(targetUserId))
-      ) {
-        return res.json({
-          message: 'Private chat already exists',
-          chatId: existingChat.id
-        });
-      }
+      return res.json({
+        message: 'Private chat already exists',
+        chatId: existingChat.id
+      });
     }
 
-    // ✅ Create new chat
+    // ✅ Create new chat with all participants
     const chat = await prisma.chat.create({
       data: {
         isGroup: false,
         users: {
           create: [
             { userId: currentUserId, role: 'ADMIN' },
-            { userId: parseInt(targetUserId), role: 'ADMIN' }
+            ...targetUserIds.map(id => ({ userId: Number(id), role: 'ADMIN' }))
           ]
         }
       }
@@ -129,6 +125,7 @@ exports.createPrivateChat = async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 
 
