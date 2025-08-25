@@ -731,7 +731,7 @@ exports.getGroupMembers = async (req, res) => {
 
   try {
     const chat = await prisma.chat.findUnique({
-      where: { id: parseInt(chatId) },
+      where: { id: parseInt(chatId, 10) },
       include: {
         users: {
           include: {
@@ -766,7 +766,9 @@ exports.getGroupMembers = async (req, res) => {
       lastName: u.user.lastName,
       avatarUrl: u.user.minime?.[0]?.avatarUrl || null,
       totalPoints: u.user.totalPoints || 0,
-      profileUrl: `/api/users/${u.user.id}/profile`
+      profileUrl: `/api/users/${u.user.id}/profile`,
+      role: u.role,              // ✅ include role from UserOnChat
+      joinedAt: u.joinedAt       // ✅ optional: also include join date
     }));
 
     return res.json({
@@ -781,6 +783,7 @@ exports.getGroupMembers = async (req, res) => {
     return res.status(500).json({ message: "Internal server error" });
   }
 };
+
 
 
 exports.editGroupChat = (req, res) => {
