@@ -399,3 +399,54 @@ exports.getStories = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch stories' });
   }
 };
+
+exports.getMyStories = async (req, res) => {
+  const userId = req.authData.id;
+
+  const MY_STORY_TTL_MINUTES = Number(process.env.MY_STORY_TTL_MINUTES || 24 * 60);
+  const windowAgo = new Date(Date.now() - MY_STORY_TTL_MINUTES * 60 * 1000);
+
+  try {
+    const stories = await prisma.story.findMany({
+      where: {
+        userId,
+        status: 'ACTIVE',            // only active stories
+        createdAt: { gte: windowAgo } // last 24h (or env override)
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          
+            minime: { select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
+            Location: { select: { latitude: true, longitude: true } }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
+
+    const myStories = stories.map(s => {
+      const u = s.user;
+      const avatarUrl = Array.isArray(u.minime) && u.minime.length > 0 ? u.minime[0]?.avatarUrl || null : null;
+      return {
+        ...s,
+        user: {
+          id: u.id,
+          username: u.username,
+          firstName: u.firstName,
+          lastName: u.lastName,
+          avatarUrl
+        }
+      };
+    });
+
+    return res.json({ stories: myStories });
+  } catch (error) {
+    console.error('Error fetching my stories:', error);
+    return res.status(500).json({ error: 'Failed to fetch your stories' });
+  }
+};
