@@ -80,51 +80,57 @@ exports.uploadChatImage = (req, res) => {
 exports.createPrivateChat = async (req, res) => {
   try {
     const currentUserId = req.authData.id;
-    const { targetUserIds } = req.body; // <-- now an array
+    const { UserId, isGroup } = req.body;
 
-    if (!targetUserIds || !Array.isArray(targetUserIds) || targetUserIds.length === 0) {
-      return res.status(400).json({ message: 'targetUserIds is required and must be an array' });
+    if (!UserId || !Array.isArray(UserId) || UserId.length === 0) {
+      return res.status(400).json({ message: 'UserId is required and must be an array' });
     }
 
-    // ✅ Check if private chat already exists (between exactly these 2 users)
-    const existingChat = await prisma.chat.findFirst({
-      where: {
-        isGroup: false,
-        users: {
-          every: {
-            userId: { in: [currentUserId, ...targetUserIds.map(Number)] }
+    // ✅ For private chat (not group), check if it already exists
+    if (!isGroup && UserId.length === 1) {
+      const targetUserId = Number(UserId[0]);
+
+      const existingChat = await prisma.chat.findFirst({
+        where: {
+          isGroup: false,
+          users: {
+            some: { userId: currentUserId }
           }
-        }
-      },
-      include: { users: true }
-    });
-
-    if (existingChat) {
-      return res.json({
-        message: 'Private chat already exists',
-        chatId: existingChat.id
+        },
+        include: { users: true }
       });
+
+      if (existingChat) {
+        const memberIds = existingChat.users.map(u => u.userId);
+        if (memberIds.includes(currentUserId) && memberIds.includes(targetUserId)) {
+          return res.json({
+            message: 'Private chat already exists',
+            chatId: existingChat.id
+          });
+        }
+      }
     }
 
-    // ✅ Create new chat with all participants
+    // ✅ Create new chat
     const chat = await prisma.chat.create({
       data: {
-        isGroup: false,
+        isGroup: isGroup || false,
         users: {
           create: [
             { userId: currentUserId, role: 'ADMIN' },
-            ...targetUserIds.map(id => ({ userId: Number(id), role: 'ADMIN' }))
+            ...UserId.map(id => ({ userId: Number(id), role: 'ADMIN' }))
           ]
         }
       }
     });
 
-    return res.json({ message: 'Private chat created', chatId: chat.id });
+    return res.json({ message: 'Chat created', chatId: chat.id });
   } catch (error) {
-    console.error('Error creating private chat:', error);
+    console.error('Error creating chat:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 
 
