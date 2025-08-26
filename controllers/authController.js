@@ -786,3 +786,17 @@ exports.contactUs = async (req, res) => {
     return res.status(500).json({ error: 'Failed to send your message. Please try again later.' });
   }
 };
+
+exports.updateFcmToken = async (req, res) => {
+  const { fcmToken } = req.body;
+  const userId = req.authData.id;
+
+  if (!fcmToken) return res.status(400).json({ error: "FCM token required" });
+
+  await prisma.user.update({
+    where: { id: userId },
+    data: { fcmToken }
+  });
+
+  res.json({ message: "Token updated" });
+};

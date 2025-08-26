@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const nodemailer = require('nodemailer');
 const prisma = new PrismaClient();
-
+const { notifyUser } = require('../utils/notificationService');
 
 exports.searchUsers = async (req, res) => {
   const currentUserId = req.authData.id;
@@ -218,10 +218,12 @@ exports.sendFriendRequest = async (req, res) => {
 };
 
 // Accept a friend request
+
+
 exports.acceptFriendRequest = async (req, res) => {
   const currentUserId = req.authData.id;
-  const fromUserId = parseInt(req.params.userId);  // user who sent the request
-  // Find the pending friend request record
+  const fromUserId = parseInt(req.params.userId);
+
   const friendRecord = await prisma.friendship.findFirst({
     where: {
       requesterId: fromUserId,
@@ -230,44 +232,26 @@ exports.acceptFriendRequest = async (req, res) => {
     },
     include: { requester: true, receiver: true }
   });
-  if (!friendRecord) {
-    return res.status(404).json({ error: "Friend request not found." });
-  }
-  // Update the friendship status to ACCEPTED
+
+  if (!friendRecord) return res.status(404).json({ error: "Friend request not found." });
+
   await prisma.friendship.update({
     where: { id: friendRecord.id },
-    data: {
-      status: 'ACCEPTED',
-      acceptedAt: new Date()
-    }
+    data: { status: 'ACCEPTED', acceptedAt: new Date() }
   });
-  // Send notification email to the requester 
-  try {
-    const requesterEmail = friendRecord.requester.email;
-    if (requesterEmail) {
-      const transporter = nodemailer.createTransport({
-        // Configure your SMTP or email service
-        // (using a test Ethereal account for example)
-        host: "smtp.ethereal.email",
-        port: 587,
-        auth: {
-          user: "test_account@ethereal.email",
-          pass: "ethereal_password"
-        }
-      });
-      await transporter.sendMail({
-        from: '"MyApp" <no-reply@myapp.com>',
-        to: requesterEmail,
-        subject: "Friend Request Accepted",
-        text: `Hi ${friendRecord.requester.username}, your friend request to ${friendRecord.receiver.username} has been accepted!`
-      });
-    }
-  } catch (err) {
-    console.error("Email send failed:", err);
-    // (Even if email fails, we continue without failing the request)
-  }
+
+  // ✅ Send notification
+  await notifyUser(
+    fromUserId, // requester
+    "FRIEND_ACCEPTED",
+    "Friend Request Accepted",
+    `${friendRecord.receiver.username} accepted your request!`,
+    { friendId: friendRecord.receiver.id }
+  );
+
   return res.json({ message: "Friend request accepted." });
 };
+
 
 // Decline or cancel a friend request
 exports.declineFriendRequest = async (req, res) => {
@@ -390,7 +374,7 @@ exports.getFriendList = async (req, res) => {
       username: friend.username,
       firstName: friend.firstName,
       lastName: friend.lastName,
-      avatarUrl: friend.minime?.avatarUrl || null,
+      avatarUrl: friend.minime?.[0]?.avatarUrl || null,
       totalPoints: friend.totalPoints || 0,
       thisWeekPoints,
       profileUrl: `/api/users/${friend.id}/profile`

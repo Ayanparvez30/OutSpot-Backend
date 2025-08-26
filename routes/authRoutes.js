@@ -68,5 +68,6 @@ upload.any()
 );
 router.delete('/me/delete', checkAuth, userController.deleteAccount);
 
+router.post('/me/fcm-token', checkAuth, userController.updateFcmToken);
 
 module.exports = router;

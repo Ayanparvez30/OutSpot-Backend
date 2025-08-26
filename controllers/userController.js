@@ -14,6 +14,9 @@ const uploadToS3 = require('../utils/s3Upload');
 // Lazy import fetch for CommonJS
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
+
+
+
 const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });

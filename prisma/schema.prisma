@@ -29,9 +29,12 @@ model User {
   communities      CommunityMember[]
   syncedContacts   ContactSync[]
 
-  messages           Message[]
-  chats              UserOnChat[]
-  minime             Minime[]
+
+  fcmToken         String?
+  notifications     Notification[]
+  messages          Message[]
+  chats             UserOnChat[]
+  minime            Minime[]
   communitiesCreated Community[]  @relation("UserCreatedCommunities")
   media              Media[]      @relation("UserMedia")
   stories            Story[]
@@ -169,6 +172,23 @@ model LocationPoint {
   points    Int     @default(5)
 
   createdAt DateTime @default(now())
+}
+
+model Notification {
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  type        NotificationType
+  title       String
+  description String?
+  isRead      Boolean   @default(false)
+  createdAt   DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+enum NotificationType {
+  FRIEND_ACCEPTED
+  NEW_CHALLENGE
 }
 
 model Chat {
