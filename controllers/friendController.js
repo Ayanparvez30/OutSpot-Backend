@@ -511,7 +511,7 @@ exports.getFriendRequests = async (req, res) => {
           username: user.username,
           firstName: user.firstName,
           lastName: user.lastName,
-          avatarUrl: friend.minime?.[0]?.avatarUrl || null,
+          avatarUrl: user.minime?.[0]?.avatarUrl || null,
           totalPoints: user.totalPoints || 0,
           thisWeekPoints: challengePoints + mapPoints,
           profileUrl: `/api/users/${user.id}/profile`
