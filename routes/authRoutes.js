@@ -52,7 +52,7 @@ router.post('/me/update-bio', checkAuth, userController.updateBio);
 router.post('/me/update-name', checkAuth, userController.updateName);
 
 router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
-router
+
 router.get('/users/:userId/points', checkAuth, userController.getUserPoints);
 
 router.post('/submit-for-points', upload.single('media'),checkAuth, userController.submitForPoints);
@@ -68,6 +68,6 @@ upload.any()
 );
 router.delete('/me/delete', checkAuth, userController.deleteAccount);
 
-router.post('/me/fcm-token', checkAuth, userController.updateFcmToken);
+router.post('/me/fcm-token', checkAuth, authController.updateFcmToken);
 
 module.exports = router;
