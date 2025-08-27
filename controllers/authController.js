@@ -7,6 +7,26 @@ const { verifyFirebaseIdToken } = require('../utils/firebaseVerify');
 const response = require('../functions/response');
 require('dotenv').config();
 const nodemailer = require('nodemailer');
+
+const UNVERIFIED_HOLD_MINUTES = Number(process.env.UNVERIFIED_HOLD_MINUTES || 60);
+
+
+function isTakeoverAllowed(user) {
+  if (user.isVerified) return false;
+
+  const now = Date.now();
+  const created = user.createdAt ? new Date(user.createdAt).getTime() : 0;
+  const holdMs = UNVERIFIED_HOLD_MINUTES * 60 * 1000;
+
+
+  const otpExp = user.otpExpiresAt ? new Date(user.otpExpiresAt).getTime() : 0;
+  const passedByOtp = otpExp && now > (otpExp + 60 * 1000);
+
+
+  const passedByTime = created && now > (created + holdMs);
+
+  return passedByOtp || passedByTime;
+}
 exports.signup = async (req, res) => {
   try {
     const { email, phone, username, password, repeatPassword, countryCode, firebaseIdToken } = req.body;
@@ -22,15 +42,16 @@ exports.signup = async (req, res) => {
     const authToken = randomKey(40);
     const fullPhone = phone ? `${countryCode || ''}${phone}` : null;
 
-    // 1) Check username
+
     const usernameUser = await prisma.user.findUnique({ where: { username } });
 
     if (usernameUser) {
+
       if (usernameUser.isVerified) {
         return response.response_with_code(res, 409, 'Username already exists.');
       }
 
-      // Username exists but not verified → reconcile identifiers
+ 
       if (email && usernameUser.email && usernameUser.email !== email) {
         return response.response_with_code(res, 409, 'Email belongs to a different user.');
       }
@@ -38,16 +59,91 @@ exports.signup = async (req, res) => {
         return response.response_with_code(res, 409, 'Phone number belongs to a different user.');
       }
 
-      // 👉 If client provided Firebase token, verify & mark verified (phone flow)
+      const canTakeover = isTakeoverAllowed(usernameUser);
+
+      if (canTakeover) {
+
+        if (firebaseIdToken) {
+          try {
+            const decoded = await verifyFirebaseIdToken(firebaseIdToken);
+            const firebaseUid = decoded.uid;
+            const phoneFromToken = decoded.phone_number || null;
+
+            const updated = await prisma.user.update({
+              where: { username },
+              data: {
+                email: email || usernameUser.email || null,
+                phone: phoneFromToken || fullPhone || usernameUser.phone || null,
+                password: hashedPassword,
+                isVerified: true,
+                otp: null,
+                otpExpiresAt: null,
+                authorization: authToken,
+                firebaseUid
+              }
+            });
+
+            return response.true_status(res, {
+              isNewUser: false,
+              token: updated.authorization,
+              user: {
+                id: updated.id,
+                username: updated.username,
+                email: updated.email || null,
+                phone: updated.phone || null,
+                isVerified: true
+              }
+            }, 'Previous unverified account reclaimed via Firebase phone auth.');
+          } catch (err) {
+            console.error('Firebase verify failed:', err);
+            return response.response_with_code(res, 401, 'Invalid Firebase ID token');
+          }
+        }
+
+        if (email || usernameUser.email) {
+          const toEmail = email || usernameUser.email;
+          const otp = generateOTP();
+          const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
+
+          const updated = await prisma.user.update({
+            where: { username },
+            data: {
+              email: toEmail,
+              phone: fullPhone || usernameUser.phone || null,
+              password: hashedPassword,
+              isVerified: false,
+              otp, otpExpiresAt,
+              authorization: null
+            }
+          });
+
+          const html = `
+            <h1>Verification OTP</h1>
+            <p>Your OTP is: <strong>${otp}</strong></p>
+            <p>This OTP expires in 10 minutes.</p>
+          `;
+          await sendEmail(toEmail, 'Your OTP for Verification', html);
+
+          return response.true_status(res, {
+            isNewUser: false,
+            user: {
+              id: updated.id,
+              username: updated.username,
+              email: toEmail,
+              phone: updated.phone || null,
+              isVerified: false
+            }
+          }, 'Previous unverified account reclaimed. OTP resent.');
+        }
+
+        return response.response_with_code(res, 400, 'Provide email for OTP or use Firebase phone auth to reclaim this username.');
+      }
+
       if (firebaseIdToken) {
         try {
           const decoded = await verifyFirebaseIdToken(firebaseIdToken);
           const firebaseUid = decoded.uid;
-          const phoneFromToken = decoded.phone_number; // E.164 format
-
-          if (!phoneFromToken && !fullPhone) {
-            return response.response_with_code(res, 400, 'No phone number found. Provide phone or use Firebase phone auth.');
-          }
+          const phoneFromToken = decoded.phone_number; 
 
           const updated = await prisma.user.update({
             where: { username },
@@ -80,7 +176,6 @@ exports.signup = async (req, res) => {
         }
       }
 
-      // 👉 No Firebase token: if email exists on record or provided, resend Email OTP (email flow)
       if (email || usernameUser.email) {
         const toEmail = email || usernameUser.email;
         const otp = generateOTP();
@@ -88,7 +183,7 @@ exports.signup = async (req, res) => {
 
         await prisma.user.update({
           where: { username },
-          data: { otp, otpExpiresAt, email: toEmail }
+          data: { otp, otpExpiresAt, email: toEmail, authorization: null }
         });
 
         const html = `
@@ -110,11 +205,9 @@ exports.signup = async (req, res) => {
         }, 'Username exists but not verified. Email OTP resent.');
       }
 
-      // 👉 No Firebase token and no email path → ask client to use Firebase phone auth
       return response.response_with_code(res, 400, 'Phone signup requires Firebase ID token. Please verify on client and resend firebaseIdToken.');
     }
 
-    // 2) Check email if provided (email flow unchanged)
     if (email) {
       const emailUser = await prisma.user.findUnique({ where: { email } });
       if (emailUser) {
@@ -129,7 +222,7 @@ exports.signup = async (req, res) => {
         const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
         await prisma.user.update({
           where: { email },
-          data: { otp, otpExpiresAt }
+          data: { otp, otpExpiresAt, authorization: null } // ✅ token clear
         });
 
         const html = `
@@ -146,7 +239,7 @@ exports.signup = async (req, res) => {
       }
     }
 
-    // 3) Check phone if provided (PHONE = Firebase only)
+    // 3) Phone unique check (Firebase only)
     if (fullPhone) {
       const phoneUser = await prisma.user.findUnique({ where: { phone: fullPhone } });
       if (phoneUser) {
@@ -157,7 +250,6 @@ exports.signup = async (req, res) => {
           return response.response_with_code(res, 409, 'Phone number belongs to a different user.');
         }
 
-        // Require firebaseIdToken for phone path
         if (!firebaseIdToken) {
           return response.response_with_code(res, 400, 'Phone signup requires Firebase ID token. Please verify on client and resend firebaseIdToken.');
         }
@@ -167,15 +259,11 @@ exports.signup = async (req, res) => {
           const firebaseUid = decoded.uid;
           const phoneFromToken = decoded.phone_number;
 
-          if (phoneFromToken && phoneFromToken !== fullPhone) {
-            // Normalize to token’s phone to avoid mismatch
-            // Optional: enforce exact match if you want strictness
-          }
-
           const updated = await prisma.user.update({
             where: { phone: fullPhone },
             data: {
               email: email || phoneUser.email || null,
+              username,
               password: hashedPassword,
               isVerified: true,
               otp: null,
@@ -203,13 +291,8 @@ exports.signup = async (req, res) => {
       }
     }
 
-    // 4) Create new user
-    // - If firebaseIdToken present → phone-based verified create
-    // - Else if email provided → email OTP create
-    // - Else error (phone without firebase token not allowed)
-
+    // 4) Fresh create
     if (firebaseIdToken) {
-      // Prefer phone from token; fallback to provided phone
       try {
         const decoded = await verifyFirebaseIdToken(firebaseIdToken);
         const firebaseUid = decoded.uid;
@@ -251,7 +334,6 @@ exports.signup = async (req, res) => {
     }
 
     if (email) {
-      // Email OTP path (unchanged)
       const otp = generateOTP();
       const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
@@ -263,7 +345,7 @@ exports.signup = async (req, res) => {
           otp,
           otpExpiresAt,
           isVerified: false,
-          authorization: authToken
+          authorization: null 
         }
       });
 
@@ -286,9 +368,7 @@ exports.signup = async (req, res) => {
       }, 'Signup successful! OTP sent to email.');
     }
 
-    // Neither Firebase phone token nor email provided → can’t continue
     return response.response_with_code(res, 400, 'Provide firebaseIdToken for phone signup or email for email OTP signup.');
-
   } catch (error) {
     console.error('Signup error:', error);
     return response.response_with_code(res, 500, 'Internal server error');
@@ -298,14 +378,12 @@ exports.verifyOtp = async (req, res) => {
   try {
     let { email, phone, otp, firebaseIdToken } = req.body;
 
-    // 👉 PHONE: Firebase path (no server OTP)
     if (firebaseIdToken) {
       try {
         const decoded = await verifyFirebaseIdToken(firebaseIdToken);
         const firebaseUid = decoded.uid;
         const phoneFromToken = decoded.phone_number;
 
-        // Pick identifier priority: email > body phone > token phone
         const identifier = email
           ? { email }
           : (phone ? { phone } : (phoneFromToken ? { phone: phoneFromToken } : null));
@@ -344,16 +422,13 @@ exports.verifyOtp = async (req, res) => {
       }
     }
 
-    // 👉 EMAIL: OTP path (unchanged)
     if (!otp || (!email && !phone)) {
       return response.response_with_code(res, 400, 'OTP and either email or phone are required');
     }
     otp = otp.toString();
 
     const identifier = email ? { email } : { phone };
-    const user = await prisma.user.findFirst({
-      where: { ...identifier, otp }
-    });
+    const user = await prisma.user.findFirst({ where: { ...identifier, otp } });
 
     if (!user) {
       return response.response_with_code(res, 400, 'Invalid OTP or identifier');
@@ -391,17 +466,17 @@ exports.verifyOtp = async (req, res) => {
 
 exports.resendOtp = async (req, res) => {
   try {
-    const { email, phone } = req.body;
+    const { email, phone, countryCode } = req.body;
 
     if (!email && !phone) {
       return response.response_with_code(res, 400, 'Email or phone is required');
     }
 
-    const identifier = email ? { email } : { phone };
+    const identifier = email
+      ? { email }
+      : { phone: countryCode ? `${countryCode}${phone}` : phone };
 
-    const user = await prisma.user.findFirst({
-      where: identifier
-    });
+    const user = await prisma.user.findFirst({ where: identifier });
 
     if (!user) {
       return response.response_with_code(res, 404, 'User not found');
@@ -411,28 +486,28 @@ exports.resendOtp = async (req, res) => {
       return response.response_with_code(res, 400, 'User is already verified');
     }
 
-    const newOtp = generateOTP(); // e.g., return Math.floor(100000 + Math.random() * 900000).toString();
-    const newOtpExpiry = new Date(Date.now() + 10 * 60 * 1000); // 10 minutes from now
+    const newOtp = generateOTP();
+    const newOtpExpiry = new Date(Date.now() + 10 * 60 * 1000);
 
     await prisma.user.update({
       where: { id: user.id },
       data: {
         otp: newOtp,
-        otpExpiresAt: newOtpExpiry
+        otpExpiresAt: newOtpExpiry,
+        authorization: null 
       }
     });
 
     if (email) {
-      // Send OTP to email
       const html = `
         <h1>Resend OTP</h1>
         <p>Your new OTP is: <strong>${newOtp}</strong></p>
         <p>This OTP will expire in 10 minutes.</p>
       `;
       await sendEmail(email, 'Your new OTP for verification', html);
-    } else if (phone) {
-      // Send OTP via SMS using Twilio
-      await sendSms(phone, `Your OTP is: ${newOtp}. It will expire in 10 minutes.`);
+    } else if (identifier.phone) {
+
+      console.log(`OTP for phone ${identifier.phone}: ${newOtp}`);
     }
 
     return response.true_status(res, null, 'A new OTP has been sent');
@@ -441,6 +516,7 @@ exports.resendOtp = async (req, res) => {
     return response.response_with_code(res, 500, 'Internal server error');
   }
 };
+
 exports.login = async (req, res) => {
   try {
     const { identifier, password, forceLogin } = req.body;
@@ -449,7 +525,7 @@ exports.login = async (req, res) => {
       return response.response_with_code(res, 400, 'Identifier and password required');
     }
 
-    // Find user by email, phone or username
+
     const user = await prisma.user.findFirst({
       where: {
         OR: [
@@ -483,7 +559,7 @@ if (user.authorization && !forceLogin) {
 // Generate new auth token
 const newToken = randomKey(40);
 
-// Update user with new token (this will invalidate previous session)
+
 await prisma.user.update({
   where: { id: user.id },
   data: { authorization: newToken },
