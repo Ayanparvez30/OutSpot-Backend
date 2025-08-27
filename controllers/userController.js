@@ -10,6 +10,12 @@ const response = require('../functions/response');
 require('dotenv').config();
 const validBodyTypes = ['masculine', 'feminine'];
 const uploadToS3 = require('../utils/s3Upload');
+async function fetchAsDataUrl(url) {
+  const r = await fetch(url);
+  if (!r.ok) throw new Error(`Failed to fetch: ${url}`);
+  const buf = Buffer.from(await r.arrayBuffer());
+  return `data:image/png;base64,${buf.toString('base64')}`;
+}
 
 // Lazy import fetch for CommonJS
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
@@ -21,36 +27,36 @@ const openai = new OpenAI({
   apiKey: process.env.OPENAI_API_KEY,
 });
 
-const upload = multer({
-  storage: multer.memoryStorage(),
-  fileFilter: (req, file, cb) => {
-    const ext = path.extname(file.originalname).toLowerCase();
-    if (!['.jpg', '.jpeg', '.png'].includes(ext)) {
-      return cb(new Error('Only images are allowed'), false);
-    }
-    cb(null, true);
-  }
-});
+// const upload = multer({
+//   storage: multer.memoryStorage(),
+//   fileFilter: (req, file, cb) => {
+//     const ext = path.extname(file.originalname).toLowerCase();
+//     if (!['.jpg', '.jpeg', '.png'].includes(ext)) {
+//       return cb(new Error('Only images are allowed'), false);
+//     }
+//     cb(null, true);
+//   }
+// });
 
-// ================== UTILITY ==================
-async function uploadToS3FromUrl(url, keyPrefix) {
-  try {
-    const res = await fetch(url);
-    if (!res.ok) throw new Error(`Failed to fetch image from ${url}`);
+// // ================== UTILITY ==================
+// async function uploadToS3FromUrl(url, keyPrefix) {
+//   try {
+//     const res = await fetch(url);
+//     if (!res.ok) throw new Error(`Failed to fetch image from ${url}`);
 
-    const buffer = await res.arrayBuffer(); // fetch buffer from response
-    const file = {
-      originalname: `${keyPrefix}.png`,
-      buffer: Buffer.from(buffer), // convert ArrayBuffer to Node Buffer
-      mimetype: 'image/png',
-    };
+//     const buffer = await res.arrayBuffer(); // fetch buffer from response
+//     const file = {
+//       originalname: `${keyPrefix}.png`,
+//       buffer: Buffer.from(buffer), // convert ArrayBuffer to Node Buffer
+//       mimetype: 'image/png',
+//     };
 
-    return await uploadToS3(file, 'minimes');
-  } catch (err) {
-    console.error('uploadToS3FromUrl error:', err);
-    throw err;
-  }
-}
+//     return await uploadToS3(file, 'minimes');
+//   } catch (err) {
+//     console.error('uploadToS3FromUrl error:', err);
+//     throw err;
+//   }
+// }
 
 // ================== PROFILE ==================
 exports.saveProfile = async (req, res) => {
@@ -109,7 +115,8 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     if (file.fieldname.toLowerCase() === 'selfie') avatarData.selfieUrl = s3Url;
     else avatarData.avatarUrl = s3Url;
 
-    await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
+   await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
+
 
     const minime = await prisma.minime.create({ data: avatarData });
 
@@ -119,7 +126,6 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     return response.response_with_code(res, 500, 'Upload failed');
   }
 };
-
 exports.generateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -138,34 +144,59 @@ exports.generateMinime = async (req, res) => {
     });
 
     const faceReference = lastMini?.selfieUrl || lastMini?.avatarUrl;
-    if (!faceReference) return response.response_with_code(res, 400, 'No face reference available');
+    if (!faceReference) {
+      return response.response_with_code(res, 400, 'No face reference available');
+    }
 
+    // Clear old drafts
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
+    // ⬇️ Inline selfie + body shape
+    const selfieDataUrl = await fetchAsDataUrl(faceReference);
+    const bodyShapeDataUrl = await fetchAsDataUrl(user.bodyShapeUrl);
+
+    // Prompt
     const prompt = `
-      Create a full-body 3D cartoon avatar in Pixar style.
-      Body shape: ${user.bodyShapeUrl}
-      Face: ${faceReference}
-      Outfit:
-        Shirt: ${shirt || 'none'}
-        Pant: ${pant || 'none'}
-        Shoes: ${shoes || 'none'}
-        Glasses: ${glasses || 'none'}
-      ${isFeminine ? `Lipstick: ${lipstick || 'none'}\nJewelry: ${jewelry || 'none'}\nBag: ${bag || 'none'}` : ''}
-      Standing straight, front-facing, white background.
+You are generating a high-quality full-body 3D cartoon avatar (Pixar style), front-facing on white.
+
+IDENTITY:
+- Match this selfie: ${selfieDataUrl}
+- Preserve face shape, hair, skin tone, eyes, eyebrows, glasses.
+
+BODY SHAPE:
+- Follow proportions from: ${bodyShapeDataUrl}
+
+OUTFIT (match exactly):
+- Shirt: ${shirt || 'none'}
+- Pant: ${pant || 'none'}
+- Shoes: ${shoes || 'none'}
+- Glasses: ${glasses || 'none'}
+${isFeminine ? `- Lipstick: ${lipstick || 'none'}\n- Jewelry: ${jewelry || 'none'}\n- Bag: ${bag || 'none'}` : ''}
+
+RENDERING:
+- Crisp, polished Pixar-style.
+- Neutral stance, no text, no watermark.
     `;
 
+    // Call OpenAI with gpt-image-1, base64
     const imageResponse = await openai.images.generate({
-      // model: "gpt-image-1",
+      model: "gpt-image-1",
       prompt,
-      size: "1024x1024"
+      size: "1024x1024",
+      response_format: "b64_json"
     });
 
-    const uploadedImageUrl = await uploadToS3FromUrl(
-      imageResponse.data[0].url,
-      `minime-${userId}-${Date.now()}`
-    );
+    const b64 = imageResponse.data[0].b64_json;
+    const buffer = Buffer.from(b64, 'base64');
 
+    // Upload directly to S3
+    const uploadedImageUrl = await uploadToS3({
+      originalname: `minime-${userId}-${Date.now()}.png`,
+      buffer,
+      mimetype: 'image/png'
+    }, 'minimes');
+
+    // Save draft
     const newMini = await prisma.minime.create({
       data: {
         userId,
@@ -183,8 +214,6 @@ exports.generateMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'Failed to generate MiniMe');
   }
 };
-
-// ================== REGENERATE MINIME ==================
 exports.regenerateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -195,33 +224,53 @@ exports.regenerateMinime = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    if (!user || !lastMini) return response.response_with_code(res, 404, 'No MiniMe available');
+    if (!user || !lastMini) {
+      return response.response_with_code(res, 404, 'No MiniMe available');
+    }
 
     const isFeminine = user.bodyType === 'feminine';
-    const expressions = ['natural face', 'slight smile', 'happy look'];
+    const expressions = ['neutral face', 'slight smile', 'happy look'];
+
+    const selfieDataUrl = await fetchAsDataUrl(lastMini.selfieUrl || lastMini.avatarUrl);
+    const bodyShapeDataUrl = await fetchAsDataUrl(user.bodyShapeUrl);
 
     const prompt = `
-      Full-body 3D cartoon avatar in Pixar style.
-      Body: ${user.bodyShapeUrl}
-      Face: ${lastMini.selfieUrl || lastMini.avatarUrl}
-      Clothes: shirt=${lastMini.shirt}, pant=${lastMini.pant}, shoes=${lastMini.shoes}, glasses=${lastMini.glasses}
-      ${isFeminine ? `Lipstick=${lastMini.lipstick}, Jewelry=${lastMini.jewelry}, Bag=${lastMini.bag}` : ''}
-      Expression: ${expressions[Math.floor(Math.random() * expressions.length)]}
-      White background.
+Full-body 3D cartoon avatar (Pixar style), front-facing on white.
+
+IDENTITY:
+- Match selfie: ${selfieDataUrl}
+
+BODY SHAPE:
+- Match: ${bodyShapeDataUrl}
+
+OUTFIT (keep same):
+- Shirt: ${lastMini.shirt || 'none'}
+- Pant: ${lastMini.pant || 'none'}
+- Shoes: ${lastMini.shoes || 'none'}
+- Glasses: ${lastMini.glasses || 'none'}
+${isFeminine ? `- Lipstick: ${lastMini.lipstick || 'none'}\n- Jewelry: ${lastMini.jewelry || 'none'}\n- Bag: ${lastMini.bag || 'none'}` : ''}
+
+EXPRESSION:
+- ${expressions[Math.floor(Math.random() * expressions.length)]}
     `;
 
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
     const imageResponse = await openai.images.generate({
-      // model: "gpt-image-1",
+      model: "gpt-image-1",
       prompt,
-      size: "1024x1024"
+      size: "1024x1024",
+      response_format: "b64_json"
     });
 
-    const uploadedImageUrl = await uploadToS3FromUrl(
-      imageResponse.data[0].url,
-      `minime-${userId}-${Date.now()}`
-    );
+    const b64 = imageResponse.data[0].b64_json;
+    const buffer = Buffer.from(b64, 'base64');
+
+    const uploadedImageUrl = await uploadToS3({
+      originalname: `minime-${userId}-${Date.now()}.png`,
+      buffer,
+      mimetype: 'image/png'
+    }, 'minimes');
 
     const newMini = await prisma.minime.create({
       data: {
