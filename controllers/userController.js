@@ -14,6 +14,57 @@ const uploadToS3 = require('../utils/s3Upload');
 // Lazy import fetch for CommonJS
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
+function buildMinimePrompt({
+  bodyShapeUrl,
+  faceUrl,
+  isFeminine,
+  outfit
+}) {
+  const {
+    shirt = "none",
+    pant = "none",
+    shoes = "none",
+    glasses = "none",
+    lipstick = "none",
+    jewelry = "none",
+    bag = "none"
+  } = outfit || {};
+
+  // খুব স্পষ্ট, নির্দেশভিত্তিক প্রম্পট
+  return `
+Generate a full-body, front-facing 3D cartoon avatar in clean Pixar-like style.
+
+# HARD CONSTRAINTS (must match exactly)
+- Use this body shape as STRICT reference: ${bodyShapeUrl}
+- Use this face/head as STRICT reference for likeness (hair, skin tone, facial features): ${faceUrl}
+- Show entire body from head to shoes. No cropping. Keep natural proportions.
+- Plain studio setup, single character, neutral pose, arms relaxed by sides.
+- Background: plain white (or transparent if API param given).
+- Lighting: soft, uniform, no harsh shadows.
+
+# OUTFIT (exact match required)
+- Shirt/top: ${shirt}
+- Pants/bottom: ${pant}
+- Shoes: ${shoes}
+- Glasses: ${glasses}
+${isFeminine ? `- Lipstick: ${lipstick}
+- Jewelry: ${jewelry}
+- Bag: ${bag}` : ""}
+
+# STYLE & QUALITY
+- Clean edges, high detail, smooth materials, vivid but realistic colors.
+- Keep proportions consistent with the provided body shape.
+- Avoid extra props, texts, logos, or background objects.
+
+# NEGATIVE INSTRUCTIONS (do NOT)
+- Do not crop any part of the body or shoes.
+- Do not change outfit colors, type, or accessories beyond what is listed.
+- Do not add extra people or complex background.
+- Do not turn the body; keep front-facing, standing straight.
+
+Return a single, centered full-body render.
+  `.trim();
+}
 
 
 
@@ -119,7 +170,6 @@ exports.uploadAvatarWithMulter = async (req, res) => {
     return response.response_with_code(res, 500, 'Upload failed');
   }
 };
-
 exports.generateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -137,28 +187,26 @@ exports.generateMinime = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    const faceReference = lastMini?.selfieUrl || lastMini?.avatarUrl;
-    if (!faceReference) return response.response_with_code(res, 400, 'No face reference available');
+    const faceReference = lastMini?.selfieUrl || lastMini?.avatarUrl || user.bodyShapeUrl;
+    if (!faceReference) {
+      return response.response_with_code(res, 400, 'No face reference available');
+    }
 
+    // ডুপ্লিকেট ড্রাফ্ট ক্লিনআপ
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
-    const prompt = `
-      Create a full-body 3D cartoon avatar in Pixar style.
-      Body shape: ${user.bodyShapeUrl}
-      Face: ${faceReference}
-      Outfit:
-        Shirt: ${shirt || 'none'}
-        Pant: ${pant || 'none'}
-        Shoes: ${shoes || 'none'}
-        Glasses: ${glasses || 'none'}
-      ${isFeminine ? `Lipstick: ${lipstick || 'none'}\nJewelry: ${jewelry || 'none'}\nBag: ${bag || 'none'}` : ''}
-      Standing straight, front-facing, white background.
-    `;
+    const prompt = buildMinimePrompt({
+      bodyShapeUrl: user.bodyShapeUrl,
+      faceUrl: faceReference,
+      isFeminine,
+      outfit: { shirt, pant, shoes, glasses, lipstick, jewelry, bag }
+    });
 
     const imageResponse = await openai.images.generate({
-      // model: "gpt-image-1",
+      model: "gpt-image-1",
       prompt,
-      size: "1024x1024"
+      size: "1024x1024",
+      background: "transparent" // চাইলে "white"
     });
 
     const uploadedImageUrl = await uploadToS3FromUrl(
@@ -170,7 +218,7 @@ exports.generateMinime = async (req, res) => {
       data: {
         userId,
         avatarUrl: uploadedImageUrl,
-        selfieUrl: lastMini.selfieUrl,
+        selfieUrl: lastMini?.selfieUrl || null,
         shirt, pant, shoes, glasses, lipstick, jewelry, bag,
         isSaved: false,
         isDraft: true
@@ -183,8 +231,6 @@ exports.generateMinime = async (req, res) => {
     return response.response_with_code(res, 500, 'Failed to generate MiniMe');
   }
 };
-
-// ================== REGENERATE MINIME ==================
 exports.regenerateMinime = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -195,27 +241,39 @@ exports.regenerateMinime = async (req, res) => {
       orderBy: { createdAt: 'desc' }
     });
 
-    if (!user || !lastMini) return response.response_with_code(res, 404, 'No MiniMe available');
+    if (!user || !lastMini) {
+      return response.response_with_code(res, 404, 'No MiniMe available');
+    }
 
     const isFeminine = user.bodyType === 'feminine';
-    const expressions = ['natural face', 'slight smile', 'happy look'];
+    const faceReference = lastMini.selfieUrl || lastMini.avatarUrl || user.bodyShapeUrl;
 
-    const prompt = `
-      Full-body 3D cartoon avatar in Pixar style.
-      Body: ${user.bodyShapeUrl}
-      Face: ${lastMini.selfieUrl || lastMini.avatarUrl}
-      Clothes: shirt=${lastMini.shirt}, pant=${lastMini.pant}, shoes=${lastMini.shoes}, glasses=${lastMini.glasses}
-      ${isFeminine ? `Lipstick=${lastMini.lipstick}, Jewelry=${lastMini.jewelry}, Bag=${lastMini.bag}` : ''}
-      Expression: ${expressions[Math.floor(Math.random() * expressions.length)]}
-      White background.
-    `;
+    // র্যান্ডম এক্সপ্রেশন রাখলেও ফ্রন্ট-ফেসিং/ফুল-বডি কনস্ট্রেইন্ট অপরিবর্তিত
+    const expressions = ['natural face', 'slight smile', 'happy look'];
+    const promptBase = buildMinimePrompt({
+      bodyShapeUrl: user.bodyShapeUrl,
+      faceUrl: faceReference,
+      isFeminine,
+      outfit: {
+        shirt: lastMini.shirt,
+        pant: lastMini.pant,
+        shoes: lastMini.shoes,
+        glasses: lastMini.glasses,
+        lipstick: lastMini.lipstick,
+        jewelry: lastMini.jewelry,
+        bag: lastMini.bag
+      }
+    });
+
+    const prompt = `${promptBase}\n\n# Expression\n- ${expressions[Math.floor(Math.random() * expressions.length)]}`;
 
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
     const imageResponse = await openai.images.generate({
-      // model: "gpt-image-1",
+      model: "gpt-image-1",
       prompt,
-      size: "1024x1024"
+      size: "1024x1024",
+      background: "transparent"
     });
 
     const uploadedImageUrl = await uploadToS3FromUrl(
@@ -247,7 +305,8 @@ exports.regenerateMinime = async (req, res) => {
   }
 };
 
-// ================== SAVE LATEST MINIME ==================
+
+
 exports.saveLatestMinime = async (req, res) => {
   const userId = req.authData.id;
   const draft = await prisma.minime.findFirst({
