@@ -10,6 +10,29 @@ const response = require('../functions/response');
 require('dotenv').config();
 const validBodyTypes = ['masculine', 'feminine'];
 const uploadToS3 = require('../utils/s3Upload');
+// === Add this helper ===
+async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
+  const item = imageResponse?.data?.[0];
+  if (!item) throw new Error('OpenAI image response empty');
+
+  // If URL provided, use your existing fetch->S3 path
+  if (item.url) {
+    return await uploadToS3FromUrl(item.url, keyPrefix);
+  }
+
+  // Otherwise fall back to base64 -> buffer -> S3
+  if (item.b64_json) {
+    const buffer = Buffer.from(item.b64_json, 'base64');
+    const file = {
+      originalname: `${keyPrefix}.png`,
+      buffer,
+      mimetype: 'image/png',
+    };
+    return await uploadToS3(file, 'minimes');
+  }
+
+  throw new Error('No url or b64_json in OpenAI image response');
+}
 
 // Lazy import fetch for CommonJS
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
@@ -206,13 +229,14 @@ exports.generateMinime = async (req, res) => {
       model: "gpt-image-1",
       prompt,
       size: "1024x1024",
-      background: "transparent" // চাইলে "white"
+      background: "transparent" 
     });
 
-    const uploadedImageUrl = await uploadToS3FromUrl(
-      imageResponse.data[0].url,
-      `minime-${userId}-${Date.now()}`
-    );
+    const uploadedImageUrl = await uploadOpenAIImageResult(
+  imageResponse,
+  `minime-${userId}-${Date.now()}`
+);
+
 
     const newMini = await prisma.minime.create({
       data: {
@@ -248,7 +272,6 @@ exports.regenerateMinime = async (req, res) => {
     const isFeminine = user.bodyType === 'feminine';
     const faceReference = lastMini.selfieUrl || lastMini.avatarUrl || user.bodyShapeUrl;
 
-    // র্যান্ডম এক্সপ্রেশন রাখলেও ফ্রন্ট-ফেসিং/ফুল-বডি কনস্ট্রেইন্ট অপরিবর্তিত
     const expressions = ['natural face', 'slight smile', 'happy look'];
     const promptBase = buildMinimePrompt({
       bodyShapeUrl: user.bodyShapeUrl,
@@ -275,11 +298,11 @@ exports.regenerateMinime = async (req, res) => {
       size: "1024x1024",
       background: "transparent"
     });
+const uploadedImageUrl = await uploadOpenAIImageResult(
+  imageResponse,
+  `minime-${userId}-${Date.now()}`
+);
 
-    const uploadedImageUrl = await uploadToS3FromUrl(
-      imageResponse.data[0].url,
-      `minime-${userId}-${Date.now()}`
-    );
 
     const newMini = await prisma.minime.create({
       data: {
