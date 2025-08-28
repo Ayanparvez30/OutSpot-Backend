@@ -55,26 +55,47 @@ function initSocket(server) {
   io.on('connection', async (socket) => {
     console.log('✅ Socket connected:', socket.id);
 
-    // OPTIONAL: client theke query diye userId pathao: io(URL, {query:{userId}})
-    // auth token থাকলে এখানে verify করে userId বের করতে পারো।
+
     const userId = parseInt(socket.handshake.query?.userId || 0, 10) || null;
     if (userId) {
       socket.data.userId = userId;
 
-      // join own room (for targeted emits in future)
       socket.join(`user:${userId}`);
 
-      // join “friendOf:${userId}” rooms of your friends — so your updates go to them
       const friendIds = await getFriendIds(userId);
       friendIds.forEach((fid) => {
-        // তোমাকে যাদের friend দেখাবে তাদের রুমে তারা বসে থাকবে: friendOf:<theirId>
-        // তুমি নিজের আপডেট দিলে আমরা io.to(`friendOf:${userId}`) তে emit করব
-        // এখানে তেমন কিছু join দরকার নেই; তবু চাইলে debugging রুমে join রাখতে পারো
+
         socket.join(`friendOf:${fid}`); // optional
       });
 
       socket.emit('socket:ready', { userId });
     }
+
+    // ✅ mark messages as read
+socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
+  const userId = socket.data.userId;
+  if (!userId || !chatId || !lastSeenMessageId) return;
+
+  try {
+    // Update lastSeenMessageId in UserOnChat
+    await prisma.userOnChat.updateMany({
+      where: { userId, chatId },
+      data: { lastSeenMessageId }
+    });
+
+    // Notify other users in the chat
+    io.to(`chat_${chatId}`).emit('messageRead', {
+      chatId,
+      userId,
+      lastSeenMessageId
+    });
+
+    console.log(`✅ User ${userId} read messages up to ${lastSeenMessageId} in chat ${chatId}`);
+  } catch (err) {
+    console.error('❌ markAsRead error:', err);
+  }
+});
+
 
     // --------------- CHAT EVENTS (as you had) ---------------
     socket.on('joinChat', (chatId) => {

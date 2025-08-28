@@ -406,6 +406,7 @@ exports.getMessages = async (req, res) => {
   const { chatId } = req.params;
 
   try {
+    // Fetch messages with sender info + chat users (to check read receipts)
     const messages = await prisma.message.findMany({
       where: { chatId: parseInt(chatId) },
       include: {
@@ -431,18 +432,39 @@ exports.getMessages = async (req, res) => {
               take: 1
             }
           }
+        },
+        chat: {
+          include: {
+            users: {
+              select: {
+                userId: true,
+                lastSeenMessageId: true
+              }
+            }
+          }
         }
       },
       orderBy: { createdAt: 'asc' }
     });
 
-    // Flatten avatarUrl (instead of array)
+    // Format messages + add readBy array
     const formatted = messages.map(m => ({
-      ...m,
+      id: m.id,
+      content: m.content,
+      imageUrl: m.imageUrl,
+      createdAt: m.createdAt,
+      chatId: m.chatId,
       sender: {
-        ...m.sender,
+        id: m.sender.id,
+        username: m.sender.username,
+        firstName: m.sender.firstName,
+        lastName: m.sender.lastName,
         avatarUrl: m.sender.minime?.[0]?.avatarUrl || null
-      }
+      },
+      // ✅ new: which users have read this message
+      readBy: m.chat.users
+        .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
+        .map(u => u.userId)
     }));
 
     res.json(formatted);
@@ -451,6 +473,7 @@ exports.getMessages = async (req, res) => {
     res.status(500).json({ message: 'Failed to fetch messages' });
   }
 };
+
 
 exports.getMessagesPaginated = async (req, res) => {
     const { chatId } = req.params;

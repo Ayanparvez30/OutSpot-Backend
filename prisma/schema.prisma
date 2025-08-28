@@ -247,6 +247,7 @@ model UserOnChat {
   // NEW ↓
   role     ChatRole @default(MEMBER)
   joinedAt DateTime @default(now())
+  lastSeenMessageId Int?
 
   @@unique([userId, chatId])
   @@index([chatId, role]) // handy for permission checks like “who are admins in this chat?”
