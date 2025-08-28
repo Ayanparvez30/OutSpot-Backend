@@ -423,3 +423,94 @@ console.error('getMyRecentCommunities error:', err);
 return res.status(500).json({ error: 'Failed to load recent communities' });
 }
 };
+// Get only the communities the user created and the ones they joined (separated)
+exports.getMyCommunities = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    const q = (req.query.q || '').trim();
+    const take = Math.min(parseInt(req.query.limit || '50', 10), 100);
+    const skip = Math.max(parseInt(req.query.skip || '0', 10), 0);
+    const scope = String(req.query.scope || '').toLowerCase(); // created / joined / all
+
+    const nameFilter = q ? { name: { contains: q, mode: 'insensitive' } } : {};
+
+    // --- Created ---
+    const createdAll = await prisma.community.findMany({
+      where: { creatorId: userId, ...nameFilter },
+      orderBy: { id: 'desc' },
+      include: {
+        _count: { select: { members: true } },
+        members: {
+          where: { userId },
+          select: { joinedAt: true },
+          take: 1,
+          orderBy: { joinedAt: 'desc' }
+        }
+      }
+    });
+
+    const created = createdAll.slice(skip, skip + take).map(c => ({
+      id: c.id,
+      name: c.name,
+      imageUrl: c.imageUrl,
+      membersCount: c._count.members,
+      joinedAt: c.members?.[0]?.joinedAt ?? null,
+      type: 'created',
+      isCreator: true,
+      isMember: true
+    }));
+
+    // --- Joined ---
+    const joinedAll = await prisma.communityMember.findMany({
+      where: {
+        userId,
+        community: {
+          creatorId: { not: userId },
+          ...nameFilter
+        }
+      },
+      orderBy: { joinedAt: 'desc' },
+      include: {
+        community: { include: { _count: { select: { members: true } } } }
+      }
+    });
+
+    const joined = joinedAll.slice(skip, skip + take).map(m => ({
+      id: m.community.id,
+      name: m.community.name,
+      imageUrl: m.community.imageUrl,
+      membersCount: m.community._count.members,
+      joinedAt: m.joinedAt,
+      type: 'joined',
+      isCreator: false,
+      isMember: true
+    }));
+
+    // --- Scope logic ---
+    if (scope === 'created') {
+      return res.json({
+        items: created,
+        total: createdAll.length,
+        skip,
+        take
+      });
+    } else if (scope === 'joined') {
+      return res.json({
+        items: joined,
+        total: joinedAll.length,
+        skip,
+        take
+      });
+    } else {
+      // default: both
+      return res.json({
+        created: { items: created, total: createdAll.length, skip, take },
+        joined: { items: joined, total: joinedAll.length, skip, take }
+      });
+    }
+  } catch (err) {
+    console.error('getMyCommunities error:', err);
+    return res.status(500).json({ error: 'Failed to load your communities' });
+  }
+};

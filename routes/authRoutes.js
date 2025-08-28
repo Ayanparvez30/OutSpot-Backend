@@ -37,7 +37,6 @@ router.post('/logout', checkAuth, authController.logout);
 router.post('/update-username', checkAuth, authController.updateUsername);
 router.post('/contact-us', authController.contactUs);
 router.post('/save-profile', checkAuth, userController.saveProfile);
-// router.post('/upload-avatar', upload.any(), userController.uploadAvatarWithMulter);
 
 router.post('/minime/generate', checkAuth, userController.generateMinime);
 router.post('/minime/regenerate', checkAuth, userController.regenerateMinime);
