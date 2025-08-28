@@ -12,6 +12,7 @@ router.put('/communities/:communityId', checkAuth, upload.single('image'), commu
 router.get('/communities', checkAuth, communityController.getAllCommunities);
 router.post('/communities/join', checkAuth, communityController.joinCommunity);
 
+router.get('/communities/mine', checkAuth, communityController.getMyCommunities);
 router.get('/communities/:communityId', checkAuth, communityController.getCommunityDetails);
 router.get('/communities/:communityId/chat-id', checkAuth, communityController.getCommunityChatId);
 
