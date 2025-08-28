@@ -27,6 +27,8 @@ const chatRoutes        = require('./routes/chatRoutes');
 const friendRoutes      = require('./routes/friendRoutes');
 const mapRoutes         = require('./routes/mapRoutes');
 const mediaRoutes       = require('./routes/mediaRoutes');
+const notificationRoutes = require('./routes/notificationRoutes');
+
 
 app.use('/api', authRoutes);
 app.use('/api', communityRoutes);
@@ -36,6 +38,7 @@ app.use('/api', leaderboardRoutes);
 app.use('/api', chatRoutes);
 app.use('/api', friendRoutes);
 app.use('/api', mapRoutes);
+app.use('/api', notificationRoutes);
 
 // ---- Story expiry cron ----
 // TTL minutes (same logic as controller)
