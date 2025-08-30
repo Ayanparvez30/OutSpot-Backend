@@ -1,7 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-
-const uploadToS3 = require('../utils/s3Upload'); 
+const uploadToS3 = require('../utils/s3Upload');
 const path = require('path');
 
 
@@ -22,21 +21,14 @@ const uniq = arr => Array.from(new Set(arr));
 exports.upload = async (req, res) => {
   const senderId = req.authData.id;
 
-  // Accept both legacy single IDs and new multi target fields
+  // Accept only chatIds (array) and other optional fields
   let {
     type,
-    receiverId,     // legacy single
-    groupId,        // legacy single
-    communityId,    // legacy single
-    receiverIds,    // multi
-    groupIds,       // multi
-    communityIds,   // multi
-
-    // optional extras
+    chatIds,
     postToStory,
     latitude,
     longitude,
-    challengeId     // optional: allow attaching to a challenge
+    challengeId
   } = req.body;
 
   try {
@@ -56,114 +48,37 @@ exports.upload = async (req, res) => {
     const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
     const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
 
-    // Build targets (merge legacy single + multi)
-    const userTargets = uniq([
-      ...toIdArray(receiverIds),
-      ...toIdArray(receiverId)
-    ]).filter(id => id !== senderId);
-
-    const groupTargets = uniq([
-      ...toIdArray(groupIds),
-      ...toIdArray(groupId)
-    ]);
-
-    const communityTargets = uniq([
-      ...toIdArray(communityIds),
-      ...toIdArray(communityId)
-    ]);
+    // Build targets from chatIds
+    const chatTargets = uniq(toIdArray(chatIds));
 
     // If nothing to send and not posting to story, reject
-    if (userTargets.length + groupTargets.length + communityTargets.length === 0 && !postToStoryBool) {
-      return res.status(400).json({ error: 'Provide at least one target (receiver/group/community) or set postToStory=true.' });
+    if (chatTargets.length === 0 && !postToStoryBool) {
+      return res.status(400).json({ error: 'Provide at least one chatId or set postToStory=true.' });
     }
 
     // Safety cap to avoid abuse
     const MAX_TARGETS = 100;
-    if (userTargets.length + groupTargets.length + communityTargets.length > MAX_TARGETS) {
-      return res.status(413).json({ error: `Too many targets. Max ${MAX_TARGETS}.` });
+    if (chatTargets.length > MAX_TARGETS) {
+      return res.status(413).json({ error: `Too many chat targets. Max ${MAX_TARGETS}.` });
     }
 
     // Upload once to S3
     const fileUrl = await uploadToS3(req.file, 'media');
 
-    // ----- permission checks -----
-    // 1) Users: must be friends (ACCEPTED) in either direction
-    const userPermissions = {};
-    if (userTargets.length) {
-      const friendships = await prisma.friendship.findMany({
-        where: {
-          status: 'ACCEPTED',
-          OR: userTargets.flatMap(targetId => ([
-            { requesterId: senderId, receiverId: targetId },
-            { requesterId: targetId, receiverId: senderId }
-          ]))
-        },
-        select: { requesterId: true, receiverId: true }
-      });
-      const okPairs = new Set(friendships.map(f => `${f.requesterId}-${f.receiverId}`));
-      for (const id of userTargets) {
-        const ok = okPairs.has(`${senderId}-${id}`) || okPairs.has(`${id}-${senderId}`);
-        userPermissions[id] = !!ok;
-      }
-    }
-
-    // 2) Groups: must be a member
-    const groupPermissions = {};
-    if (groupTargets.length) {
-      const myGroupMemberships = await prisma.groupMember.findMany({
-        where: { userId: senderId, groupId: { in: groupTargets } },
-        select: { groupId: true }
-      });
-      const allowedGroups = new Set(myGroupMemberships.map(g => g.groupId));
-      for (const gid of groupTargets) groupPermissions[gid] = allowedGroups.has(gid);
-    }
-
-    // 3) Communities: must be a member
-    const communityPermissions = {};
-    if (communityTargets.length) {
-      const myCommunityMemberships = await prisma.communityMember.findMany({
-        where: { userId: senderId, communityId: { in: communityTargets } },
-        select: { communityId: true }
-      });
-      const allowedCommunities = new Set(myCommunityMemberships.map(c => c.communityId));
-      for (const cid of communityTargets) communityPermissions[cid] = allowedCommunities.has(cid);
-    }
 
     // ----- build create ops -----
     const createOps = [];
-    const successes = { users: [], groups: [], communities: [] };
-    const failures  = { users: [], groups: [], communities: [] };
+    const successes = { chats: [] };
+    const failures = { chats: [] };
 
-    for (const uid of userTargets) {
-      if (userPermissions[uid]) {
+    for (const chatId of chatTargets) {
+      if (chatId) {
         createOps.push(prisma.media.create({
-          data: { senderId, fileUrl, type, receiverId: uid, challengeId: challengeId ? parseInt(challengeId, 10) : null }
+          data: { senderId, fileUrl, type, chatId, challengeId: challengeId ? parseInt(challengeId, 10) : null }
         }));
-        successes.users.push(uid);
+        successes.chats.push(chatId);
       } else {
-        failures.users.push({ id: uid, reason: 'Not friends/permission denied' });
-      }
-    }
-
-    for (const gid of groupTargets) {
-      if (groupPermissions[gid]) {
-        createOps.push(prisma.media.create({
-          data: { senderId, fileUrl, type, groupId: gid, challengeId: challengeId ? parseInt(challengeId, 10) : null }
-        }));
-        successes.groups.push(gid);
-      } else {
-        failures.groups.push({ id: gid, reason: 'Not a group member' });
-      }
-    }
-
-    for (const cid of communityTargets) {
-      if (communityPermissions[cid]) {
-        createOps.push(prisma.media.create({
-          data: { senderId, fileUrl, type, communityId: cid, challengeId: challengeId ? parseInt(challengeId, 10) : null }
-        }));
-        successes.communities.push(cid);
-      } else {
-        failures.communities.push({ id: cid, reason: 'Not a community member' });
+        failures.chats.push({ id: chatId, reason: 'Invalid chatId' });
       }
     }
 
@@ -198,7 +113,6 @@ exports.upload = async (req, res) => {
     return res.status(500).json({ error: 'Failed to upload/send media' });
   }
 };
-
 exports.saveToProfile = async (req, res) => {
   const authenticatedUserId = req.authData.id;
   const { storyId } = req.body;
