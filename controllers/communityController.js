@@ -1,12 +1,14 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const uploadToS3 = require('../utils/s3Upload');  
+
+
 const ensureCommunityChat = async (communityId) => {
   const id = Number(communityId);
 
   const community = await prisma.community.findUnique({
     where: { id },
-    select: { name: true },
+    select: { name: true, imageUrl: true }, // ✅ include imageUrl
   });
   if (!community) throw new Error('Community not found');
 
@@ -20,20 +22,27 @@ const ensureCommunityChat = async (communityId) => {
         isGroup: true,
         isCommunity: true,
         communityId: id,
-        name: community.name,      
+        name: community.name,
+        imageUrl: community.imageUrl,   // ✅ set from community
         users: { create: [] },
       },
     });
-  } else if (chat.name !== community.name) {
+  } else {
+    const updateData = {};
+    if (chat.name !== community.name) updateData.name = community.name;
+    if (chat.imageUrl !== community.imageUrl) updateData.imageUrl = community.imageUrl;
 
-    chat = await prisma.chat.update({
-      where: { id: chat.id },
-      data: { name: community.name },
-    });
+    if (Object.keys(updateData).length) {
+      chat = await prisma.chat.update({
+        where: { id: chat.id },
+        data: updateData,
+      });
+    }
   }
 
   return chat;
 };
+
 
 
 exports.createCommunity = async (req, res) => {
@@ -81,14 +90,15 @@ exports.editCommunity = async (req, res) => {
     data: { name, imageUrl },
   });
 
-
+  // ✅ Sync BOTH name and imageUrl into community chat
   await prisma.chat.updateMany({
     where: { communityId: id, isCommunity: true },
-    data: { name: updated.name },
+    data: { name: updated.name, imageUrl: updated.imageUrl },
   });
 
   res.json(updated);
 };
+
 
 exports.getAllCommunities = async (req, res) => {
   try {

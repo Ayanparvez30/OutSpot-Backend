@@ -1,6 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-
 const uploadToS3 = require('../utils/s3Upload');
 const path = require('path');
 
@@ -114,7 +113,6 @@ exports.upload = async (req, res) => {
     return res.status(500).json({ error: 'Failed to upload/send media' });
   }
 };
-
 exports.saveToProfile = async (req, res) => {
   const authenticatedUserId = req.authData.id;
   const { storyId } = req.body;
