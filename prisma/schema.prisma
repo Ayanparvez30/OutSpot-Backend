@@ -88,6 +88,7 @@ model Media {
   communityId Int?
   fileUrl     String
   type        String
+  chatId      Int?
   createdAt   DateTime @default(now())
 
   sender    User       @relation("UserMedia", fields: [senderId], references: [id], onDelete: Cascade)

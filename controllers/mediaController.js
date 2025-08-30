@@ -10,22 +10,22 @@ const STORY_TTL_MINUTES = Number(
 
 exports.uploadMedia = async (req, res) => {
   const userId = req.authData.id;
-  let { chatIds, type, postToStory, latitude, longitude } = req.body;
+  let { chatId, type, postToStory, latitude, longitude } = req.body;
 
-  // Log chatIds to see if it's coming through
-  console.log('Received chatIds:', chatIds);
+  // Log chatId to see if it's coming through
+  console.log('Received chatId:', chatId);
 
   // Ensure a file is uploaded
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  // Ensure chatIds is an array, even if it's passed as a string
-  if (typeof chatIds === 'string') {
-    chatIds = chatIds.split(',').map(id => parseInt(id.trim(), 10)); // Convert string to array of numbers
+  // Ensure chatId is an array, even if it's passed as a string
+  if (typeof chatId === 'string') {
+    chatId = chatId.split(',').map(id => parseInt(id.trim(), 10)); // Convert string to array of numbers
   }
 
-  // Check if chatIds is still undefined or invalid after conversion
-  if (!chatIds || !Array.isArray(chatIds) || chatIds.length === 0 || chatIds.some(id => isNaN(id))) {
-    return res.status(400).json({ error: 'Invalid chatIds format. It should be an array of numbers.' });
+  // Check if chatId is still undefined or invalid after conversion
+  if (!chatId || !Array.isArray(chatId) || chatId.length === 0 || chatId.some(id => isNaN(id))) {
+    return res.status(400).json({ error: 'Invalid chatId format. It should be an array of numbers.' });
   }
 
   try {
@@ -45,7 +45,7 @@ exports.uploadMedia = async (req, res) => {
     const s3Url = await uploadToS3(req.file, 'media');
 
     // Create media records for each chatId in the list
-    const mediaPromises = chatIds.map((chatId) => {
+    const mediaPromises = chatId.map((chatId) => {
       return prisma.media.create({
         data: {
           senderId: userId,
