@@ -69,7 +69,8 @@ exports.searchUsers = async (req, res) => {
         totalPoints: true,
        minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true } 
+  where: { isSaved: true } ,
+          orderBy: { updatedAt: 'desc' }
 }
 
       },
@@ -317,7 +318,8 @@ exports.getFriendList = async (req, res) => {
           totalPoints: true,
             minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true } 
+  where: { isSaved: true } ,
+          orderBy: { updatedAt: 'desc' }
 }
 
         }
@@ -331,7 +333,8 @@ exports.getFriendList = async (req, res) => {
           totalPoints: true,
          minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true } 
+  where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' } 
 }
 
         }
@@ -468,7 +471,8 @@ exports.getFriendRequests = async (req, res) => {
             totalPoints: true,
                minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true } 
+  where: { isSaved: true } ,
+          orderBy: { updatedAt: 'desc' }
 }
 
           }
@@ -857,7 +861,8 @@ exports.syncContacts = async (req, res) => {
       phone: true,
           minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true } 
+  where: { isSaved: true } ,
+          orderBy: { updatedAt: 'desc' }
 }
 
     }
@@ -883,7 +888,8 @@ exports.getBlockedUsers = async (req, res) => {
             lastName: true,
             minime: {
               select: { avatarUrl: true }, 
-              where: { isSaved: true }
+              where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' }
             }
           }
         }
@@ -1015,7 +1021,8 @@ const friendStories = await prisma.story.findMany({
         username: true,
        minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true } 
+  where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' } 
 }
 
       }
@@ -1112,7 +1119,8 @@ exports.getUserProfile = async (req, res) => {
         totalPoints: true,
         minime: {
           select: { avatarUrl: true },
-          where: { isSaved: true }
+          where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' }
         }
       }
     });
@@ -1135,7 +1143,8 @@ exports.getUserProfile = async (req, res) => {
             username: true,
             minime: {
               select: { avatarUrl: true },
-              where: { isSaved: true }
+              where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' }
             }
           }
         }
