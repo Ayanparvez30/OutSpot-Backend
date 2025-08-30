@@ -9,55 +9,193 @@ const STORY_TTL_MINUTES = Number(
   process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
 );
 
-exports.uploadMedia = async (req, res) => {
-  const userId = req.authData.id;
-  let { receiverId, groupId, challengeId, type, postToStory, communityId, latitude, longitude } = req.body;
+function toIdArray(input) {
+  if (!input) return [];
+  if (Array.isArray(input)) return input.map(n => parseInt(n, 10)).filter(Number.isFinite);
+  return String(input)
+    .split(',')
+    .map(s => parseInt(s.trim(), 10))
+    .filter(Number.isFinite);
+}
+const uniq = arr => Array.from(new Set(arr));
 
-  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+exports.upload = async (req, res) => {
+  const senderId = req.authData.id;
+
+  // Accept both legacy single IDs and new multi target fields
+  let {
+    type,
+    receiverId,     // legacy single
+    groupId,        // legacy single
+    communityId,    // legacy single
+    receiverIds,    // multi
+    groupIds,       // multi
+    communityIds,   // multi
+
+    // optional extras
+    postToStory,
+    latitude,
+    longitude,
+    challengeId     // optional: allow attaching to a challenge
+  } = req.body;
 
   try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'No file uploaded' });
+    }
+
+    // Validate type
     type = (type || '').toString().trim().toUpperCase();
     const ALLOWED = new Set(['IMAGE', 'VIDEO']);
     if (!ALLOWED.has(type)) {
       return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
     }
 
+    // Normalize optional flags/coords
     const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
     const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
     const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
 
-    const s3Url = await uploadToS3(req.file, 'media');
+    // Build targets (merge legacy single + multi)
+    const userTargets = uniq([
+      ...toIdArray(receiverIds),
+      ...toIdArray(receiverId)
+    ]).filter(id => id !== senderId);
 
-    const media = await prisma.media.create({
-      data: {
-        senderId: userId,
-        fileUrl: s3Url,
-        type, 
-        receiverId: receiverId ? parseInt(receiverId, 10) : null,
-        groupId: groupId ? parseInt(groupId, 10) : null,
-        challengeId: challengeId ? parseInt(challengeId, 10) : null,
-        communityId: communityId ? parseInt(communityId, 10) : null,
+    const groupTargets = uniq([
+      ...toIdArray(groupIds),
+      ...toIdArray(groupId)
+    ]);
+
+    const communityTargets = uniq([
+      ...toIdArray(communityIds),
+      ...toIdArray(communityId)
+    ]);
+
+    // If nothing to send and not posting to story, reject
+    if (userTargets.length + groupTargets.length + communityTargets.length === 0 && !postToStoryBool) {
+      return res.status(400).json({ error: 'Provide at least one target (receiver/group/community) or set postToStory=true.' });
+    }
+
+    // Safety cap to avoid abuse
+    const MAX_TARGETS = 100;
+    if (userTargets.length + groupTargets.length + communityTargets.length > MAX_TARGETS) {
+      return res.status(413).json({ error: `Too many targets. Max ${MAX_TARGETS}.` });
+    }
+
+    // Upload once to S3
+    const fileUrl = await uploadToS3(req.file, 'media');
+
+    // ----- permission checks -----
+    // 1) Users: must be friends (ACCEPTED) in either direction
+    const userPermissions = {};
+    if (userTargets.length) {
+      const friendships = await prisma.friendship.findMany({
+        where: {
+          status: 'ACCEPTED',
+          OR: userTargets.flatMap(targetId => ([
+            { requesterId: senderId, receiverId: targetId },
+            { requesterId: targetId, receiverId: senderId }
+          ]))
+        },
+        select: { requesterId: true, receiverId: true }
+      });
+      const okPairs = new Set(friendships.map(f => `${f.requesterId}-${f.receiverId}`));
+      for (const id of userTargets) {
+        const ok = okPairs.has(`${senderId}-${id}`) || okPairs.has(`${id}-${senderId}`);
+        userPermissions[id] = !!ok;
       }
-    });
+    }
 
+    // 2) Groups: must be a member
+    const groupPermissions = {};
+    if (groupTargets.length) {
+      const myGroupMemberships = await prisma.groupMember.findMany({
+        where: { userId: senderId, groupId: { in: groupTargets } },
+        select: { groupId: true }
+      });
+      const allowedGroups = new Set(myGroupMemberships.map(g => g.groupId));
+      for (const gid of groupTargets) groupPermissions[gid] = allowedGroups.has(gid);
+    }
+
+    // 3) Communities: must be a member
+    const communityPermissions = {};
+    if (communityTargets.length) {
+      const myCommunityMemberships = await prisma.communityMember.findMany({
+        where: { userId: senderId, communityId: { in: communityTargets } },
+        select: { communityId: true }
+      });
+      const allowedCommunities = new Set(myCommunityMemberships.map(c => c.communityId));
+      for (const cid of communityTargets) communityPermissions[cid] = allowedCommunities.has(cid);
+    }
+
+    // ----- build create ops -----
+    const createOps = [];
+    const successes = { users: [], groups: [], communities: [] };
+    const failures  = { users: [], groups: [], communities: [] };
+
+    for (const uid of userTargets) {
+      if (userPermissions[uid]) {
+        createOps.push(prisma.media.create({
+          data: { senderId, fileUrl, type, receiverId: uid, challengeId: challengeId ? parseInt(challengeId, 10) : null }
+        }));
+        successes.users.push(uid);
+      } else {
+        failures.users.push({ id: uid, reason: 'Not friends/permission denied' });
+      }
+    }
+
+    for (const gid of groupTargets) {
+      if (groupPermissions[gid]) {
+        createOps.push(prisma.media.create({
+          data: { senderId, fileUrl, type, groupId: gid, challengeId: challengeId ? parseInt(challengeId, 10) : null }
+        }));
+        successes.groups.push(gid);
+      } else {
+        failures.groups.push({ id: gid, reason: 'Not a group member' });
+      }
+    }
+
+    for (const cid of communityTargets) {
+      if (communityPermissions[cid]) {
+        createOps.push(prisma.media.create({
+          data: { senderId, fileUrl, type, communityId: cid, challengeId: challengeId ? parseInt(challengeId, 10) : null }
+        }));
+        successes.communities.push(cid);
+      } else {
+        failures.communities.push({ id: cid, reason: 'Not a community member' });
+      }
+    }
+
+    // Optionally also post to Story once
     if (postToStoryBool) {
-      await prisma.story.create({
+      createOps.push(prisma.story.create({
         data: {
-          userId,
-          mediaUrl: s3Url,
+          userId: senderId,
+          mediaUrl: fileUrl,
           type,
           visibility: 'profile',
           status: 'ACTIVE',
           latitude: lat,
           longitude: lng
         }
-      });
+      }));
     }
 
-    return res.json({ message: 'Media uploaded', media });
+    // Execute in a transaction (creates N media rows [+ 1 story if requested])
+    const results = await prisma.$transaction(createOps);
+
+    return res.json({
+      message: 'Upload processed.',
+      fileUrl,
+      createdCount: results.length - (postToStoryBool ? 1 : 0),
+      postedToStory: postToStoryBool,
+      successes,
+      failures
+    });
   } catch (error) {
-    console.error('Upload media error:', error);
-    return res.status(500).json({ error: 'Failed to upload media' });
+    console.error('upload error:', error);
+    return res.status(500).json({ error: 'Failed to upload/send media' });
   }
 };
 
@@ -462,167 +600,167 @@ function toIdArray(input) {
     .filter(Number.isFinite);
 }
 
-exports.uploadMediaBulk = async (req, res) => {
-  const senderId = req.authData.id;
+// exports.uploadMediaBulk = async (req, res) => {
+//   const senderId = req.authData.id;
 
-  // Accept arrays or comma-separated strings
-  let {
-    type,
-    receiverIds,     // friends/users
-    groupIds,
-    communityIds,
-    // optional extras
-    postToStory,
-    latitude,
-    longitude
-  } = req.body;
+//   // Accept arrays or comma-separated strings
+//   let {
+//     type,
+//     receiverIds,     // friends/users
+//     groupIds,
+//     communityIds,
+//     // optional extras
+//     postToStory,
+//     latitude,
+//     longitude
+//   } = req.body;
 
-  try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
+//   try {
+//     if (!req.file) {
+//       return res.status(400).json({ error: 'No file uploaded' });
+//     }
 
-    // Validate type
-    type = (type || '').toString().trim().toUpperCase();
-    const ALLOWED = new Set(['IMAGE', 'VIDEO']);
-    if (!ALLOWED.has(type)) {
-      return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
-    }
+//     // Validate type
+//     type = (type || '').toString().trim().toUpperCase();
+//     const ALLOWED = new Set(['IMAGE', 'VIDEO']);
+//     if (!ALLOWED.has(type)) {
+//       return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
+//     }
 
-    // Parse targets
-    const userTargets       = toIdArray(receiverIds).filter(id => id !== senderId); // don’t send to self here
-    const groupTargets      = toIdArray(groupIds);
-    const communityTargets  = toIdArray(communityIds);
+//     // Parse targets
+//     const userTargets       = toIdArray(receiverIds).filter(id => id !== senderId); // don’t send to self here
+//     const groupTargets      = toIdArray(groupIds);
+//     const communityTargets  = toIdArray(communityIds);
 
-    if (userTargets.length + groupTargets.length + communityTargets.length === 0) {
-      return res.status(400).json({ error: 'Provide at least one target: receiverIds, groupIds, or communityIds' });
-    }
+//     if (userTargets.length + groupTargets.length + communityTargets.length === 0) {
+//       return res.status(400).json({ error: 'Provide at least one target: receiverIds, groupIds, or communityIds' });
+//     }
 
-    // Safety cap to avoid abuse
-    const MAX_TARGETS = 100;
-    if (userTargets.length + groupTargets.length + communityTargets.length > MAX_TARGETS) {
-      return res.status(413).json({ error: `Too many targets. Max ${MAX_TARGETS}.` });
-    }
+//     // Safety cap to avoid abuse
+//     const MAX_TARGETS = 100;
+//     if (userTargets.length + groupTargets.length + communityTargets.length > MAX_TARGETS) {
+//       return res.status(413).json({ error: `Too many targets. Max ${MAX_TARGETS}.` });
+//     }
 
-    // Normalize optional flags/coords
-    const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
-    const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
-    const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
+//     // Normalize optional flags/coords
+//     const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
+//     const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
+//     const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
 
-    // Upload once to S3
-    const fileUrl = await uploadToS3(req.file, 'media');
+//     // Upload once to S3
+//     const fileUrl = await uploadToS3(req.file, 'media');
 
-    // ----- permission checks -----
-    // 1) Users: must be friends (ACCEPTED) in either direction
-    const userPermissions = {};
-    if (userTargets.length) {
-      const friendships = await prisma.friendship.findMany({
-        where: {
-          status: 'ACCEPTED',
-          OR: userTargets.flatMap(targetId => ([
-            { requesterId: senderId, receiverId: targetId },
-            { requesterId: targetId, receiverId: senderId }
-          ]))
-        },
-        select: { requesterId: true, receiverId: true }
-      });
+//     // ----- permission checks -----
+//     // 1) Users: must be friends (ACCEPTED) in either direction
+//     const userPermissions = {};
+//     if (userTargets.length) {
+//       const friendships = await prisma.friendship.findMany({
+//         where: {
+//           status: 'ACCEPTED',
+//           OR: userTargets.flatMap(targetId => ([
+//             { requesterId: senderId, receiverId: targetId },
+//             { requesterId: targetId, receiverId: senderId }
+//           ]))
+//         },
+//         select: { requesterId: true, receiverId: true }
+//       });
 
-      const okPairs = new Set(friendships.map(f => `${f.requesterId}-${f.receiverId}`));
-      for (const id of userTargets) {
-        const ok = okPairs.has(`${senderId}-${id}`) || okPairs.has(`${id}-${senderId}`);
-        userPermissions[id] = !!ok;
-      }
-    }
+//       const okPairs = new Set(friendships.map(f => `${f.requesterId}-${f.receiverId}`));
+//       for (const id of userTargets) {
+//         const ok = okPairs.has(`${senderId}-${id}`) || okPairs.has(`${id}-${senderId}`);
+//         userPermissions[id] = !!ok;
+//       }
+//     }
 
-    // 2) Groups: must be a member
-    // NOTE: if your schema name differs (e.g., GroupMember vs groupMember), adjust below.
-    const groupPermissions = {};
-    if (groupTargets.length) {
-      const myGroupMemberships = await prisma.groupMember.findMany({
-        where: { userId: senderId, groupId: { in: groupTargets } },
-        select: { groupId: true }
-      });
-      const allowedGroups = new Set(myGroupMemberships.map(g => g.groupId));
-      for (const gid of groupTargets) groupPermissions[gid] = allowedGroups.has(gid);
-    }
+//     // 2) Groups: must be a member
+//     // NOTE: if your schema name differs (e.g., GroupMember vs groupMember), adjust below.
+//     const groupPermissions = {};
+//     if (groupTargets.length) {
+//       const myGroupMemberships = await prisma.groupMember.findMany({
+//         where: { userId: senderId, groupId: { in: groupTargets } },
+//         select: { groupId: true }
+//       });
+//       const allowedGroups = new Set(myGroupMemberships.map(g => g.groupId));
+//       for (const gid of groupTargets) groupPermissions[gid] = allowedGroups.has(gid);
+//     }
 
-    // 3) Communities: must be a member
-    const communityPermissions = {};
-    if (communityTargets.length) {
-      const myCommunityMemberships = await prisma.communityMember.findMany({
-        where: { userId: senderId, communityId: { in: communityTargets } },
-        select: { communityId: true }
-      });
-      const allowedCommunities = new Set(myCommunityMemberships.map(c => c.communityId));
-      for (const cid of communityTargets) communityPermissions[cid] = allowedCommunities.has(cid);
-    }
+//     // 3) Communities: must be a member
+//     const communityPermissions = {};
+//     if (communityTargets.length) {
+//       const myCommunityMemberships = await prisma.communityMember.findMany({
+//         where: { userId: senderId, communityId: { in: communityTargets } },
+//         select: { communityId: true }
+//       });
+//       const allowedCommunities = new Set(myCommunityMemberships.map(c => c.communityId));
+//       for (const cid of communityTargets) communityPermissions[cid] = allowedCommunities.has(cid);
+//     }
 
-    // ----- build create ops -----
-    const createOps = [];
-    const successes = { users: [], groups: [], communities: [] };
-    const failures  = { users: [], groups: [], communities: [] };
+//     // ----- build create ops -----
+//     const createOps = [];
+//     const successes = { users: [], groups: [], communities: [] };
+//     const failures  = { users: [], groups: [], communities: [] };
 
-    for (const uid of userTargets) {
-      if (userPermissions[uid]) {
-        createOps.push(prisma.media.create({
-          data: { senderId, fileUrl, type, receiverId: uid }
-        }));
-        successes.users.push(uid);
-      } else {
-        failures.users.push({ id: uid, reason: 'Not friends/permission denied' });
-      }
-    }
+//     for (const uid of userTargets) {
+//       if (userPermissions[uid]) {
+//         createOps.push(prisma.media.create({
+//           data: { senderId, fileUrl, type, receiverId: uid }
+//         }));
+//         successes.users.push(uid);
+//       } else {
+//         failures.users.push({ id: uid, reason: 'Not friends/permission denied' });
+//       }
+//     }
 
-    for (const gid of groupTargets) {
-      if (groupPermissions[gid]) {
-        createOps.push(prisma.media.create({
-          data: { senderId, fileUrl, type, groupId: gid }
-        }));
-        successes.groups.push(gid);
-      } else {
-        failures.groups.push({ id: gid, reason: 'Not a group member' });
-      }
-    }
+//     for (const gid of groupTargets) {
+//       if (groupPermissions[gid]) {
+//         createOps.push(prisma.media.create({
+//           data: { senderId, fileUrl, type, groupId: gid }
+//         }));
+//         successes.groups.push(gid);
+//       } else {
+//         failures.groups.push({ id: gid, reason: 'Not a group member' });
+//       }
+//     }
 
-    for (const cid of communityTargets) {
-      if (communityPermissions[cid]) {
-        createOps.push(prisma.media.create({
-          data: { senderId, fileUrl, type, communityId: cid }
-        }));
-        successes.communities.push(cid);
-      } else {
-        failures.communities.push({ id: cid, reason: 'Not a community member' });
-      }
-    }
+//     for (const cid of communityTargets) {
+//       if (communityPermissions[cid]) {
+//         createOps.push(prisma.media.create({
+//           data: { senderId, fileUrl, type, communityId: cid }
+//         }));
+//         successes.communities.push(cid);
+//       } else {
+//         failures.communities.push({ id: cid, reason: 'Not a community member' });
+//       }
+//     }
 
-    // Optionally also post to Story once
-    if (postToStoryBool) {
-      createOps.push(prisma.story.create({
-        data: {
-          userId: senderId,
-          mediaUrl: fileUrl,
-          type,
-          visibility: 'profile',
-          status: 'ACTIVE',
-          latitude: lat,
-          longitude: lng
-        }
-      }));
-    }
+//     // Optionally also post to Story once
+//     if (postToStoryBool) {
+//       createOps.push(prisma.story.create({
+//         data: {
+//           userId: senderId,
+//           mediaUrl: fileUrl,
+//           type,
+//           visibility: 'profile',
+//           status: 'ACTIVE',
+//           latitude: lat,
+//           longitude: lng
+//         }
+//       }));
+//     }
 
-    // Execute in a transaction
-    const results = await prisma.$transaction(createOps);
+//     // Execute in a transaction
+//     const results = await prisma.$transaction(createOps);
 
-    return res.json({
-      message: 'Bulk media processed.',
-      fileUrl,
-      createdCount: results.length - (postToStoryBool ? 1 : 0),
-      postedToStory: postToStoryBool,
-      successes,
-      failures
-    });
-  } catch (error) {
-    console.error('uploadMediaBulk error:', error);
-    return res.status(500).json({ error: 'Failed to send media in bulk' });
-  }
-};
+//     return res.json({
+//       message: 'Bulk media processed.',
+//       fileUrl,
+//       createdCount: results.length - (postToStoryBool ? 1 : 0),
+//       postedToStory: postToStoryBool,
+//       successes,
+//       failures
+//     });
+//   } catch (error) {
+//     console.error('uploadMediaBulk error:', error);
+//     return res.status(500).json({ error: 'Failed to send media in bulk' });
+//   }
+// };
