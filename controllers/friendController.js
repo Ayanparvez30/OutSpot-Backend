@@ -549,29 +549,41 @@ exports.unblockUser = async (req, res) => {
   });
   return res.json({ message: "User unblocked successfully." });
 };
+
+
+function getWeekStartMonday() {
+  const now = new Date();
+  const day = now.getDay(); // 0=Sun
+  const diff = now.getDate() - day + (day === 0 ? -6 : 1);
+  const weekStart = new Date(now.setDate(diff));
+  weekStart.setHours(0, 0, 0, 0);
+  return weekStart;
+}
+
+const firstAvatar = (minimeArr) =>
+  Array.isArray(minimeArr) && minimeArr.length > 0
+    ? (minimeArr[0]?.avatarUrl || "")
+    : "";
+
+const REASON_RANK = { CONTACT: 3, MUTUAL: 2, COMMUNITY: 1 };
+
 exports.getRecommendedFriends = async (req, res) => {
   const userId = req.authData.id;
+  const weekStart = getWeekStartMonday();
 
-  // 1. Get current friends
+  // 1) current friends
   const friendships = await prisma.friendship.findMany({
-    where: {
-      status: 'ACCEPTED',
-      OR: [{ requesterId: userId }, { receiverId: userId }]
-    }
+    where: { status: 'ACCEPTED', OR: [{ requesterId: userId }, { receiverId: userId }] }
   });
-  const friendIds = friendships.map(f => f.requesterId === userId ? f.receiverId : f.requesterId);
+  const friendIds = friendships.map(f => (f.requesterId === userId ? f.receiverId : f.requesterId));
 
-  // 2. Get blocked users
+  // 2) blocked
   const blocks = await prisma.block.findMany({
-    where: {
-      OR: [{ blockerId: userId }, { blockedId: userId }]
-    }
+    where: { OR: [{ blockerId: userId }, { blockedId: userId }] }
   });
-  const blockedIds = blocks.map(b =>
-    b.blockerId === userId ? b.blockedId : b.blockerId
-  );
+  const blockedIds = blocks.map(b => (b.blockerId === userId ? b.blockedId : b.blockerId));
 
-  // 3. Load synced contacts from DB
+  // 3) contacts -> users
   const syncedContacts = await prisma.contactSync.findMany({ where: { userId } });
   const contactUsernames = syncedContacts.map(c => c.username).filter(Boolean);
   const contactPhones = syncedContacts.map(c => c.phone).filter(Boolean);
@@ -579,127 +591,237 @@ exports.getRecommendedFriends = async (req, res) => {
   const contactUsers = await prisma.user.findMany({
     where: {
       OR: [
-        { username: { in: contactUsernames } },
-        { phone: { in: contactPhones } }
-      ],
+        contactUsernames.length ? { username: { in: contactUsernames } } : undefined,
+        contactPhones.length ? { phone: { in: contactPhones } } : undefined,
+      ].filter(Boolean),
       id: { notIn: [...friendIds, ...blockedIds, userId] }
     },
     select: {
       id: true,
       username: true,
-     minime: {
-  select: { avatarUrl: true },
-  where: { isSaved: true } 
-}
-
+      totalPoints: true,
+      minime: {
+        select: { avatarUrl: true, isSaved: true, updatedAt: true },
+        orderBy: [{ isSaved: 'desc' }, { updatedAt: 'desc' }],
+        take: 1
+      }
     }
   });
 
-  // 4. Mutual friends
+  // 4) mutual friends graph
   const mutualFriendships = await prisma.friendship.findMany({
     where: {
       status: 'ACCEPTED',
       OR: [
-        { requesterId: { in: friendIds }, receiverId: { notIn: [...friendIds, ...blockedIds, userId] } },
-        { receiverId: { in: friendIds }, requesterId: { notIn: [...friendIds, ...blockedIds, userId] } }
+        { requesterId: { in: friendIds } },
+        { receiverId: { in: friendIds } }
       ]
     },
     include: {
       requester: {
         select: {
           id: true, username: true,
-        minime: {
-  select: { avatarUrl: true },
-  where: { isSaved: true } 
-}
-
+          minime: {
+            select: { avatarUrl: true, isSaved: true, updatedAt: true },
+            orderBy: [{ isSaved: 'desc' }, { updatedAt: 'desc' }],
+            take: 1
+          }
         }
       },
       receiver: {
         select: {
           id: true, username: true,
-            minime: {
-  select: { avatarUrl: true },
-  where: { isSaved: true } 
-}
-
+          minime: {
+            select: { avatarUrl: true, isSaved: true, updatedAt: true },
+            orderBy: [{ isSaved: 'desc' }, { updatedAt: 'desc' }],
+            take: 1
+          }
         }
       }
     }
   });
 
-  // 5. Community members
+  // 5) communities -> members (+community info)
   const myCommunities = await prisma.communityMember.findMany({
     where: { userId },
     select: { communityId: true }
   });
-
   const communityIds = myCommunities.map(c => c.communityId);
-  const communityMembers = await prisma.communityMember.findMany({
-    where: {
-      communityId: { in: communityIds },
-      userId: { notIn: [...friendIds, ...blockedIds, userId] }
-    },
-    include: {
-      user: {
-        select: {
-          id: true,
-          username: true,
-       minime: {
-  select: { avatarUrl: true },
-  where: { isSaved: true } 
-}
+
+  const communityMembers = communityIds.length
+    ? await prisma.communityMember.findMany({
+        where: {
+          communityId: { in: communityIds },
+          userId: { notIn: [...friendIds, ...blockedIds, userId] }
+        },
+        include: {
+          community: { select: { id: true, name: true, imageUrl: true } },
+          user: {
+            select: {
+              id: true, username: true, totalPoints: true,
+              minime: {
+                select: { avatarUrl: true, isSaved: true, updatedAt: true },
+                orderBy: [{ isSaved: 'desc' }, { updatedAt: 'desc' }],
+                take: 1
+              }
+            }
+          }
+        }
+      })
+    : [];
+
+  // 6) combine suggestions with single best reason
+  const suggested = new Map();
+
+  const upsert = (uId, base) => {
+    if (!suggested.has(uId)) {
+      suggested.set(uId, {
+        id: base.id,
+        username: base.username,
+        avatarUrl: base.avatarUrl || "",
+        totalPoints: base.totalPoints ?? 0,
+        thisWeekPoints: 0,
+        reason: null,        // best single reason
+        _reasonRank: 0,      // internal rank for comparison
+        mutualFriends: []    // preview list (not returned)
+      });
+    }
+    const entry = suggested.get(uId);
+
+    if (!entry.avatarUrl && base.avatarUrl) entry.avatarUrl = base.avatarUrl;
+    if (!entry.totalPoints && typeof base.totalPoints === 'number') entry.totalPoints = base.totalPoints;
+
+    // choose best reason by rank
+    if (base.reason && REASON_RANK[base.reason.type] > (entry._reasonRank || 0)) {
+      entry.reason = base.reason;
+      entry._reasonRank = REASON_RANK[base.reason.type];
+    }
+
+    // accumulate mutual friends (dedupe) – optional cache, UI-তে ব্যবহার করছি না
+    if (Array.isArray(base.mutualFriends) && base.mutualFriends.length) {
+      const seen = new Set(entry.mutualFriends.map(m => m.id));
+      for (const m of base.mutualFriends) {
+        if (!seen.has(m.id)) {
+          entry.mutualFriends.push({
+            id: m.id,
+            username: m.username,
+            avatarUrl: m.avatarUrl || ""
+          });
+          seen.add(m.id);
         }
       }
     }
-  });
+  };
 
-  // 6. Combine suggestions
-  const suggested = new Map();
-
-  // From Contacts
-  contactUsers.forEach(u => {
-    suggested.set(u.id, {
+  // from contacts (highest priority)
+  for (const u of contactUsers) {
+    upsert(u.id, {
       id: u.id,
       username: u.username,
-      avatarUrl: u.minime?.avatarUrl || null,
-      reason: 'From contact list',
-      isAlreadyFriend: false
+      avatarUrl: firstAvatar(u.minime),
+      totalPoints: u.totalPoints || 0,
+      reason: { type: 'CONTACT', label: 'From contact list' }
     });
-  });
+  }
 
-  // From Mutual Friends
-  mutualFriendships.forEach(f => {
-    const other = f.requester.id !== userId ? f.requester : f.receiver;
-    if (!suggested.has(other.id)) {
-      suggested.set(other.id, {
-        id: other.id,
+  // from mutual friends (2nd priority) — with `via`
+  for (const fr of mutualFriendships) {
+    const a = fr.requester;
+    const b = fr.receiver;
+
+    const pushCandidate = (mutual, other) => {
+      const otherId = other.id;
+      if ([...friendIds, ...blockedIds, userId].includes(otherId)) return;
+      upsert(otherId, {
+        id: otherId,
         username: other.username,
-        avatarUrl: other.minime?.avatarUrl || null,
-        reason: 'Mutual Friend',
-        isAlreadyFriend: false
+        avatarUrl: firstAvatar(other.minime),
+        reason: {
+          type: 'MUTUAL',
+          label: 'Mutual Friend',
+          via: {
+            id: mutual.id,
+            username: mutual.username,
+            avatarUrl: firstAvatar(mutual.minime) // "" if not found
+          }
+        },
+        // optional cache
+        mutualFriends: [{
+          id: mutual.id,
+          username: mutual.username,
+          avatarUrl: firstAvatar(mutual.minime)
+        }]
       });
-    }
-  });
+    };
 
-  // From Community
-  communityMembers.forEach(cm => {
+    if (friendIds.includes(a.id)) pushCandidate(a, b);
+    if (friendIds.includes(b.id)) pushCandidate(b, a);
+  }
+
+  // from community (lowest priority)
+  for (const cm of communityMembers) {
     const u = cm.user;
-    if (!suggested.has(u.id)) {
-      suggested.set(u.id, {
-        id: u.id,
-        username: u.username,
-        avatarUrl: u.minime?.avatarUrl || null,
-        reason: 'Community',
-        isAlreadyFriend: false
-      });
-    }
-  });
+    upsert(u.id, {
+      id: u.id,
+      username: u.username,
+      avatarUrl: firstAvatar(u.minime),
+      totalPoints: u.totalPoints || 0,
+      reason: {
+        type: 'COMMUNITY',
+        label: 'Community',
+        community: {
+          id: cm.community.id,
+          name: cm.community.name,
+          imageUrl: cm.community.imageUrl || "" // never null
+        }
+      }
+    });
+  }
 
-  res.json({
-    recommended: Array.from(suggested.values()).slice(0, 20)
-  });
+  // 7) weekly points (batch)
+  const candidateIds = Array.from(suggested.keys());
+  if (candidateIds.length) {
+    const subs = await prisma.submission.findMany({
+      where: { userId: { in: candidateIds }, createdAt: { gte: weekStart } },
+      include: { challenge: { select: { points: true } } }
+    });
+    const subPts = new Map();
+    for (const s of subs) subPts.set(s.userId, (subPts.get(s.userId) || 0) + (s.challenge?.points || 0));
+
+    const locs = await prisma.locationPoint.findMany({
+      where: { userId: { in: candidateIds }, createdAt: { gte: weekStart } },
+      select: { userId: true, points: true }
+    });
+    const locPts = new Map();
+    for (const p of locs) locPts.set(p.userId, (locPts.get(p.userId) || 0) + (p.points || 0));
+
+    for (const id of candidateIds) {
+      const e = suggested.get(id);
+      e.thisWeekPoints = (subPts.get(id) || 0) + (locPts.get(id) || 0);
+    }
+  }
+
+  // 8) final payload (single best reason; mutual -> reason.via)
+  const payload = Array.from(suggested.values())
+    .map(s => ({
+      id: s.id,
+      username: s.username,
+      avatarUrl: s.avatarUrl || "",
+      totalPoints: s.totalPoints,
+      thisWeekPoints: s.thisWeekPoints,
+      reason: s.reason && s.reason.type === 'MUTUAL'
+        ? s.reason
+        : (s.reason && s.reason.type === 'COMMUNITY'
+            ? { ...s.reason, community: { ...s.reason.community, imageUrl: s.reason.community.imageUrl || "" } }
+            : s.reason
+          )
+    }))
+    .slice(0, 20);
+
+  return res.json({ recommended: payload });
 };
+
+
 
 exports.syncContacts = async (req, res) => {
   const userId = req.authData.id;
