@@ -1,6 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { io } = require('../utils/socket');  // Import the Socket.IO server instance
 
 const uploadToS3 = require('../utils/s3Upload'); 
 const path = require('path');
@@ -11,9 +10,14 @@ const STORY_TTL_MINUTES = Number(
 );
 
 
+const { io } = require('../utils/socket'); // Import socket.io server instance
+
 exports.uploadMedia = async (req, res) => {
   const userId = req.authData.id;
   let { chatId, type, postToStory, latitude, longitude } = req.body;
+
+  // Log chatId to see if it's coming through
+  console.log('Received chatId:', chatId);
 
   // Ensure a file is uploaded
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
@@ -66,7 +70,9 @@ exports.uploadMedia = async (req, res) => {
         });
       });
 
+      // Wait for all messages to be created
       media = await Promise.all(messagePromises);
+      console.log('Media created:', media);  // Log the created messages to verify
 
       // Emit the new message with the uploaded media URL to all users in the chat
       chatId.forEach((id) => {
@@ -101,13 +107,14 @@ exports.uploadMedia = async (req, res) => {
       });
     }
 
-    // Return media uploaded for valid chatId
+    // Return media uploaded for valid chatId (manual message creation)
     return res.json({ message: 'Media uploaded and messages created', media });
   } catch (error) {
     console.error('Upload media error:', error);
     return res.status(500).json({ error: 'Failed to upload media' });
   }
 };
+
 
 
 
