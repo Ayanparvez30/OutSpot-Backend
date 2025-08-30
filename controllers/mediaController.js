@@ -1,116 +1,61 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const uploadToS3 = require('../utils/s3Upload');
+const uploadToS3 = require('../utils/s3Upload'); 
 const path = require('path');
 
 
 const STORY_TTL_MINUTES = Number(
   process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
 );
+exports.uploadMedia = async (req, res) => {
+  const userId = req.authData.id;
+  let { receiverId, groupId, challengeId, type, postToStory, communityId, latitude, longitude } = req.body;
 
-function toIdArray(input) {
-  if (!input) return [];
-  if (Array.isArray(input)) return input.map(n => parseInt(n, 10)).filter(Number.isFinite);
-  return String(input)
-    .split(',')
-    .map(s => parseInt(s.trim(), 10))
-    .filter(Number.isFinite);
-}
-const uniq = arr => Array.from(new Set(arr));
-
-exports.upload = async (req, res) => {
-  const senderId = req.authData.id;
-
-  // Accept only chatIds (array) and other optional fields
-  let {
-    type,
-    chatIds,
-    postToStory,
-    latitude,
-    longitude,
-    challengeId
-  } = req.body;
+  if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   try {
-    if (!req.file) {
-      return res.status(400).json({ error: 'No file uploaded' });
-    }
-
-    // Validate type
     type = (type || '').toString().trim().toUpperCase();
     const ALLOWED = new Set(['IMAGE', 'VIDEO']);
     if (!ALLOWED.has(type)) {
       return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
     }
 
-    // Normalize optional flags/coords
     const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
     const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
     const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
 
-    // Build targets from chatIds
-    const chatTargets = uniq(toIdArray(chatIds));
+    const s3Url = await uploadToS3(req.file, 'media');
 
-    // If nothing to send and not posting to story, reject
-    if (chatTargets.length === 0 && !postToStoryBool) {
-      return res.status(400).json({ error: 'Provide at least one chatId or set postToStory=true.' });
-    }
-
-    // Safety cap to avoid abuse
-    const MAX_TARGETS = 100;
-    if (chatTargets.length > MAX_TARGETS) {
-      return res.status(413).json({ error: `Too many chat targets. Max ${MAX_TARGETS}.` });
-    }
-
-    // Upload once to S3
-    const fileUrl = await uploadToS3(req.file, 'media');
-
-
-    // ----- build create ops -----
-    const createOps = [];
-    const successes = { chats: [] };
-    const failures = { chats: [] };
-
-    for (const chatId of chatTargets) {
-      if (chatId) {
-        createOps.push(prisma.media.create({
-          data: { senderId, fileUrl, type, chatId, challengeId: challengeId ? parseInt(challengeId, 10) : null }
-        }));
-        successes.chats.push(chatId);
-      } else {
-        failures.chats.push({ id: chatId, reason: 'Invalid chatId' });
+    const media = await prisma.media.create({
+      data: {
+        senderId: userId,
+        fileUrl: s3Url,
+        type, 
+        receiverId: receiverId ? parseInt(receiverId, 10) : null,
+        groupId: groupId ? parseInt(groupId, 10) : null,
+        challengeId: challengeId ? parseInt(challengeId, 10) : null,
+        communityId: communityId ? parseInt(communityId, 10) : null,
       }
-    }
+    });
 
-    // Optionally also post to Story once
     if (postToStoryBool) {
-      createOps.push(prisma.story.create({
+      await prisma.story.create({
         data: {
-          userId: senderId,
-          mediaUrl: fileUrl,
+          userId,
+          mediaUrl: s3Url,
           type,
           visibility: 'profile',
           status: 'ACTIVE',
           latitude: lat,
           longitude: lng
         }
-      }));
+      });
     }
 
-    // Execute in a transaction (creates N media rows [+ 1 story if requested])
-    const results = await prisma.$transaction(createOps);
-
-    return res.json({
-      message: 'Upload processed.',
-      fileUrl,
-      createdCount: results.length - (postToStoryBool ? 1 : 0),
-      postedToStory: postToStoryBool,
-      successes,
-      failures
-    });
+    return res.json({ message: 'Media uploaded', media });
   } catch (error) {
-    console.error('upload error:', error);
-    return res.status(500).json({ error: 'Failed to upload/send media' });
+    console.error('Upload media error:', error);
+    return res.status(500).json({ error: 'Failed to upload media' });
   }
 };
 exports.saveToProfile = async (req, res) => {
@@ -502,17 +447,6 @@ exports.getMyStories = async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch your stories' });
   }
 };
-
-
-function toIdArray(input) {
-  if (!input) return [];
-  if (Array.isArray(input)) return input.map(n => parseInt(n, 10)).filter(Number.isFinite);
-  // allow comma-separated string or single number string
-  return String(input)
-    .split(',')
-    .map(s => parseInt(s.trim(), 10))
-    .filter(Number.isFinite);
-}
 
 // exports.uploadMediaBulk = async (req, res) => {
 //   const senderId = req.authData.id;
