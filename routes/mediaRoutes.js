@@ -15,8 +15,10 @@ const upload = multer({
     cb(null, true);
   }
 });
+// // NEW bulk route
+// router.post('/upload/bulk', checkAuth, upload.single('media'), mediaController.uploadMediaBulk);
+router.post('/upload', checkAuth, upload.single('media'), mediaController.upload);
 
-router.post('/upload', checkAuth, upload.single('media'), mediaController.uploadMedia);
 router.get('/stories', checkAuth, mediaController.getStories);
 router.post('/stories/profile', checkAuth, mediaController.saveToProfile);
 router.post('/stories/vault', checkAuth, mediaController.saveToVault); 
