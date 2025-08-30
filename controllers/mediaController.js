@@ -12,12 +12,20 @@ exports.uploadMedia = async (req, res) => {
   const userId = req.authData.id;
   let { chatIds, type, postToStory, latitude, longitude } = req.body;
 
+  // Log chatIds to see if it's coming through
+  console.log('Received chatIds:', chatIds);
+
   // Ensure a file is uploaded
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   // Ensure chatIds is an array, even if it's passed as a string
   if (typeof chatIds === 'string') {
-    chatIds = chatIds.split(',').map(id => parseInt(id.trim(), 10));
+    chatIds = chatIds.split(',').map(id => parseInt(id.trim(), 10)); // Convert string to array of numbers
+  }
+
+  // Check if chatIds is still undefined or invalid after conversion
+  if (!chatIds || !Array.isArray(chatIds) || chatIds.length === 0 || chatIds.some(id => isNaN(id))) {
+    return res.status(400).json({ error: 'Invalid chatIds format. It should be an array of numbers.' });
   }
 
   try {
@@ -71,6 +79,7 @@ exports.uploadMedia = async (req, res) => {
     return res.status(500).json({ error: 'Failed to upload media' });
   }
 };
+
 
 
 
