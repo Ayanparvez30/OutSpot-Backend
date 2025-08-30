@@ -18,14 +18,14 @@ exports.uploadMedia = async (req, res) => {
   // Ensure a file is uploaded
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  // Ensure chatId is an array, even if it's passed as a string
+  // Handle chatId as an array if passed as a string (e.g., "24,25")
   if (typeof chatId === 'string') {
     chatId = chatId.split(',').map(id => parseInt(id.trim(), 10)); // Convert string to array of numbers
   }
 
-  // Check if chatId is still undefined or invalid after conversion
-  if (!chatId || !Array.isArray(chatId) || chatId.length === 0 || chatId.some(id => isNaN(id))) {
-    return res.status(400).json({ error: 'Invalid chatId format. It should be an array of numbers.' });
+  // Check if chatId is valid, it should be an array of numbers or a single valid chatId
+  if (chatId && Array.isArray(chatId) && (chatId.length === 0 || chatId.some(id => isNaN(id)))) {
+    return res.status(400).json({ error: 'Invalid chatId format. It should be an array of numbers or a single number.' });
   }
 
   try {
@@ -36,7 +36,7 @@ exports.uploadMedia = async (req, res) => {
       return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
     }
 
-    // Determine if media should be posted to story
+    // Handle postToStory flag
     const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
     const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
     const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
@@ -44,23 +44,26 @@ exports.uploadMedia = async (req, res) => {
     // Upload the file to S3 (using your existing utility function)
     const s3Url = await uploadToS3(req.file, 'media');
 
-    // Create media records for each chatId in the list
-    const mediaPromises = chatId.map((chatId) => {
-      return prisma.media.create({
-        data: {
-          senderId: userId,
-          fileUrl: s3Url,
-          type,
-          chatId: chatId,  // Use each chatId in the array
-        }
+    // If chatId is provided, create media records for each chatId in the list
+    let media = [];
+    if (chatId && Array.isArray(chatId) && chatId.length > 0) {
+      const mediaPromises = chatId.map((id) => {
+        return prisma.media.create({
+          data: {
+            senderId: userId,
+            fileUrl: s3Url,
+            type,
+            chatId: id,  // Use each chatId in the array
+          }
+        });
       });
-    });
 
-    const media = await Promise.all(mediaPromises);
+      media = await Promise.all(mediaPromises);
+    }
 
     // Optionally, post the media to a user's story (if postToStory is true)
     if (postToStoryBool) {
-      await prisma.story.create({
+      const story = await prisma.story.create({
         data: {
           userId,
           mediaUrl: s3Url,
@@ -71,8 +74,16 @@ exports.uploadMedia = async (req, res) => {
           longitude: lng
         }
       });
+
+      // Return the story as part of the response if posted
+      return res.json({
+        message: 'Media uploaded and story posted',
+        media,
+        story
+      });
     }
 
+    // Return media uploaded for valid chatId
     return res.json({ message: 'Media uploaded', media });
   } catch (error) {
     console.error('Upload media error:', error);
