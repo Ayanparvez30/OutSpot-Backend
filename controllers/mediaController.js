@@ -18,14 +18,17 @@ exports.uploadMedia = async (req, res) => {
   // Ensure a file is uploaded
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  // Handle chatId as an array if passed as a string (e.g., "24,25")
-  if (typeof chatId === 'string') {
-    chatId = chatId.split(',').map(id => parseInt(id.trim(), 10)); // Convert string to array of numbers
-  }
+  // If postToStory is true, allow uploading without chatId (skip chatId validation)
+  if (!postToStory) {
+    // Handle chatId as an array if passed as a string (e.g., "24,25")
+    if (typeof chatId === 'string') {
+      chatId = chatId.split(',').map(id => parseInt(id.trim(), 10)); // Convert string to array of numbers
+    }
 
-  // Check if chatId is valid, it should be an array of numbers or a single valid chatId
-  if (chatId && Array.isArray(chatId) && (chatId.length === 0 || chatId.some(id => isNaN(id)))) {
-    return res.status(400).json({ error: 'Invalid chatId format. It should be an array of numbers or a single number.' });
+    // Check if chatId is valid, it should be an array of numbers or a single valid chatId
+    if (chatId && Array.isArray(chatId) && (chatId.length === 0 || chatId.some(id => isNaN(id)))) {
+      return res.status(400).json({ error: 'Invalid chatId format. It should be an array of numbers or a single number.' });
+    }
   }
 
   try {
@@ -36,7 +39,7 @@ exports.uploadMedia = async (req, res) => {
       return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
     }
 
-    // Handle postToStory flag
+    // Handle postToStory flag (whether to post the media to the user's story)
     const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
     const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
     const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
@@ -44,9 +47,13 @@ exports.uploadMedia = async (req, res) => {
     // Upload the file to S3 (using your existing utility function)
     const s3Url = await uploadToS3(req.file, 'media');
 
-    // If chatId is provided, create media records for each chatId in the list
     let media = [];
+
+    // If chatId is provided, create media records for each chatId
     if (chatId && Array.isArray(chatId) && chatId.length > 0) {
+      // Remove duplicates in case the same chatId is passed more than once
+      chatId = [...new Set(chatId)];
+
       const mediaPromises = chatId.map((id) => {
         return prisma.media.create({
           data: {
@@ -75,7 +82,6 @@ exports.uploadMedia = async (req, res) => {
         }
       });
 
-      // Return the story as part of the response if posted
       return res.json({
         message: 'Media uploaded and story posted',
         media,
@@ -90,6 +96,7 @@ exports.uploadMedia = async (req, res) => {
     return res.status(500).json({ error: 'Failed to upload media' });
   }
 };
+
 
 
 
