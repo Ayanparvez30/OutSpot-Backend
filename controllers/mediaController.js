@@ -7,37 +7,50 @@ const path = require('path');
 const STORY_TTL_MINUTES = Number(
   process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
 );
+
 exports.uploadMedia = async (req, res) => {
   const userId = req.authData.id;
-  let { receiverId, groupId, challengeId, type, postToStory, communityId, latitude, longitude } = req.body;
+  let { chatIds, type, postToStory, latitude, longitude } = req.body;
 
+  // Ensure a file is uploaded
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
+  // Ensure chatIds is an array, even if it's passed as a string
+  if (typeof chatIds === 'string') {
+    chatIds = chatIds.split(',').map(id => parseInt(id.trim(), 10));
+  }
+
   try {
+    // Validate media type (IMAGE or VIDEO)
     type = (type || '').toString().trim().toUpperCase();
     const ALLOWED = new Set(['IMAGE', 'VIDEO']);
     if (!ALLOWED.has(type)) {
       return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
     }
 
+    // Determine if media should be posted to story
     const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
     const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
     const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
 
+    // Upload the file to S3 (using your existing utility function)
     const s3Url = await uploadToS3(req.file, 'media');
 
-    const media = await prisma.media.create({
-      data: {
-        senderId: userId,
-        fileUrl: s3Url,
-        type, 
-        receiverId: receiverId ? parseInt(receiverId, 10) : null,
-        groupId: groupId ? parseInt(groupId, 10) : null,
-        challengeId: challengeId ? parseInt(challengeId, 10) : null,
-        communityId: communityId ? parseInt(communityId, 10) : null,
-      }
+    // Create media records for each chatId in the list
+    const mediaPromises = chatIds.map((chatId) => {
+      return prisma.media.create({
+        data: {
+          senderId: userId,
+          fileUrl: s3Url,
+          type,
+          chatId: chatId,  // Use each chatId in the array
+        }
+      });
     });
 
+    const media = await Promise.all(mediaPromises);
+
+    // Optionally, post the media to a user's story (if postToStory is true)
     if (postToStoryBool) {
       await prisma.story.create({
         data: {
@@ -58,6 +71,9 @@ exports.uploadMedia = async (req, res) => {
     return res.status(500).json({ error: 'Failed to upload media' });
   }
 };
+
+
+
 exports.saveToProfile = async (req, res) => {
   const authenticatedUserId = req.authData.id;
   const { storyId } = req.body;
