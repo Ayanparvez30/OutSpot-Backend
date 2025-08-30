@@ -163,7 +163,8 @@ exports.getSubmissions = async (req, res) => {
       user: {
         select: { id: true, username: true,      minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true } 
+  where: { isSaved: true } ,
+          orderBy: { updatedAt: 'desc' }
 }
  }
       }
