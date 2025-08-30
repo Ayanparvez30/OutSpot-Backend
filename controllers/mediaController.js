@@ -8,6 +8,8 @@ const STORY_TTL_MINUTES = Number(
   process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
 );
 
+const { io } = require('../utils/socket'); // Import socket.io server instance
+
 exports.uploadMedia = async (req, res) => {
   const userId = req.authData.id;
   let { chatId, type, postToStory, latitude, longitude } = req.body;
@@ -54,18 +56,30 @@ exports.uploadMedia = async (req, res) => {
       // Remove duplicates in case the same chatId is passed more than once
       chatId = [...new Set(chatId)];
 
-      const mediaPromises = chatId.map((id) => {
-        return prisma.media.create({
+      // Create new messages with the uploaded media URL
+      const messagePromises = chatId.map((id) => {
+        return prisma.message.create({
           data: {
-            senderId: userId,
-            fileUrl: s3Url,
-            type,
-            chatId: id,  // Use each chatId in the array
+            content: s3Url,  // Media URL as the content of the message
+            senderId: userId,  // The user who uploaded the media
+            chatId: id,  // The chat where the message should be posted
+            imageUrl: s3Url,  // Optional: Store imageUrl if needed separately
           }
         });
       });
 
-      media = await Promise.all(mediaPromises);
+      media = await Promise.all(messagePromises);
+
+      // Emit the new message with the uploaded media URL to all users in the chat
+      chatId.forEach((id) => {
+        io.to(`chat-${id}`).emit('newMessage', {
+          content: s3Url, // The media URL
+          senderId: userId,
+          chatId: id,
+          imageUrl: s3Url,
+          createdAt: new Date().toISOString(),
+        });
+      });
     }
 
     // Optionally, post the media to a user's story (if postToStory is true)
@@ -90,7 +104,7 @@ exports.uploadMedia = async (req, res) => {
     }
 
     // Return media uploaded for valid chatId
-    return res.json({ message: 'Media uploaded', media });
+    return res.json({ message: 'Media uploaded and messages created', media });
   } catch (error) {
     console.error('Upload media error:', error);
     return res.status(500).json({ error: 'Failed to upload media' });
