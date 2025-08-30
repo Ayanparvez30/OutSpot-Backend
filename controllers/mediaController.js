@@ -1,5 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { io } = require('../utils/socket');  // Import the Socket.IO server instance
+
 const uploadToS3 = require('../utils/s3Upload'); 
 const path = require('path');
 
@@ -8,23 +10,19 @@ const STORY_TTL_MINUTES = Number(
   process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
 );
 
-const { io } = require('../utils/socket'); // Import socket.io server instance
 
 exports.uploadMedia = async (req, res) => {
   const userId = req.authData.id;
   let { chatId, type, postToStory, latitude, longitude } = req.body;
-
-  // Log chatId to see if it's coming through
-  console.log('Received chatId:', chatId);
 
   // Ensure a file is uploaded
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
   // If postToStory is true, allow uploading without chatId (skip chatId validation)
   if (!postToStory) {
-    // Handle chatId as an array if passed as a string (e.g., "24,25")
+    // Handle chatId as an array if passed as a string
     if (typeof chatId === 'string') {
-      chatId = chatId.split(',').map(id => parseInt(id.trim(), 10)); // Convert string to array of numbers
+      chatId = chatId.split(',').map(id => parseInt(id.trim(), 10)); // Convert string to array
     }
 
     // Check if chatId is valid, it should be an array of numbers or a single valid chatId
@@ -73,7 +71,7 @@ exports.uploadMedia = async (req, res) => {
       // Emit the new message with the uploaded media URL to all users in the chat
       chatId.forEach((id) => {
         io.to(`chat-${id}`).emit('newMessage', {
-          content: s3Url, // The media URL
+          content: s3Url,  // The media URL
           senderId: userId,
           chatId: id,
           imageUrl: s3Url,
@@ -110,6 +108,7 @@ exports.uploadMedia = async (req, res) => {
     return res.status(500).json({ error: 'Failed to upload media' });
   }
 };
+
 
 
 
