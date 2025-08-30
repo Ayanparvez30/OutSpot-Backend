@@ -19,6 +19,8 @@ app.use((req, res, next) => {
   next();
 });
 
+
+
 const communityRoutes   = require('./routes/communityRoutes');
 const challengeRoutes   = require('./routes/challengeRoutes');
 const leaderboardRoutes = require('./routes/leaderboardRoutes');
@@ -28,7 +30,7 @@ const friendRoutes      = require('./routes/friendRoutes');
 const mapRoutes         = require('./routes/mapRoutes');
 const mediaRoutes       = require('./routes/mediaRoutes');
 const notificationRoutes = require('./routes/notificationRoutes');
-
+const exploreRoutes = require('./routes/exploreRoutes');
 
 app.use('/api', authRoutes);
 app.use('/api', communityRoutes);
@@ -40,6 +42,7 @@ app.use('/api', friendRoutes);
 app.use('/api', mapRoutes);
 app.use('/api', notificationRoutes);
 
+app.use('/api', exploreRoutes);
 // ---- Story expiry cron ----
 // TTL minutes (same logic as controller)
 const STORY_TTL_MINUTES = Number(
