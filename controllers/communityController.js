@@ -203,7 +203,8 @@ exports.getCommunityDetails = async (req, res) => {
           totalPoints: true,
           minime: {
   select: { avatarUrl: true },
-  where: { isSaved: true } 
+  where: { isSaved: true } ,
+          orderBy: { updatedAt: 'desc' }
 }
 
         },
