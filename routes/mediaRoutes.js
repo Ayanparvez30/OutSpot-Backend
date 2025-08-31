@@ -18,6 +18,7 @@ const upload = multer({
 
 
 
+
 router.post('/upload', checkAuth, upload.single('media'), mediaController.uploadMedia);
 
 

@@ -1,65 +1,177 @@
+
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const uploadToS3 = require('../utils/s3Upload'); 
-const path = require('path');
 
+let getIO;
+try { ({ getIO } = require('../utils/socket')); } catch (_) {}
 
 const STORY_TTL_MINUTES = Number(
   process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
 );
+
+const toBool = (v) => {
+  if (typeof v === 'boolean') return v;
+  if (v == null) return false;
+  const s = String(v).trim().toLowerCase();
+  return s === 'true' || s === '1' || s === 'yes' || s === 'y';
+};
+
+const parseIdArray = (v) => {
+  if (!v) return [];
+  if (Array.isArray(v)) return v.map(Number).filter(Number.isFinite);
+  if (typeof v === 'string') {
+    try {
+      const arr = JSON.parse(v);
+      if (Array.isArray(arr)) return arr.map(Number).filter(Number.isFinite);
+    } catch (_) {}
+    return v.split(',').map((s) => Number(String(s).trim())).filter(Number.isFinite);
+  }
+  return [];
+};
+
 exports.uploadMedia = async (req, res) => {
-  const userId = req.authData.id;
-  let { receiverId, groupId, challengeId, type, postToStory, communityId, latitude, longitude } = req.body;
+  const userId = req?.authData?.id;
+  if (!userId) return res.status(401).json({ error: 'Unauthorized' });
+
+  let { chatIds, chatId, type, postToStory, latitude, longitude } = req.body;
 
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
+
+  const ALLOWED = new Set(['IMAGE', 'VIDEO']);
+  type = String(type || 'IMAGE').trim().toUpperCase();
+  if (!ALLOWED.has(type)) return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
+
+
+  const chats = parseIdArray(chatIds || chatId);
+  const sendToChats = chats.length > 0;
+  const alsoStory = toBool(postToStory);
+
+  if (!sendToChats && !alsoStory) {
+    return res.status(400).json({ error: 'Nothing to do. Provide chatIds and/or postToStory=true' });
+  }
+
+  const lat = latitude != null && latitude !== '' ? Number(latitude) : null;
+  const lon = longitude != null && longitude !== '' ? Number(longitude) : null;
+
   try {
-    type = (type || '').toString().trim().toUpperCase();
-    const ALLOWED = new Set(['IMAGE', 'VIDEO']);
-    if (!ALLOWED.has(type)) {
-      return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
-    }
+  
+    const publicUrl = await uploadToS3(req.file, `users/${userId}/media`);
 
-    const postToStoryBool = ((postToStory ?? '').toString().trim().toLowerCase() === 'true');
-    const lat = Number.isFinite(parseFloat(latitude)) ? parseFloat(latitude) : null;
-    const lng = Number.isFinite(parseFloat(longitude)) ? parseFloat(longitude) : null;
-
-    const s3Url = await uploadToS3(req.file, 'media');
-
-    const media = await prisma.media.create({
-      data: {
-        senderId: userId,
-        fileUrl: s3Url,
-        type, 
-        receiverId: receiverId ? parseInt(receiverId, 10) : null,
-        groupId: groupId ? parseInt(groupId, 10) : null,
-        challengeId: challengeId ? parseInt(challengeId, 10) : null,
-        communityId: communityId ? parseInt(communityId, 10) : null,
-      }
-    });
-
-    if (postToStoryBool) {
-      await prisma.story.create({
+  
+    let media = null;
+    try {
+      media = await prisma.media.create({
         data: {
           userId,
-          mediaUrl: s3Url,
-          type,
-          visibility: 'profile',
-          status: 'ACTIVE',
+          type,             // 'IMAGE' | 'VIDEO'
+          url: publicUrl,   // store the same we send in chat
+          mimeType: req.file.mimetype,
+          sizeBytes: req.file.size,
           latitude: lat,
-          longitude: lng
-        }
+          longitude: lon,
+        },
       });
+    } catch (e) {
+      
+      console.warn('⚠️ media table not used or schema mismatch. Using URL only.', e?.message);
     }
 
-    return res.json({ message: 'Media uploaded', media });
-  } catch (error) {
-    console.error('Upload media error:', error);
-    return res.status(500).json({ error: 'Failed to upload media' });
+    if (sendToChats) {
+      const membership = await prisma.userOnChat.findMany({
+        where: { chatId: { in: chats }, userId },
+        select: { chatId: true },
+      });
+      const allowed = new Set(membership.map((m) => m.chatId));
+      const invalid = chats.filter((id) => !allowed.has(id));
+      if (invalid.length) {
+        return res.status(403).json({ error: 'You are not a member of some chats', invalidChatIds: invalid });
+      }
+    }
+
+    const ops = [];
+    let storyIdx = -1;
+
+    if (alsoStory) {
+      const expiresAt = new Date(Date.now() + STORY_TTL_MINUTES * 60 * 1000);
+      const storyData = {
+        userId,
+        
+        ...(media ? { mediaId: media.id } : {}),
+      
+        expiresAt,
+        latitude: lat,
+        longitude: lon,
+   
+        status: 'ACTIVE',
+      };
+      storyIdx = ops.push(prisma.story.create({ data: storyData })) - 1;
+    }
+
+    if (sendToChats) {
+      for (const cid of chats) {
+
+        const msgData = {
+          chatId: cid,
+          senderId: userId,
+          content: null,       
+          imageUrl: publicUrl,  
+        
+          ...(lat != null ? { latitude: lat } : {}),
+          ...(lon != null ? { longitude: lon } : {}),
+ 
+          ...(media ? { mediaId: media.id } : {}),
+        };
+        ops.push(
+          prisma.message.create({
+            data: msgData,
+            include: { sender: true },
+          })
+        );
+      }
+    }
+
+    const results = ops.length ? await prisma.$transaction(ops) : [];
+    const story = storyIdx > -1 ? results[storyIdx] : null;
+
+
+    try {
+      const io = typeof getIO === 'function' ? getIO() : req.app?.get('io');
+      if (io && sendToChats) {
+        for (const r of results) {
+          if (r && r.chatId) {
+            io.to(`chat_${r.chatId}`).emit('newMessage', {
+              id: r.id,
+              content: r.content ?? null,
+              imageUrl: r.imageUrl ?? publicUrl,
+              sender: r.sender
+                ? { id: r.sender.id, username: r.sender.username }
+                : { id: userId },
+              chatId: r.chatId,
+              createdAt: r.createdAt,
+         
+              ...(media ? { media } : {}),
+            });
+          }
+        }
+      }
+    } catch (e) {
+      console.error('Socket emit failed', e);
+    }
+
+    return res.json({
+      ok: true,
+      url: publicUrl,
+      media: media || null,
+      story: story || null,
+      sentToChats: sendToChats ? chats : [],
+    });
+  } catch (err) {
+    console.error('uploadMedia error', err);
+    return res.status(500).json({ error: 'Upload failed', details: err.message });
   }
 };
-
-
 
 
 exports.saveToProfile = async (req, res) => {
