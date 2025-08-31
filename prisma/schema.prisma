@@ -54,6 +54,10 @@ model User {
   ChatImage ChatImage[]
 
   Chat Chat[]
+
+  reportsSent Report[] @relation("Reporter")
+
+  reportsReceived Report[] @relation("Reported")
 }
 
 model Minime {
@@ -349,3 +353,15 @@ model ContactSync {
 
   user User @relation(fields: [userId], references: [id])
 }
+
+model Report {
+  id          Int      @id @default(autoincrement())
+  reporterId  Int
+  reportedId  Int
+  status      String   @default("PENDING")  // PENDING, Reviewed, Resolved
+  createdAt   DateTime @default(now())
+
+  reporter    User     @relation("Reporter", fields: [reporterId], references: [id])
+  reported    User     @relation("Reported", fields: [reportedId], references: [id])
+}
+
