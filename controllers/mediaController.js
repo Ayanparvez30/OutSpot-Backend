@@ -1,3 +1,4 @@
+// controllers/mediaController.js → replace uploadMedia
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const uploadToS3 = require('../utils/s3Upload');
@@ -16,46 +17,37 @@ const parseIdArray = (v) => {
   if (!v) return [];
   if (Array.isArray(v)) return v.map(Number).filter(Number.isFinite);
   if (typeof v === 'string') {
-    try {
-      const arr = JSON.parse(v);
-      if (Array.isArray(arr)) return arr.map(Number).filter(Number.isFinite);
-    } catch (_) {}
+    try { const arr = JSON.parse(v); if (Array.isArray(arr)) return arr.map(Number).filter(Number.isFinite); } catch (_) {}
     return v.split(',').map((s) => Number(String(s).trim())).filter(Number.isFinite);
   }
   return [];
 };
+
 exports.uploadMedia = async (req, res) => {
   const userId = req?.authData?.id;
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
   let { chatIds, chatId, type, postToStory, latitude, longitude, visibility } = req.body;
-
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-  // Validate media/story type to match your StoryType enum
+  // Match your StoryType enum
   const ALLOWED = new Set(['IMAGE', 'VIDEO']);
   type = String(type || 'IMAGE').trim().toUpperCase();
-  if (!ALLOWED.has(type)) {
-    return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
-  }
-
+  if (!ALLOWED.has(type)) return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
 
   const chats = [...new Set(parseIdArray(chatIds || chatId))];
   const sendToChats = chats.length > 0;
   const alsoStory = toBool(postToStory);
 
-  if (!sendToChats && !alsoStory) {
-    return res.status(400).json({ error: 'Nothing to do. Provide chatIds and/or postToStory=true' });
-  }
-
+  // Optional geo (Story supports; Message does NOT)
   const lat = latitude != null && latitude !== '' ? Number(latitude) : null;
   const lon = longitude != null && longitude !== '' ? Number(longitude) : null;
 
   try {
-
+    // 1) Upload once → URL
     const publicUrl = await uploadToS3(req.file, `users/${userId}/media`);
 
-   
+    // 2) Membership check only if sending to chats
     if (sendToChats) {
       const membership = await prisma.userOnChat.findMany({
         where: { chatId: { in: chats }, userId },
@@ -68,72 +60,62 @@ exports.uploadMedia = async (req, res) => {
       }
     }
 
+    // 3) Build ops
     const ops = [];
     let storyIdx = -1;
 
     if (alsoStory) {
-
       const storyVisibility = (visibility || 'profile').toLowerCase() === 'private' ? 'private' : 'profile';
-
       const storyData = {
         userId,
-        mediaUrl: publicUrl,                        
-        type: type === 'VIDEO' ? 'VIDEO' : 'IMAGE',  
-        visibility: storyVisibility,         
-        status: 'ACTIVE',                    
+        mediaUrl: publicUrl,
+        type: type === 'VIDEO' ? 'VIDEO' : 'IMAGE',
+        visibility: storyVisibility,
+        status: 'ACTIVE',
         latitude: lat ?? null,
         longitude: lon ?? null,
       };
-
       storyIdx = ops.push(prisma.story.create({ data: storyData })) - 1;
     }
 
     if (sendToChats) {
       for (const cid of chats) {
-        const msgData = {
-          chatId: cid,
-          senderId: userId,
-          content: null,        
-          imageUrl: publicUrl, 
-        };
         ops.push(
           prisma.message.create({
-            data: msgData,
+            data: { chatId: cid, senderId: userId, content: null, imageUrl: publicUrl },
             include: { sender: { select: { id: true, username: true } } },
           })
         );
-     
       }
     }
 
+    // 4) Commit + emit
     const results = ops.length ? await prisma.$transaction(ops) : [];
     const story = storyIdx > -1 ? results[storyIdx] : null;
-
 
     const createdMessages = results
       .filter(r => r && typeof r.chatId === 'number')
       .map(m => ({
-        id: m.id,
-        chatId: m.chatId,
-        content: m.content,
-        imageUrl: m.imageUrl,
-        createdAt: m.createdAt,
+        id: m.id, chatId: m.chatId, content: m.content, imageUrl: m.imageUrl, createdAt: m.createdAt,
         sender: m.sender ? { id: m.sender.id, username: m.sender.username } : { id: userId },
       }));
-
 
     try {
       const io = typeof getIO === 'function' ? getIO() : req.app?.get('io');
       if (io && createdMessages.length) {
-        for (const m of createdMessages) {
-          io.to(`chat_${m.chatId}`).emit('newMessage', m);
-        }
+        for (const m of createdMessages) io.to(`chat_${m.chatId}`).emit('newMessage', m);
       }
-    } catch (e) {
-      console.error('Socket emit failed', e);
-    }
+    } catch (e) { console.error('Socket emit failed', e); }
+
+    // 5) Response — now “just upload” is allowed (no error)
+    let mode = 'uploaded-only';
+    if (alsoStory && sendToChats) mode = 'story+chats';
+    else if (alsoStory) mode = 'story';
+    else if (sendToChats) mode = 'chats';
+
     return res.json({
       message: 'Media processed successfully',
+      mode,
       fileUrl: publicUrl,
       story: story || null,
       messages: createdMessages,
@@ -144,59 +126,88 @@ exports.uploadMedia = async (req, res) => {
     return res.status(500).json({ error: 'Upload failed', details: err.message });
   }
 };
-
-
 exports.saveToProfile = async (req, res) => {
   const authenticatedUserId = req.authData.id;
-  const { storyId } = req.body;
+  let { storyId, imageUrl, type = 'IMAGE', visibility = 'profile', latitude, longitude } = req.body;
 
   try {
-    const story = await prisma.story.findUnique({
-      where: { id: storyId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            friendRequestsSent: true,
-            friendRequestsReceived: true,
-            username: true
-          }
-        }
-      }
-    });
-    if (!story) return res.status(404).json({ error: 'Story not found' });
+    let story = null;
 
-    const isOwner = story.userId === authenticatedUserId;
-    const isFriend =
-      story.user.friendRequestsSent?.some(r => r.receiverId === authenticatedUserId && r.status === 'ACCEPTED') ||
-      story.user.friendRequestsReceived?.some(r => r.requesterId === authenticatedUserId && r.status === 'ACCEPTED');
-
-    if (!isOwner && !(isFriend && story.visibility === 'profile')) {
-      return res.status(403).json({ error: 'You can only save your own stories or friends’ profile-visible stories' });
+    if (!storyId && !imageUrl) {
+      return res.status(400).json({ error: 'Provide either storyId or imageUrl' });
     }
 
-    const existingSaved = await prisma.savedStory.findUnique({
-      where: {
-        userId_storyId_status: {
-          userId: authenticatedUserId,
-          storyId,
-          status: 'SAVED'
-        }
+    // path A: save by imageUrl (no storyId)
+    if (imageUrl) {
+      type = String(type || 'IMAGE').toUpperCase() === 'VIDEO' ? 'VIDEO' : 'IMAGE';
+      const vis = (visibility || 'profile').toLowerCase() === 'private' ? 'private' : 'profile';
+
+      // যদি আগেই SAVED স্টোরি থাকে same user+url → reuse; না হলে নতুন স্টোরি বানাবো SAVED দিয়ে
+      story = await prisma.story.findFirst({
+        where: { userId: authenticatedUserId, mediaUrl: imageUrl, status: 'SAVED' }
+      });
+
+      if (!story) {
+        story = await prisma.story.create({
+          data: {
+            userId: authenticatedUserId,
+            mediaUrl: imageUrl,
+            type,
+            visibility: vis,
+            status: 'SAVED', // ✅ ফিডে যাবে না
+            latitude: latitude != null ? Number(latitude) : null,
+            longitude: longitude != null ? Number(longitude) : null,
+          },
+        });
       }
+      storyId = story.id;
+    }
+
+    // path B: save by storyId (existing story, e.g. অন্যের ACTIVE story)
+    if (!story) {
+      story = await prisma.story.findUnique({
+        where: { id: Number(storyId) },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              friendRequestsSent: true,
+              friendRequestsReceived: true
+            }
+          }
+        }
+      });
+      if (!story) return res.status(404).json({ error: 'Story not found' });
+
+      const isOwner = story.userId === authenticatedUserId;
+      const isFriend =
+        story.user.friendRequestsSent?.some(r => r.receiverId === authenticatedUserId && r.status === 'ACCEPTED') ||
+        story.user.friendRequestsReceived?.some(r => r.requesterId === authenticatedUserId && r.status === 'ACCEPTED');
+
+      if (!isOwner && !(isFriend && story.visibility === 'profile')) {
+        return res.status(403).json({ error: 'You can only save your own stories or friends’ profile-visible stories' });
+      }
+    }
+
+    // prevent duplicate save row for this user+story+'SAVED'
+    const existingSaved = await prisma.savedStory.findUnique({
+      where: { userId_storyId_status: { userId: authenticatedUserId, storyId: story.id, status: 'SAVED' } }
     });
     if (existingSaved) return res.status(400).json({ error: 'Already saved to profile' });
 
     const savedStory = await prisma.savedStory.create({
-      data: { userId: authenticatedUserId, storyId, status: 'SAVED' }
+      data: { userId: authenticatedUserId, storyId: story.id, status: 'SAVED' }
     });
 
-    res.json({
-      message: `Saved to your profile.`,
+    return res.json({
+      message: 'Saved to your profile.',
+      story,        // status: SAVED → feed এ যাবে না
       savedStory
     });
   } catch (error) {
     console.error('Error saving story to profile:', error);
-    res.status(500).json({ error: 'Failed to save story to profile' });
+    return res.status(500).json({ error: 'Failed to save story to profile' });
   }
 };
 
@@ -295,58 +306,88 @@ exports.getSavedStories = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch saved stories' });
   }
 };
-
 exports.saveToVault = async (req, res) => {
   const userId = req.authData.id;
-  const { storyId } = req.body;
+  let { storyId, imageUrl, type = 'IMAGE', visibility = 'profile', latitude, longitude } = req.body;
 
   try {
-    const story = await prisma.story.findUnique({
-      where: { id: storyId },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            friendRequestsSent: true,
-            friendRequestsReceived: true
-          }
-        }
-      }
-    });
-    if (!story) return res.status(404).json({ error: 'Story not found' });
+    let story = null;
 
-    const isOwner = story.userId === userId;
-    const isFriend =
-      story.user.friendRequestsSent?.some(r => r.receiverId === userId && r.status === 'ACCEPTED') ||
-      story.user.friendRequestsReceived?.some(r => r.requesterId === userId && r.status === 'ACCEPTED');
-
-    if (!isOwner && !(isFriend && story.visibility === 'profile')) {
-      return res.status(403).json({ error: 'You do not have permission to save this story to your vault' });
+    if (!storyId && !imageUrl) {
+      return res.status(400).json({ error: 'Provide either storyId or imageUrl' });
     }
 
-    const existingVaultStory = await prisma.savedStory.findUnique({
-      where: {
-        userId_storyId_status: {
-          userId,
-          storyId,
-          status: 'VAULT'
-        }
+    // path A: vault by imageUrl → create/find VAULT story owned by me
+    if (imageUrl) {
+      type = String(type || 'IMAGE').toUpperCase() === 'VIDEO' ? 'VIDEO' : 'IMAGE';
+      const vis = (visibility || 'profile').toLowerCase() === 'private' ? 'private' : 'profile';
+
+      // reuse existing VAULT story if any
+      story = await prisma.story.findFirst({
+        where: { userId, mediaUrl: imageUrl, status: 'VAULT' }
+      });
+
+      if (!story) {
+        story = await prisma.story.create({
+          data: {
+            userId,
+            mediaUrl: imageUrl,
+            type,
+            visibility: vis,
+            status: 'VAULT', // ✅ ফিডে যাবে না
+            latitude: latitude != null ? Number(latitude) : null,
+            longitude: longitude != null ? Number(longitude) : null,
+          },
+        });
       }
+      storyId = story.id;
+    }
+
+    // path B: vault by storyId (permission check for others’ story)
+    if (!story) {
+      story = await prisma.story.findUnique({
+        where: { id: Number(storyId) },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              friendRequestsSent: true,
+              friendRequestsReceived: true
+            }
+          }
+        }
+      });
+      if (!story) return res.status(404).json({ error: 'Story not found' });
+
+      const isOwner = story.userId === userId;
+      const isFriend =
+        story.user.friendRequestsSent?.some(r => r.receiverId === userId && r.status === 'ACCEPTED') ||
+        story.user.friendRequestsReceived?.some(r => r.requesterId === userId && r.status === 'ACCEPTED');
+
+      if (!isOwner && !(isFriend && story.visibility === 'profile')) {
+        return res.status(403).json({ error: 'You do not have permission to save this story to your vault' });
+      }
+    }
+
+    // prevent duplicate vault save
+    const existingVaultStory = await prisma.savedStory.findUnique({
+      where: { userId_storyId_status: { userId, storyId: story.id, status: 'VAULT' } }
     });
     if (existingVaultStory) return res.status(400).json({ error: 'Already saved to vault' });
 
     const savedStory = await prisma.savedStory.create({
-      data: { userId, storyId, status: 'VAULT' }
+      data: { userId, storyId: story.id, status: 'VAULT' }
     });
 
-    res.json({
-      message: `Saved to your vault`,
+    return res.json({
+      message: 'Saved to your vault',
+      story,        // status: VAULT → feed এ যাবে না
       savedStory
     });
   } catch (error) {
     console.error('Error saving story to vault:', error);
-    res.status(500).json({ error: 'Failed to save story to vault' });
+    return res.status(500).json({ error: 'Failed to save story to vault' });
   }
 };
 
