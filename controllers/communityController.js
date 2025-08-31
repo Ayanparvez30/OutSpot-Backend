@@ -347,94 +347,50 @@ return res.status(500).json({ error: 'Failed to delete community' });
 }
 };
 
-
 exports.getMyRecentCommunities = async (req, res) => {
-try {
-const userId = req.authData.id;
+  try {
+    const userId = req.authData.id;
 
 
-const take = Math.min(parseInt(req.query.limit || '50', 10), 100);
-const skip = Math.max(parseInt(req.query.skip || '0', 10), 0);
-const onlyRecent = String(req.query.onlyRecent || '').toLowerCase() === 'true';
+    const membership = await prisma.communityMember.findFirst({
+      where: { userId },
+      orderBy: { joinedAt: 'desc' },
+      include: {
+        community: {
+          select: {
+            id: true,
+            name: true,
+            imageUrl: true,
+            creatorId: true,
+            _count: { select: { members: true } }
+          }
+        }
+      }
+    });
 
+ 
+    if (!membership) {
+      return res.json({ mostRecent: null });
+    }
 
-// Communities I created — include my membership to fetch joinedAt (acts as created time)
-const created = await prisma.community.findMany({
-where: { creatorId: userId },
-orderBy: { id: 'desc' },
-include: {
-_count: { select: { members: true } },
-members: {
-where: { userId },
-select: { joinedAt: true },
-take: 1,
-orderBy: { joinedAt: 'desc' }
-}
-}
-});
+    const c = membership.community;
 
+    const mostRecent = {
+      id: c.id,
+      name: c.name,
+      imageUrl: c.imageUrl || null,
+      membersCount: c._count.members,
+      type: c.creatorId === userId ? 'created' : 'joined', 
+      at: membership.joinedAt
+    };
 
-// Communities I joined (but not created by me)
-const joined = await prisma.communityMember.findMany({
-where: { userId, community: { creatorId: { not: userId } } },
-orderBy: { joinedAt: 'desc' },
-include: {
-community: { include: { _count: { select: { members: true } } } }
-}
-});
-
-
-// Normalize shape
-const items = [];
-
-
-for (const c of created) {
-const at = c.members?.[0]?.joinedAt ?? null; // creator's membership join time
-items.push({
-id: c.id,
-name: c.name,
-imageUrl: c.imageUrl,
-membersCount: c._count.members,
-type: 'created',
-at
-});
-}
-
-
-for (const m of joined) {
-items.push({
-id: m.community.id,
-name: m.community.name,
-imageUrl: m.community.imageUrl,
-membersCount: m.community._count.members,
-type: 'joined',
-at: m.joinedAt
-});
-}
-
-
-// Sort by recency (desc)
-items.sort((a, b) => new Date(b.at) - new Date(a.at));
-
-
-if (onlyRecent) {
-const mostRecent = items[0] || null;
-return res.json({ mostRecent });
-}
-
-
-// Paginate the full list
-const total = items.length;
-const paged = items.slice(skip, skip + take);
-
-
-return res.json({ items: paged, total, skip, take });
-} catch (err) {
-console.error('getMyRecentCommunities error:', err);
-return res.status(500).json({ error: 'Failed to load recent communities' });
-}
+    return res.json({ mostRecent });
+  } catch (err) {
+    console.error('getMyRecentCommunities error:', err);
+    return res.status(500).json({ error: 'Failed to load recent community' });
+  }
 };
-// Get only the communities the user created and the ones they joined (separated)
+
 exports.getMyCommunities = async (req, res) => {
   try {
     const userId = req.authData.id;

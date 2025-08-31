@@ -965,13 +965,12 @@ exports.getSentFriendRequests = async (req, res) => {
   }
 };
 
-
 exports.getFriendProfile = async (req, res) => {
   const currentUserId = req.authData.id;
-  const friendId = parseInt(req.params.friendId);
+  const friendId = parseInt(req.params.friendId, 10);
 
   try {
-    // 1. Check if friendId is accepted friend
+
     const friendship = await prisma.friendship.findFirst({
       where: {
         status: 'ACCEPTED',
@@ -981,12 +980,11 @@ exports.getFriendProfile = async (req, res) => {
         ]
       }
     });
-
     if (!friendship) {
       return res.status(403).json({ error: "Not friends with this user" });
     }
 
-    // 2. Get friend full profile
+    // 2) Friend basic profile
     const friend = await prisma.user.findUnique({
       where: { id: friendId },
       select: {
@@ -996,95 +994,199 @@ exports.getFriendProfile = async (req, res) => {
         lastName: true,
         bio: true,
         totalPoints: true,
-            minime: {
-  select: { avatarUrl: true },
-  where: { isSaved: true } 
-}
-
+        minime: {
+          select: { avatarUrl: true },
+          where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' }
+        }
       }
     });
+    if (!friend) return res.status(404).json({ error: "User not found" });
 
-    if (!friend) {
-      return res.status(404).json({ error: "User not found" });
-    }
-// 3. Friend's stories (public/profile only, not in vault)
-const friendStories = await prisma.story.findMany({
-  where: {
-    userId: friendId,
-    visibility: 'profile',
-      NOT: { status: 'VAULT' }
-  },
-  include: {
-    user: {
-      select: {
-        id: true,
-        username: true,
-       minime: {
-  select: { avatarUrl: true },
-  where: { isSaved: true },
-          orderBy: { updatedAt: 'desc' } 
-}
+    // 3) Friend's visible stories (profile/public only, not vault)
+    const friendStories = await prisma.story.findMany({
+      where: {
+        userId: friendId,
+        visibility: 'profile',
+        NOT: { status: 'VAULT' }
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' }
+            }
+          }
+        }
+      },
+      orderBy: { createdAt: 'desc' }
+    });
 
-      }
-    }
-  },
-  orderBy: { createdAt: 'desc' }
-});
-    // 4. Friend count
+    // 4) Friend count
     const friendCount = await prisma.friendship.count({
       where: {
         status: 'ACCEPTED',
-        OR: [
-          { requesterId: friendId },
-          { receiverId: friendId }
-        ]
+        OR: [{ requesterId: friendId }, { receiverId: friendId }]
       }
     });
 
-    // 5. Communities
-    const communities = await prisma.communityMember.findMany({
+    // 5) Communities (+ recent community imageUrl separately)
+    // Prefer member.createdAt; fallback community.updatedAt
+    const communitiesRaw = await prisma.communityMember.findMany({
       where: { userId: friendId },
-      include: { community: true }
+      include: { community: true },
+      orderBy: [{ joinedAt: 'desc' }]
     });
+    const communities = communitiesRaw.map(c => c.community);
+    const recentCommunityImageUrl = communities.length ? (communities[0].imageUrl || "") : "";
 
-    // 6. Weekly points (reuse logic)
+    // 6) Weekly window
     const now = new Date();
-    const day = now.getDay();
+    const day = now.getDay(); // 0=Sun
     const diff = now.getDate() - day + (day === 0 ? -6 : 1);
     const weekStart = new Date(now.setDate(diff));
     weekStart.setHours(0, 0, 0, 0);
 
-    const submissions = await prisma.submission.findMany({
-      where: { userId: friendId, createdAt: { gte: weekStart } },
-      include: { challenge: true }
+    // 7) Helper: batch weekly points
+    const computeWeeklyPoints = async (userIds) => {
+      if (!userIds.length) return new Map();
+
+      const submissions = await prisma.submission.findMany({
+        where: { userId: { in: userIds }, createdAt: { gte: weekStart } },
+        include: { challenge: { select: { points: true } } }
+      });
+      const locationPoints = await prisma.locationPoint.findMany({
+        where: { userId: { in: userIds }, createdAt: { gte: weekStart } },
+        select: { userId: true, points: true }
+      });
+
+      const subPts = new Map();
+      for (const s of submissions) {
+        subPts.set(s.userId, (subPts.get(s.userId) || 0) + (s.challenge?.points || 0));
+      }
+      const locPts = new Map();
+      for (const p of locationPoints) {
+        locPts.set(p.userId, (locPts.get(p.userId) || 0) + (p.points || 0));
+      }
+
+      const totals = new Map();
+      for (const id of userIds) {
+        totals.set(id, (subPts.get(id) || 0) + (locPts.get(id) || 0));
+      }
+      return totals;
+    };
+
+    // 8) This friend's weekly points
+    const friendWeeklyMap = await computeWeeklyPoints([friendId]);
+    const thisWeekPoints = friendWeeklyMap.get(friendId) || 0;
+
+    // 9) Friend's ALL friends (accepted) → list every "other user"
+    const friendLinks = await prisma.friendship.findMany({
+      where: {
+        status: 'ACCEPTED',
+        OR: [{ requesterId: friendId }, { receiverId: friendId }]
+      },
+      include: {
+        requester: {
+          select: {
+            id: true, username: true, firstName: true, lastName: true, totalPoints: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+              take: 1
+            }
+          }
+        },
+        receiver: {
+          select: {
+            id: true, username: true, firstName: true, lastName: true, totalPoints: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+              take: 1
+            }
+          }
+        }
+      }
     });
-    const challengePoints = submissions.reduce((sum, s) => sum + (s.challenge?.points || 0), 0);
 
-    const locationPoints = await prisma.locationPoint.findMany({
-      where: { userId: friendId, createdAt: { gte: weekStart } }
+    const rawOthers = [];
+    for (const row of friendLinks) {
+      const other = (row.requester.id === friendId) ? row.receiver : row.requester;
+      if (other.id !== friendId && other.id !== currentUserId) {
+        rawOthers.push(other);
+      }
+    }
+    // Dedupe
+    const seen = new Set();
+    const allFriendUsers = [];
+    for (const u of rawOthers) {
+      if (!seen.has(u.id)) {
+        allFriendUsers.push(u);
+        seen.add(u.id);
+      }
+    }
+
+    // 10) Weekly points for all those users
+    const fofIds = allFriendUsers.map(u => u.id);
+    const fofWeeklyMap = await computeWeeklyPoints(fofIds);
+
+    let friendFriends = allFriendUsers.map(u => ({
+      id: u.id,
+      username: u.username,
+      firstName: u.firstName,
+      lastName: u.lastName,
+      avatarUrl: (u.minime && u.minime[0] && u.minime[0].avatarUrl) ? u.minime[0].avatarUrl : "",
+      totalPoints: u.totalPoints || 0,
+      thisWeekPoints: fofWeeklyMap.get(u.id) || 0
+    }));
+
+    // 11) Optional sorting & limiting
+    const sortBy = (req.query.sortBy || '').toString();
+    if (sortBy === 'thisWeekPoints') {
+      friendFriends.sort((a, b) => b.thisWeekPoints - a.thisWeekPoints);
+    } else if (sortBy === 'totalPoints') {
+      friendFriends.sort((a, b) => b.totalPoints - a.totalPoints);
+    } else if (sortBy === 'username') {
+      friendFriends.sort((a, b) => (a.username || '').localeCompare(b.username || ''));
+    }
+    const limit = parseInt(req.query.limit, 10);
+    if (Number.isFinite(limit) && limit > 0) {
+      friendFriends = friendFriends.slice(0, limit);
+    }
+
+    // 12) Final response
+    return res.status(200).json({
+      success: true,
+      message: "Friend profile fetched",
+      data: {
+        id: friend.id,
+        username: friend.username,
+        firstName: friend.firstName,
+        lastName: friend.lastName,
+        bio: friend.bio,
+        totalPoints: friend.totalPoints || 0,
+        minime: friend.minime,
+        friendCount,
+        communities: communities,                 // full list
+        recentCommunityImageUrl,                  // most recent community image
+        thisWeekPoints,                           // this friend's weekly points
+        stories: friendStories,
+        friendFriends                              // ALL friends of this friend
+      }
     });
-    const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
-
-    const thisWeekPoints = challengePoints + mapPoints;
-
- return res.status(200).json({
-  success: true,
-  message: "Friend profile fetched",
-  data: {
-    ...friend,
-    friendCount,
-    communities: communities.map(c => c.community),
-    thisWeekPoints,
-    stories: friendStories
-  }
-});
-
-
   } catch (error) {
     console.error("Error fetching friend profile:", error);
     return res.status(500).json({ error: "Failed to fetch friend profile" });
   }
 };
+
 
 
 exports.getUserProfile = async (req, res) => {
