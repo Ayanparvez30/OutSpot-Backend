@@ -217,7 +217,7 @@ model Chat {
 
 model Message {
   id       Int     @id @default(autoincrement())
-  content  String?
+  content  String? @db.LongText
   sender   User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
   senderId Int
   chat     Chat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
