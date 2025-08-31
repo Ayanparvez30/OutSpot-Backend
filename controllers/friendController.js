@@ -1039,7 +1039,7 @@ exports.getFriendProfile = async (req, res) => {
     const communitiesRaw = await prisma.communityMember.findMany({
       where: { userId: friendId },
       include: { community: true },
-      orderBy: [{ createdAt: 'desc' }]
+      orderBy: [{ joinedAt: 'desc' }]
     });
     const communities = communitiesRaw.map(c => c.community);
     const recentCommunityImageUrl = communities.length ? (communities[0].imageUrl || "") : "";
