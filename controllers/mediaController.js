@@ -8,7 +8,7 @@ try { ({ getIO } = require('../utils/socket')); } catch (_) {}
 
 const toBool = (v) => {
   if (typeof v === 'boolean') return v;
-  if (v == null) return false;
+  if (v == null) return false; 
   const s = String(v).trim().toLowerCase();
   return s === 'true' || s === '1' || s === 'yes' || s === 'y';
 };
