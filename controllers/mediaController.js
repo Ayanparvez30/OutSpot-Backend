@@ -1,14 +1,9 @@
-
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const uploadToS3 = require('../utils/s3Upload'); 
+const uploadToS3 = require('../utils/s3Upload');
 
 let getIO;
 try { ({ getIO } = require('../utils/socket')); } catch (_) {}
-
-const STORY_TTL_MINUTES = Number(
-  process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
-);
 
 const toBool = (v) => {
   if (typeof v === 'boolean') return v;
@@ -34,17 +29,19 @@ exports.uploadMedia = async (req, res) => {
   const userId = req?.authData?.id;
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
 
-  let { chatIds, chatId, type, postToStory, latitude, longitude } = req.body;
+  let { chatIds, chatId, type, postToStory, latitude, longitude, visibility } = req.body;
 
   if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
 
-
+  // Validate media/story type to match your StoryType enum
   const ALLOWED = new Set(['IMAGE', 'VIDEO']);
   type = String(type || 'IMAGE').trim().toUpperCase();
-  if (!ALLOWED.has(type)) return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
+  if (!ALLOWED.has(type)) {
+    return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
+  }
 
-
-  const chats = parseIdArray(chatIds || chatId);
+  // Target chats (deduped)
+  const chats = [...new Set(parseIdArray(chatIds || chatId))];
   const sendToChats = chats.length > 0;
   const alsoStory = toBool(postToStory);
 
@@ -52,32 +49,15 @@ exports.uploadMedia = async (req, res) => {
     return res.status(400).json({ error: 'Nothing to do. Provide chatIds and/or postToStory=true' });
   }
 
+  // Optional geo (Story model supports latitude/longitude; Message does NOT)
   const lat = latitude != null && latitude !== '' ? Number(latitude) : null;
   const lon = longitude != null && longitude !== '' ? Number(longitude) : null;
 
   try {
-  
+    // 1) Upload once to S3 → returns public URL
     const publicUrl = await uploadToS3(req.file, `users/${userId}/media`);
 
-  
-    let media = null;
-    try {
-      media = await prisma.media.create({
-        data: {
-          userId,
-          type,             // 'IMAGE' | 'VIDEO'
-          url: publicUrl,   // store the same we send in chat
-          mimeType: req.file.mimetype,
-          sizeBytes: req.file.size,
-          latitude: lat,
-          longitude: lon,
-        },
-      });
-    } catch (e) {
-      
-      console.warn('⚠️ media table not used or schema mismatch. Using URL only.', e?.message);
-    }
-
+    // 2) Membership check for chats
     if (sendToChats) {
       const membership = await prisma.userOnChat.findMany({
         where: { chatId: { in: chats }, userId },
@@ -90,38 +70,34 @@ exports.uploadMedia = async (req, res) => {
       }
     }
 
+    // 3) Build ops: Story (optional) + Messages
     const ops = [];
     let storyIdx = -1;
 
     if (alsoStory) {
-      const expiresAt = new Date(Date.now() + STORY_TTL_MINUTES * 60 * 1000);
+      // visibility enum is lowercase per your schema: 'private' | 'profile'
+      const storyVisibility = (visibility || 'profile').toLowerCase() === 'private' ? 'private' : 'profile';
+
       const storyData = {
         userId,
-        
-        ...(media ? { mediaId: media.id } : {}),
-      
-        expiresAt,
-        latitude: lat,
-        longitude: lon,
-   
-        status: 'ACTIVE',
+        mediaUrl: publicUrl,                         // REQUIRED by your schema
+        type: type === 'VIDEO' ? 'VIDEO' : 'IMAGE',  // StoryType enum
+        visibility: storyVisibility,                 // StoryVisibility enum
+        status: 'ACTIVE',                            // make it visible immediately
+        latitude: lat ?? null,
+        longitude: lon ?? null,
       };
+
       storyIdx = ops.push(prisma.story.create({ data: storyData })) - 1;
     }
 
     if (sendToChats) {
       for (const cid of chats) {
-
         const msgData = {
           chatId: cid,
           senderId: userId,
-          content: null,       
-          imageUrl: publicUrl,  
-        
-          ...(lat != null ? { latitude: lat } : {}),
-          ...(lon != null ? { longitude: lon } : {}),
- 
-          ...(media ? { mediaId: media.id } : {}),
+          content: null,        // media-only message
+          imageUrl: publicUrl,  // Message has imageUrl field in your schema
         };
         ops.push(
           prisma.message.create({
@@ -129,13 +105,17 @@ exports.uploadMedia = async (req, res) => {
             include: { sender: true },
           })
         );
+
+        // (optional) chat updatedAt bump if needed:
+        // ops.push(prisma.chat.update({ where: { id: cid }, data: { updatedAt: new Date() } }));
       }
     }
 
+    // 4) Commit
     const results = ops.length ? await prisma.$transaction(ops) : [];
     const story = storyIdx > -1 ? results[storyIdx] : null;
 
-
+    // 5) Realtime emit for created messages
     try {
       const io = typeof getIO === 'function' ? getIO() : req.app?.get('io');
       if (io && sendToChats) {
@@ -150,8 +130,6 @@ exports.uploadMedia = async (req, res) => {
                 : { id: userId },
               chatId: r.chatId,
               createdAt: r.createdAt,
-         
-              ...(media ? { media } : {}),
             });
           }
         }
@@ -163,7 +141,6 @@ exports.uploadMedia = async (req, res) => {
     return res.json({
       ok: true,
       url: publicUrl,
-      media: media || null,
       story: story || null,
       sentToChats: sendToChats ? chats : [],
     });
