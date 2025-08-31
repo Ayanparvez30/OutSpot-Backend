@@ -24,7 +24,6 @@ const parseIdArray = (v) => {
   }
   return [];
 };
-
 exports.uploadMedia = async (req, res) => {
   const userId = req?.authData?.id;
   if (!userId) return res.status(401).json({ error: 'Unauthorized' });
@@ -40,7 +39,7 @@ exports.uploadMedia = async (req, res) => {
     return res.status(400).json({ error: "Invalid 'type'. Use IMAGE or VIDEO" });
   }
 
-  // Target chats (deduped)
+
   const chats = [...new Set(parseIdArray(chatIds || chatId))];
   const sendToChats = chats.length > 0;
   const alsoStory = toBool(postToStory);
@@ -49,15 +48,14 @@ exports.uploadMedia = async (req, res) => {
     return res.status(400).json({ error: 'Nothing to do. Provide chatIds and/or postToStory=true' });
   }
 
-  // Optional geo (Story model supports latitude/longitude; Message does NOT)
   const lat = latitude != null && latitude !== '' ? Number(latitude) : null;
   const lon = longitude != null && longitude !== '' ? Number(longitude) : null;
 
   try {
-    // 1) Upload once to S3 → returns public URL
+
     const publicUrl = await uploadToS3(req.file, `users/${userId}/media`);
 
-    // 2) Membership check for chats
+   
     if (sendToChats) {
       const membership = await prisma.userOnChat.findMany({
         where: { chatId: { in: chats }, userId },
@@ -70,20 +68,19 @@ exports.uploadMedia = async (req, res) => {
       }
     }
 
-    // 3) Build ops: Story (optional) + Messages
     const ops = [];
     let storyIdx = -1;
 
     if (alsoStory) {
-      // visibility enum is lowercase per your schema: 'private' | 'profile'
+
       const storyVisibility = (visibility || 'profile').toLowerCase() === 'private' ? 'private' : 'profile';
 
       const storyData = {
         userId,
-        mediaUrl: publicUrl,                         // REQUIRED by your schema
-        type: type === 'VIDEO' ? 'VIDEO' : 'IMAGE',  // StoryType enum
-        visibility: storyVisibility,                 // StoryVisibility enum
-        status: 'ACTIVE',                            // make it visible immediately
+        mediaUrl: publicUrl,                        
+        type: type === 'VIDEO' ? 'VIDEO' : 'IMAGE',  
+        visibility: storyVisibility,         
+        status: 'ACTIVE',                    
         latitude: lat ?? null,
         longitude: lon ?? null,
       };
@@ -96,52 +93,50 @@ exports.uploadMedia = async (req, res) => {
         const msgData = {
           chatId: cid,
           senderId: userId,
-          content: null,        // media-only message
-          imageUrl: publicUrl,  // Message has imageUrl field in your schema
+          content: null,        
+          imageUrl: publicUrl, 
         };
         ops.push(
           prisma.message.create({
             data: msgData,
-            include: { sender: true },
+            include: { sender: { select: { id: true, username: true } } },
           })
         );
-
-        // (optional) chat updatedAt bump if needed:
-        // ops.push(prisma.chat.update({ where: { id: cid }, data: { updatedAt: new Date() } }));
+     
       }
     }
 
-    // 4) Commit
     const results = ops.length ? await prisma.$transaction(ops) : [];
     const story = storyIdx > -1 ? results[storyIdx] : null;
 
-    // 5) Realtime emit for created messages
+
+    const createdMessages = results
+      .filter(r => r && typeof r.chatId === 'number')
+      .map(m => ({
+        id: m.id,
+        chatId: m.chatId,
+        content: m.content,
+        imageUrl: m.imageUrl,
+        createdAt: m.createdAt,
+        sender: m.sender ? { id: m.sender.id, username: m.sender.username } : { id: userId },
+      }));
+
+
     try {
       const io = typeof getIO === 'function' ? getIO() : req.app?.get('io');
-      if (io && sendToChats) {
-        for (const r of results) {
-          if (r && r.chatId) {
-            io.to(`chat_${r.chatId}`).emit('newMessage', {
-              id: r.id,
-              content: r.content ?? null,
-              imageUrl: r.imageUrl ?? publicUrl,
-              sender: r.sender
-                ? { id: r.sender.id, username: r.sender.username }
-                : { id: userId },
-              chatId: r.chatId,
-              createdAt: r.createdAt,
-            });
-          }
+      if (io && createdMessages.length) {
+        for (const m of createdMessages) {
+          io.to(`chat_${m.chatId}`).emit('newMessage', m);
         }
       }
     } catch (e) {
       console.error('Socket emit failed', e);
     }
-
     return res.json({
-      ok: true,
-      url: publicUrl,
+      message: 'Media processed successfully',
+      fileUrl: publicUrl,
       story: story || null,
+      messages: createdMessages,
       sentToChats: sendToChats ? chats : [],
     });
   } catch (err) {
