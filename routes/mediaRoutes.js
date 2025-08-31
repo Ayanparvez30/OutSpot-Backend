@@ -17,7 +17,9 @@ const upload = multer({
 });
 
 
+
 router.post('/upload', checkAuth, upload.single('media'), mediaController.uploadMedia);
+
 
 router.get('/stories', checkAuth, mediaController.getStories);
 router.post('/stories/profile', checkAuth, mediaController.saveToProfile);
