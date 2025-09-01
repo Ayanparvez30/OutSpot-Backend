@@ -547,7 +547,7 @@ exports.getMyStories = async (req, res) => {
             firstName: true,
             lastName: true,
 
-            minime: { select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
+            minime: { select: { avatarUrl: true },  orderBy: { updatedAt: 'desc' } },
             Location: { select: { latitude: true, longitude: true } }
           }
         }
