@@ -147,6 +147,7 @@ exports.createGroupChat = async (req, res) => {
       return res.status(400).json({ message: 'Group name is required' });
     }
 
+    // accept string / JSON string / array
     if (typeof userIds === 'string') {
       try {
         userIds = JSON.parse(userIds);
@@ -159,38 +160,24 @@ exports.createGroupChat = async (req, res) => {
       return res.status(400).json({ message: 'At least one userId required' });
     }
 
-    // ✅ Build full member list
-    const allMemberIds = [...new Set(userIds.concat(currentUserId))].map(id => parseInt(id));
+    // Build full member list (dedup + ensure numbers)
+    const allMemberIds = [...new Set(userIds.concat(currentUserId))].map(id => parseInt(id, 10));
 
-    // ✅ Check if such a group already exists (same member set)
-    // const candidateChats = await prisma.chat.findMany({
-    //   where: { isGroup: true },
-    //   include: { users: true }
-    // });
+    // Optional: check duplicate groups by exact member set (left as-is / skipped)
 
-    // for (const chat of candidateChats) {
-    //   const chatMemberIds = chat.users.map(u => u.userId).sort();
-    //   if (
-    //     chatMemberIds.length === allMemberIds.length &&
-    //     chatMemberIds.every((id, idx) => id === allMemberIds.sort()[idx])
-    //   ) {
-    //     return res.json({ message: 'Group chat already exists', chat });
-    //   }
-    // }
-
-    // ✅ Upload image if provided
+    // Upload image if provided
     let imageUrl = null;
     if (req.file) {
       imageUrl = await uploadToS3(req.file, 'chat-images');
     }
 
-    // ✅ Create group chat
+    // Create group chat
     const membersCreate = allMemberIds.map(uid => ({
       userId: uid,
       role: uid === currentUserId ? 'ADMIN' : 'MEMBER'
     }));
 
-    const chat = await prisma.chat.create({
+    const created = await prisma.chat.create({
       data: {
         name,
         isGroup: true,
@@ -198,8 +185,40 @@ exports.createGroupChat = async (req, res) => {
         createdById: currentUserId,
         users: { create: membersCreate }
       },
-      include: { users: { include: { user: true } } }
+      include: {
+        users: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                totalPoints: true,
+                minime: {
+                  select: { avatarUrl: true },
+                  where: { isSaved: true },
+                  orderBy: { createdAt: 'desc' },
+                  take: 1
+                }
+              }
+            }
+          }
+        }
+      }
     });
+
+    // Flatten avatarUrl on each member
+    const chat = {
+      ...created,
+      users: created.users.map(u => ({
+        ...u,
+        user: {
+          ...u.user,
+          avatarUrl: u.user.minime?.[0]?.avatarUrl || null
+        }
+      }))
+    };
 
     return res.json({ message: 'Group chat created', chat });
   } catch (error) {
@@ -214,7 +233,7 @@ exports.updateGroupChat = async (req, res) => {
     const { chatId } = req.params;
     const { name } = req.body;
 
-    // 1. Find chat and membership
+    // 1) Find chat and ensure requester is an ADMIN
     const chat = await prisma.chat.findUnique({
       where: { id: parseInt(chatId, 10) },
       include: {
@@ -229,19 +248,18 @@ exports.updateGroupChat = async (req, res) => {
       return res.status(404).json({ message: 'Group chat not found' });
     }
 
-    // 2. Ensure user is ADMIN
     const membership = chat.users[0];
     if (!membership || membership.role !== 'ADMIN') {
       return res.status(403).json({ message: 'Only group admins can update this chat' });
     }
 
-    // 3. Handle image upload (optional)
+    // 2) Optional: upload new image
     let imageUrl = chat.imageUrl;
     if (req.file) {
       imageUrl = await uploadToS3(req.file, 'chat-images');
     }
 
-    // 4. Update chat
+    // 3) Update chat and include each member's latest saved MiniMe avatar
     const updatedChat = await prisma.chat.update({
       where: { id: chat.id },
       data: {
@@ -250,17 +268,46 @@ exports.updateGroupChat = async (req, res) => {
       },
       include: {
         users: {
-          include: { user: true }
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                totalPoints: true,
+                minime: {
+                  select: { avatarUrl: true },
+                  where: { isSaved: true },
+                  orderBy: { createdAt: 'desc' },
+                  take: 1
+                }
+              }
+            }
+          }
         }
       }
     });
 
-    return res.json({ message: 'Group chat updated', chat: updatedChat });
+    // 4) Flatten avatarUrl on each member
+    const flattened = {
+      ...updatedChat,
+      users: updatedChat.users.map(u => ({
+        ...u,
+        user: {
+          ...u.user,
+          avatarUrl: u.user.minime?.[0]?.avatarUrl || null
+        }
+      }))
+    };
+
+    return res.json({ message: 'Group chat updated', chat: flattened });
   } catch (error) {
     console.error('Error updating group chat:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
 
 
 
