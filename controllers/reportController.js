@@ -23,7 +23,7 @@ exports.reportUser = async (req, res) => {
 
     return res.status(201).json({
       message: 'User reported successfully',
-      reportId: report.id,
+      
     });
   } catch (error) {
     console.error('Error reporting user:', error);
