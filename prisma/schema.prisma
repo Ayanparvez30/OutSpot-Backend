@@ -46,7 +46,8 @@ model User {
   blockedBy              Block[]         @relation("blocked")
   totalPoints            Int             @default(0)
   Location               Location?
-  submissions            Submission[]
+  submissions  Submission[]
+  completions  ChallengeCompletion[]
   locationPoints         LocationPoint[]
   firebaseUid   String? 
   LocationHistory LocationHistory[]
@@ -288,36 +289,53 @@ enum FriendshipStatus {
   PENDING
   ACCEPTED
 }
-
+enum ChallengeFrequency { 
+  DAILY 
+  WEEKLY 
+  }
+enum PointsTier { 
+  SILVER 
+  GOLD 
+  }
 model Challenge {
-  id             Int           @id @default(autoincrement())
+  id             Int      @id @default(autoincrement())
   title          String
-  description    String? 
-  type           ChallengeType
-  startDate      DateTime
-  endDate        DateTime
-  points         Int
-  requiredPhotos Int           @default(1)
-  createdAt      DateTime      @default(now())
+  description    String
+  type           String?
+  frequency      ChallengeFrequency
+  points         Int      @default(10)
+  tier           PointsTier @default(SILVER)
+  requiredPhotos Int      @default(1)
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
   submissions    Submission[]
+  completions    ChallengeCompletion[]
+
+  @@unique([title, frequency]) // <— add this
 }
 
 model Submission {
-  id          Int      @id @default(autoincrement())
+  id          Int       @id @default(autoincrement())
   userId      Int
   challengeId Int
   mediaUrl    String
-  createdAt   DateTime @default(now())
-
-  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  challenge Challenge @relation(fields: [challengeId], references: [id], onDelete: Cascade)
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id])
+  challenge   Challenge @relation(fields: [challengeId], references: [id])
+  @@index([userId, challengeId, createdAt])
 }
 
-enum ChallengeType {
-  DAILY
-  WEEKLY
-}
 
+model ChallengeCompletion {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  challengeId  Int
+  windowKey    String
+  createdAt    DateTime @default(now())
+  user         User      @relation(fields: [userId], references: [id])
+  challenge    Challenge @relation(fields: [challengeId], references: [id])
+  @@unique([userId, challengeId, windowKey])
+}
 model Community {
   id          Int               @id @default(autoincrement())
   name        String
