@@ -5,3 +5,4 @@ node_modules
 /generated/prisma
 uploads
 prisma/schema-prisma.txt
+prisma/schema.prisma.txt

@@ -245,8 +245,8 @@ exports.acceptFriendRequest = async (req, res) => {
   await notifyUser(
     fromUserId, // requester
     "FRIEND_ACCEPTED",
-    "Friend Request Accepted",
-    `${friendRecord.receiver.username} accepted your request!`,
+    "Friend",
+    "accepted your request!",
     { friendId: friendRecord.receiver.id }
   );
 
