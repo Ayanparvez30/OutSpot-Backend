@@ -5,35 +5,38 @@ exports.getNotifications = async (req, res) => {
   try {
     const userId = req.authData.id;
 
-    const notifications = await prisma.notification.findMany({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            minime: {
-              select: { avatarUrl: true },
-              where: { isSaved: true },
-              orderBy: { updatedAt: 'desc' },
-              take: 1
-            }
-          }
+const notifications = await prisma.notification.findMany({
+  where: { userId },
+  orderBy: { createdAt: 'desc' },
+  include: {
+    actor: {
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        minime: {
+          select: { avatarUrl: true },
+          where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 1
         }
       }
-    });
+    }
+  }
+});
 
-    const enriched = notifications.map(n => ({
-      id: n.id,
-      userId: n.userId,
-      type: n.type,
-      title: n.title,
-      description: n.description,
-      isRead: n.isRead,
-      createdAt: n.createdAt,
-      avatarUrl: n.user?.minime?.[0]?.avatarUrl || null
-    }));
+const enriched = notifications.map(n => ({
+  id: n.id,
+  userId: n.userId,
+  type: n.type,
+  title: n.title,
+  description: n.description,
+  isRead: n.isRead,
+  createdAt: n.createdAt,
+  avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null
+}));
+
 
     res.json(enriched);
   } catch (err) {

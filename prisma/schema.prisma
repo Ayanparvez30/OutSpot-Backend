@@ -59,6 +59,9 @@ model User {
   reportsSent Report[] @relation("Reporter")
 
   reportsReceived Report[] @relation("Reported")
+
+  actedNotifications Notification[] @relation("NotificationActor")
+
 }
 
 model Minime {
@@ -183,13 +186,21 @@ model LocationPoint {
 model Notification {
   id          Int       @id @default(autoincrement())
   userId      Int
+  actorId     Int?
   type        NotificationType
   title       String
   description String?
   isRead      Boolean   @default(false)
   createdAt   DateTime  @default(now())
 
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  // relations
+  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  actor User? @relation("NotificationActor", fields: [actorId], references: [id])
+
+  // indexes
+  @@index([userId, createdAt])
+  @@index([actorId])
+  @@index([userId, isRead, createdAt])
 }
 
 enum NotificationType {
