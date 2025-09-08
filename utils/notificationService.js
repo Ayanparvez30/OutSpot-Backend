@@ -5,20 +5,22 @@ const prisma = new PrismaClient();
 /**
  * Send notification to a user (saves in DB + pushes via Firebase).
  *
- * @param {number} userId - Recipient user ID
- * @param {string} type - NotificationType enum (e.g. FRIEND_ACCEPTED, NEW_CHALLENGE)
- * @param {string} title - Notification title
- * @param {string} description - Notification body
- * @param {object} data - Optional extra data for the app (deep link info, etc.)
+ * @param {number} userId
+ * @param {string} type
+ * @param {string} title
+ * @param {string} description
+ * @param {object} data - extra data (e.g., { actorId, friendId, ... })
  */
 async function notifyUser(userId, type, title, description, data = {}) {
   try {
-    // Save to DB
+    const { actorId = null, ...restData } = data;
+
+    // 1) Save to DB (store actorId if provided)
     const notification = await prisma.notification.create({
-      data: { userId, type, title, description }
+      data: { userId, type, title, description, actorId }
     });
 
-    // Get user with FCM token
+    // 2) Load recipient for FCM token
     const user = await prisma.user.findUnique({ where: { id: userId } });
 
     if (user?.fcmToken) {
@@ -28,7 +30,11 @@ async function notifyUser(userId, type, title, description, data = {}) {
         data: {
           type,
           notificationId: String(notification.id),
-          ...Object.fromEntries(Object.entries(data).map(([k, v]) => [k, String(v)])) // stringify values
+          // Always stringify FCM data values
+          ...Object.fromEntries(
+            Object.entries(restData).map(([k, v]) => [k, String(v)])
+          ),
+          ...(actorId != null ? { actorId: String(actorId) } : {})
         }
       };
 
@@ -40,7 +46,7 @@ async function notifyUser(userId, type, title, description, data = {}) {
 
     return notification;
   } catch (err) {
-    console.error("❌ notifyUser failed:", err);
+    console.error('❌ notifyUser failed:', err);
     throw err;
   }
 }
