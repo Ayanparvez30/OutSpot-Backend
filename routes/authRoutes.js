@@ -57,6 +57,8 @@ router.get('/users/:userId/points', checkAuth, userController.getUserPoints);
 router.post('/submit-for-points', checkAuth,upload.single('media'), userController.submitForPoints);
 
 router.get('/me/achievements', checkAuth, userController.getAchievementStatus);
+// const { getMyReferral } = require('../controllers/authController');
+router.get('/referral', checkAuth, authController.getMyReferral);
 
 router.post(
   '/minime/upload-avatar',

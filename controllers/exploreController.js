@@ -1,7 +1,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { nearby, details, photoUrlByRef } = require('../utils/googlePlaces');
-
+const { addPointsWithMultiplier } = require('../utils/points');
 const toRad = d => (d * Math.PI) / 180;
 const haversineMeters = (a, b) => {
   const R = 6371000, dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
@@ -180,10 +180,8 @@ exports.recordVisit = async (req, res) => {
       }
     });
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: { totalPoints: { increment: points } }
-    });
+await addPointsWithMultiplier(userId, points, 'CHALLENGE_COMPLETION', challengeId);
+
 
     res.json({ awarded: true, points, id: created.id });
   } catch (e) {
