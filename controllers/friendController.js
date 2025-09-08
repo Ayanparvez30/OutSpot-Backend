@@ -218,12 +218,9 @@ exports.sendFriendRequest = async (req, res) => {
   return res.json({ message: "Friend request sent." });
 };
 
-// Accept a friend request
-
-
 exports.acceptFriendRequest = async (req, res) => {
   const currentUserId = req.authData.id;
-  const fromUserId = parseInt(req.params.userId);
+  const fromUserId = parseInt(req.params.userId, 10);
 
   const friendRecord = await prisma.friendship.findFirst({
     where: {
@@ -234,24 +231,39 @@ exports.acceptFriendRequest = async (req, res) => {
     include: { requester: true, receiver: true }
   });
 
-  if (!friendRecord) return res.status(404).json({ error: "Friend request not found." });
+  if (!friendRecord) {
+    return res.status(404).json({ error: "Friend request not found." });
+  }
 
   await prisma.friendship.update({
     where: { id: friendRecord.id },
     data: { status: 'ACCEPTED', acceptedAt: new Date() }
   });
 
-  // ✅ Send notification
+  // Build full name (fallback to username)
+  const fullName =
+    [friendRecord.receiver.firstName, friendRecord.receiver.lastName]
+      .filter(Boolean)
+      .join(' ')
+      || friendRecord.receiver.username;
+
+  // ✅ Send notification with the friend's name in the title
   await notifyUser(
-    fromUserId, // requester
+    fromUserId,                // requester = recipient
     "FRIEND_ACCEPTED",
-    "Friend",
-    "accepted your request!",
-    { friendId: friendRecord.receiver.id }
+    fullName,                  // <— title now is the friend's name
+    "accepted your friend request.",  // short body for your UI to append
+    {
+      friendId: friendRecord.receiver.id,
+      actorId: currentUserId,  // optional: who performed the action
+      firstName: friendRecord.receiver.firstName || '',
+      lastName: friendRecord.receiver.lastName || ''
+    }
   );
 
   return res.json({ message: "Friend request accepted." });
 };
+
 
 
 // Decline or cancel a friend request
