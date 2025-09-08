@@ -28,8 +28,13 @@ model User {
   bodyShapeUrl     String?
   communities      CommunityMember[]
   syncedContacts   ContactSync[]
-
-
+    // 👇 Referral fields
+  referralCode     String            @unique @default(cuid())
+  referredById     Int?
+  referredBy       User?             @relation("UserReferredBy", fields: [referredById], references: [id])
+  referredUsers    User[]            @relation("UserReferredBy")
+  invitesSent      Referral[]        @relation("UserInvites")
+  invitesReceived  Referral[]        @relation("UserReferred")
   fcmToken         String?
   notifications     Notification[]
   messages          Message[]
@@ -62,6 +67,10 @@ model User {
 
   actedNotifications Notification[] @relation("NotificationActor")
 
+  
+  pointsLedger PointsLedger[]
+  inventory UserInventory[]
+  multipliers ActiveMultiplier[]
 }
 
 model Minime {
@@ -394,3 +403,103 @@ model Report {
   reported    User     @relation("Reported", fields: [reportedId], references: [id])
 }
 
+enum ShopSlot {
+  TOP
+  BOTTOM
+  SHOES
+  GLASSES
+  ACCESSORY
+}
+
+model ShopItem {
+  id        Int       @id @default(autoincrement())
+  slot      ShopSlot
+  name      String
+  brand     String?
+  imageUrl  String    @db.Text
+  priceUsd  Decimal   @default(0.00) @db.Decimal(10,2)
+  // any renderer / style info for avatar
+  payload   Json?     // e.g. { "shirt": "Blue Hawaiian" }
+  isFeatured Boolean   @default(false)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  inventories UserInventory[]
+    @@unique([slot, name])
+}
+
+model UserInventory {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  itemId    Int
+  equipped  Boolean  @default(false)
+  acquiredAt DateTime @default(now())
+
+  user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  item ShopItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, itemId])
+}
+
+model MultiplierProduct {
+  id        Int      @id @default(autoincrement())
+  productId String   @unique // IAP SKU (Apple/Google)
+  factor    Float    // e.g. 1.5, 2, 2.5
+  hours     Int      // 1, 12, etc.
+  priceUsd  Decimal  @db.Decimal(10,2)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model ActiveMultiplier {
+  id           Int      @id @default(autoincrement())
+  userId       Int
+  factor       Float
+  startedAt    DateTime @default(now())
+  endsAt       DateTime
+  source       String   // "IAP"
+  productId    String?  // reference MultiplierProduct.productId
+  receiptTxId  String?  // platform transaction id for idempotency
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, endsAt])
+  @@unique([userId, receiptTxId])
+}
+
+model PointsLedger {
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  basePoints Int
+  appliedMultiplier Float @default(1)
+  finalPoints Int
+  reason     String?   // "CHALLENGE_COMPLETION", "LOCATION_UPLOAD", etc.
+  refId      Int?      // optional foreign ref
+  createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+
+enum ReferralStatus {
+  PENDING
+  REWARDED
+  CANCELLED
+}
+
+model Referral {
+  id         Int             @id @default(autoincrement())
+  inviterId  Int
+  inviteeId  Int
+  status     ReferralStatus  @default(PENDING)
+  createdAt  DateTime        @default(now())
+  rewardedAt DateTime?
+
+  inviter    User @relation("UserInvites",  fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee    User @relation("UserReferred", fields: [inviteeId], references: [id], onDelete: Cascade)
+
+  @@unique([inviterId, inviteeId])
+  @@unique([inviteeId]) // ➜ একজন ইউজার মাত্র ১বারই রেফার্ড হতে পারবে
+}

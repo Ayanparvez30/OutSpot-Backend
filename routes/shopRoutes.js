@@ -1,0 +1,21 @@
+const express = require('express');
+const router = express.Router();
+const authMiddleware = require('../middlewares/authMiddleware');
+
+const { checkAuth } = authMiddleware;
+const shop = require('../controllers/shopController');
+
+router.get('/shop/clothing', checkAuth, shop.listClothing);
+router.get('/shop/clothing/featured', checkAuth, shop.listFeatured);
+router.get('/shop/inventory', checkAuth, shop.getInventory);
+
+router.get('/shop/multipliers', checkAuth, shop.listMultipliers);
+router.get('/shop/multiplier/active', checkAuth, shop.getActiveMultiplier);
+
+// IAP confirmation (Apple/Google)
+router.post('/shop/iap/confirm', checkAuth, shop.confirmIAPPurchase);
+
+// Equip / apply owned item to current MiniMe
+router.post('/shop/equip', checkAuth, shop.equipItem);
+
+module.exports = router;

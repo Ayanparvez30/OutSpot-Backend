@@ -1,14 +1,24 @@
+// controllers/communityController.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const uploadToS3 = require('../utils/s3Upload');  
+const uploadToS3 = require('../utils/s3Upload');
 
+// ✅ weekly points (single source of truth from pointsLedger.finalPoints)
+const { getWeeklyPointsForUsers } = require('../utils/weeklyPoints');
 
+// -------------------- helpers --------------------
+const firstAvatar = (minimeArr) =>
+  Array.isArray(minimeArr) && minimeArr.length > 0
+    ? (minimeArr[0]?.avatarUrl || null)
+    : null;
+
+// -------------------- internal: ensure community chat exists & synced --------------------
 const ensureCommunityChat = async (communityId) => {
   const id = Number(communityId);
 
   const community = await prisma.community.findUnique({
     where: { id },
-    select: { name: true, imageUrl: true }, // ✅ include imageUrl
+    select: { name: true, imageUrl: true },
   });
   if (!community) throw new Error('Community not found');
 
@@ -23,7 +33,7 @@ const ensureCommunityChat = async (communityId) => {
         isCommunity: true,
         communityId: id,
         name: community.name,
-        imageUrl: community.imageUrl,   // ✅ set from community
+        imageUrl: community.imageUrl,
         users: { create: [] },
       },
     });
@@ -43,71 +53,79 @@ const ensureCommunityChat = async (communityId) => {
   return chat;
 };
 
-
-
+// -------------------- create community (+ chat) --------------------
 exports.createCommunity = async (req, res) => {
-  const { name} = req.body;
-  const creatorId = req.authData.id;
+  try {
+    const { name } = req.body;
+    const creatorId = req.authData.id;
 
-  let imageUrl = null;
-  if (req.file) {
+    let imageUrl = null;
+    if (req.file) {
+      imageUrl = await uploadToS3(req.file, 'community-images');
+    }
 
-    imageUrl = await uploadToS3(req.file, 'community-images');
+    const community = await prisma.community.create({
+      data: { name, creatorId, imageUrl },
+    });
+
+    await prisma.communityMember.create({
+      data: { userId: creatorId, communityId: community.id },
+    });
+
+    const chat = await ensureCommunityChat(community.id);
+    await prisma.userOnChat.create({
+      data: { chatId: chat.id, userId: creatorId },
+    });
+
+    res.json(community);
+  } catch (err) {
+    console.error('createCommunity error:', err);
+    res.status(500).json({ error: 'Failed to create community' });
   }
-
-  const community = await prisma.community.create({
-    data: { name, creatorId, imageUrl },
-  });
-
-  await prisma.communityMember.create({
-    data: { userId: creatorId, communityId: community.id },
-  });
-
-  const chat = await ensureCommunityChat(community.id);
-  await prisma.userOnChat.create({
-    data: { chatId: chat.id, userId: creatorId },
-  });
-
-  res.json(community);
 };
+
+// -------------------- edit community (+ sync chat name/image) --------------------
 exports.editCommunity = async (req, res) => {
-  const { communityId } = req.params;
-  const { name } = req.body;
-  const userId = req.authData.id;
+  try {
+    const { communityId } = req.params;
+    const { name } = req.body;
+    const userId = req.authData.id;
 
-  const id = Number(communityId);
-  const community = await prisma.community.findUnique({ where: { id } });
-  if (!community) return res.status(404).json({ error: 'Community not found' });
-  if (community.creatorId !== userId) return res.status(403).json({ error: 'Only creator can edit' });
+    const id = Number(communityId);
+    const community = await prisma.community.findUnique({ where: { id } });
+    if (!community) return res.status(404).json({ error: 'Community not found' });
+    if (community.creatorId !== userId) return res.status(403).json({ error: 'Only creator can edit' });
 
-  let imageUrl = community.imageUrl;
-  if (req.file) {
-    imageUrl = await uploadToS3(req.file, 'community-images');
+    let imageUrl = community.imageUrl;
+    if (req.file) {
+      imageUrl = await uploadToS3(req.file, 'community-images');
+    }
+
+    const updated = await prisma.community.update({
+      where: { id },
+      data: { name, imageUrl },
+    });
+
+    await prisma.chat.updateMany({
+      where: { communityId: id, isCommunity: true },
+      data: { name: updated.name, imageUrl: updated.imageUrl },
+    });
+
+    res.json(updated);
+  } catch (err) {
+    console.error('editCommunity error:', err);
+    res.status(500).json({ error: 'Failed to edit community' });
   }
-
-  const updated = await prisma.community.update({
-    where: { id },
-    data: { name, imageUrl },
-  });
-
-  // ✅ Sync BOTH name and imageUrl into community chat
-  await prisma.chat.updateMany({
-    where: { communityId: id, isCommunity: true },
-    data: { name: updated.name, imageUrl: updated.imageUrl },
-  });
-
-  res.json(updated);
 };
 
-
+// -------------------- list communities (with membership flags) --------------------
 exports.getAllCommunities = async (req, res) => {
   try {
-    const userId = req.authData.id; // kept if you need membership flags
+    const userId = req.authData.id;
     const q = (req.query.q || '').trim();
     const scope = String(req.query.scope || 'all').toLowerCase();
     const take = Math.min(parseInt(req.query.limit || '50', 10), 100);
     const skip = Math.max(parseInt(req.query.skip || '0', 10), 0);
-
 
     const nameFilter = q ? { name: { contains: q } } : {};
 
@@ -117,13 +135,13 @@ exports.getAllCommunities = async (req, res) => {
         where = {
           AND: [
             nameFilter,
-            { OR: [{ creatorId: userId }, { members: { some: { userId } } }] }
-          ]
+            { OR: [{ creatorId: userId }, { members: { some: { userId } } }] },
+          ],
         };
         break;
       case 'joined':
         where = {
-          AND: [nameFilter, { creatorId: { not: userId } }, { members: { some: { userId } } }]
+          AND: [nameFilter, { creatorId: { not: userId } }, { members: { some: { userId } } }],
         };
         break;
       case 'created':
@@ -142,22 +160,22 @@ exports.getAllCommunities = async (req, res) => {
           where: { userId },
           select: { joinedAt: true },
           take: 1,
-          orderBy: { joinedAt: 'desc' }
-        }
+          orderBy: { joinedAt: 'desc' },
+        },
       },
       orderBy: scope === 'all' ? { name: 'asc' } : { id: 'desc' },
       take,
-      skip
+      skip,
     });
 
-    const items = communities.map(c => ({
+    const items = communities.map((c) => ({
       id: c.id,
       name: c.name,
       imageUrl: c.imageUrl,
       membersCount: c._count.members,
       isCreator: c.creatorId === userId,
       isMember: c.members.length > 0,
-      joinedAt: c.members[0]?.joinedAt || null
+      joinedAt: c.members[0]?.joinedAt || null,
     }));
 
     return res.json({ items, scope, skip, take, count: items.length });
@@ -167,190 +185,174 @@ exports.getAllCommunities = async (req, res) => {
   }
 };
 
+// -------------------- get community chat id --------------------
 exports.getCommunityChatId = async (req, res) => {
-  const { communityId } = req.params;
-  const chat = await prisma.chat.findFirst({
-    where: { communityId: parseInt(communityId), isCommunity: true },
-  });
+  try {
+    const { communityId } = req.params;
+    const chat = await prisma.chat.findFirst({
+      where: { communityId: parseInt(communityId, 10), isCommunity: true },
+    });
 
-  if (!chat) return res.status(404).json({ error: 'Community chat not found' });
-  res.json({ chatId: chat.id });
+    if (!chat) return res.status(404).json({ error: 'Community chat not found' });
+    res.json({ chatId: chat.id });
+  } catch (err) {
+    console.error('getCommunityChatId error:', err);
+    res.status(500).json({ error: 'Failed to fetch chat id' });
+  }
 };
+
+// -------------------- get community details (with members + weekly points via ledger) --------------------
 exports.getCommunityDetails = async (req, res) => {
-  const { communityId } = req.params;
-  const community = await prisma.community.findUnique({
-    where: { id: parseInt(communityId) },
-    select: {
-      id: true,
-      name: true,
-    
-      imageUrl: true,
-    }
-  });
+  try {
+    const { communityId } = req.params;
 
-  if (!community) return res.status(404).json({ error: 'Community not found' });
+    const community = await prisma.community.findUnique({
+      where: { id: parseInt(communityId, 10) },
+      select: { id: true, name: true, imageUrl: true },
+    });
+    if (!community) return res.status(404).json({ error: 'Community not found' });
 
-  const members = await prisma.communityMember.findMany({
-    where: { communityId: parseInt(communityId) },
-    include: {
-      user: {
-        select: {
-          id: true,
-          username: true,
-          firstName: true,
-          lastName: true,
-          bio: true,
-          totalPoints: true,
-          minime: {
-  select: { avatarUrl: true },
-  where: { isSaved: true } ,
-          orderBy: { updatedAt: 'desc' }
-}
-
+    const members = await prisma.communityMember.findMany({
+      where: { communityId: parseInt(communityId, 10) },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            bio: true,
+            totalPoints: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+            },
+          },
         },
       },
-    },
-    orderBy: { joinedAt: 'asc' },
-  });
-
-  const now = new Date();
-  const day = now.getDay();
-  const diff = now.getDate() - day + (day === 0 ? -6 : 1);
-  const weekStart = new Date(now.setDate(diff));
-  weekStart.setHours(0, 0, 0, 0);
-
-  const enrichedMembers = await Promise.all(members.map(async (m) => {
-    const user = m.user;
-    const submissions = await prisma.submission.findMany({
-      where: {
-        userId: user.id,
-        createdAt: { gte: weekStart },
-      },
-      include: { challenge: true },
+      orderBy: { joinedAt: 'asc' },
     });
-    const challengePoints = submissions.reduce((sum, s) => sum + (s.challenge?.points || 0), 0);
 
-    const locationPoints = await prisma.locationPoint.findMany({
-      where: {
-        userId: user.id,
-        createdAt: { gte: weekStart },
-      },
-    });
-    const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
+    // ✅ Batch weekly points for all member userIds (ledger-based)
+    const userIds = members.map((m) => m.user.id);
+    const weekMap = userIds.length ? await getWeeklyPointsForUsers(userIds) : new Map();
 
-    return {
-      id: user.id,
-      username: user.username,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      avatarUrl: user.minime?.[0]?.avatarUrl || null,
-      totalPoints: user.totalPoints,
-      thisWeekPoints: challengePoints + mapPoints,
-      profileUrl: `/api/users/${user.id}/profile`
-    };
-  }));
+    const enrichedMembers = members.map((m) => ({
+      id: m.user.id,
+      username: m.user.username,
+      firstName: m.user.firstName,
+      lastName: m.user.lastName,
+      avatarUrl: firstAvatar(m.user.minime),
+      totalPoints: m.user.totalPoints || 0,
+      thisWeekPoints: weekMap.get(m.user.id) || 0,
+      profileUrl: `/api/users/${m.user.id}/profile`,
+    }));
 
-  res.json({ ...community, members: enrichedMembers });
+    return res.json({ ...community, members: enrichedMembers });
+  } catch (err) {
+    console.error('getCommunityDetails error:', err);
+    return res.status(500).json({ error: 'Failed to fetch community details' });
+  }
 };
 
+// -------------------- join community (+ add to chat) --------------------
 exports.joinCommunity = async (req, res) => {
-  const userId = req.authData.id;
-  const { communityId } = req.body;
+  try {
+    const userId = req.authData.id;
+    const { communityId } = req.body;
+    const id = Number(communityId);
 
-  const existing = await prisma.communityMember.findFirst({ where: { userId, communityId } });
-  if (existing) return res.status(409).json({ error: 'Already a member' });
+    const existing = await prisma.communityMember.findFirst({ where: { userId, communityId: id } });
+    if (existing) return res.status(409).json({ error: 'Already a member' });
 
-  await prisma.communityMember.create({ data: { userId, communityId } });
+    await prisma.communityMember.create({ data: { userId, communityId: id } });
 
-  const chat = await ensureCommunityChat(communityId);
-  const inChat = await prisma.userOnChat.findFirst({ where: { chatId: chat.id, userId } });
-  if (!inChat) await prisma.userOnChat.create({ data: { chatId: chat.id, userId } });
+    const chat = await ensureCommunityChat(id);
+    const inChat = await prisma.userOnChat.findFirst({ where: { chatId: chat.id, userId } });
+    if (!inChat) await prisma.userOnChat.create({ data: { chatId: chat.id, userId } });
 
-  res.json({ message: 'Joined community & added to chat' });
+    res.json({ message: 'Joined community & added to chat' });
+  } catch (err) {
+    console.error('joinCommunity error:', err);
+    res.status(500).json({ error: 'Failed to join community' });
+  }
 };
+
+// -------------------- leave community (+ remove from chat) --------------------
 exports.leaveCommunity = async (req, res) => {
-try {
-const userId = req.authData.id;
-const id = Number(req.body?.communityId);
-if (!Number.isInteger(id)) {
-return res.status(400).json({ error: 'Invalid communityId' });
-}
+  try {
+    const userId = req.authData.id;
+    const id = Number(req.body?.communityId);
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: 'Invalid communityId' });
+    }
 
+    const community = await prisma.community.findUnique({
+      where: { id },
+      select: { id: true, creatorId: true },
+    });
+    if (!community) return res.status(404).json({ error: 'Community not found' });
 
-const community = await prisma.community.findUnique({
-where: { id },
-select: { id: true, creatorId: true }
-});
-if (!community) return res.status(404).json({ error: 'Community not found' });
+    // Creator cannot leave; they should delete the community instead
+    if (community.creatorId === userId) {
+      return res.status(403).json({ error: 'Creator cannot leave. Delete the community instead.' });
+    }
 
+    const membership = await prisma.communityMember.findFirst({
+      where: { userId, communityId: id },
+      select: { id: true },
+    });
+    if (!membership) {
+      return res.status(404).json({ error: 'You are not a member of this community' });
+    }
 
-// Creator cannot leave; they should delete the community instead
-if (community.creatorId === userId) {
-return res.status(403).json({ error: 'Creator cannot leave. Delete the community instead.' });
-}
+    await prisma.$transaction([
+      prisma.communityMember.delete({ where: { id: membership.id } }),
+      prisma.userOnChat.deleteMany({
+        where: { userId, chat: { communityId: id, isCommunity: true } },
+      }),
+    ]);
 
-
-const membership = await prisma.communityMember.findFirst({
-where: { userId, communityId: id },
-select: { id: true }
-});
-if (!membership) {
-return res.status(404).json({ error: 'You are not a member of this community' });
-}
-
-
-await prisma.$transaction([
-prisma.communityMember.delete({ where: { id: membership.id } }),
-prisma.userOnChat.deleteMany({
-where: { userId, chat: { communityId: id, isCommunity: true } }
-})
-]);
-
-
-return res.json({ message: 'Left community & chat' });
-} catch (err) {
-console.error('leaveCommunity error:', err);
-return res.status(500).json({ error: 'Failed to leave community' });
-}
+    return res.json({ message: 'Left community & chat' });
+  } catch (err) {
+    console.error('leaveCommunity error:', err);
+    return res.status(500).json({ error: 'Failed to leave community' });
+  }
 };
 
-
-
+// -------------------- delete community --------------------
 exports.deleteCommunity = async (req, res) => {
-try {
-const userId = req.authData.id;
-const id = Number(req.params?.communityId ?? req.body?.communityId);
-if (!Number.isInteger(id)) {
-return res.status(400).json({ error: 'Invalid communityId' });
-}
+  try {
+    const userId = req.authData.id;
+    const id = Number(req.params?.communityId ?? req.body?.communityId);
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: 'Invalid communityId' });
+    }
 
+    const community = await prisma.community.findUnique({
+      where: { id },
+      select: { id: true, creatorId: true },
+    });
+    if (!community) return res.status(404).json({ error: 'Community not found' });
 
-const community = await prisma.community.findUnique({
-where: { id },
-select: { id: true, creatorId: true }
-});
-if (!community) return res.status(404).json({ error: 'Community not found' });
+    if (community.creatorId !== userId) {
+      return res.status(403).json({ error: 'Only the creator can delete this community' });
+    }
 
+    await prisma.community.delete({ where: { id } });
 
-if (community.creatorId !== userId) {
-return res.status(403).json({ error: 'Only the creator can delete this community' });
-}
-
-
-await prisma.community.delete({ where: { id } });
-
-
-return res.json({ message: 'Community deleted' });
-} catch (err) {
-console.error('deleteCommunity error:', err);
-return res.status(500).json({ error: 'Failed to delete community' });
-}
+    return res.json({ message: 'Community deleted' });
+  } catch (err) {
+    console.error('deleteCommunity error:', err);
+    return res.status(500).json({ error: 'Failed to delete community' });
+  }
 };
 
+// -------------------- my most recent community --------------------
 exports.getMyRecentCommunities = async (req, res) => {
   try {
     const userId = req.authData.id;
-
 
     const membership = await prisma.communityMember.findFirst({
       where: { userId },
@@ -362,13 +364,12 @@ exports.getMyRecentCommunities = async (req, res) => {
             name: true,
             imageUrl: true,
             creatorId: true,
-            _count: { select: { members: true } }
-          }
-        }
-      }
+            _count: { select: { members: true } },
+          },
+        },
+      },
     });
 
- 
     if (!membership) {
       return res.json({ mostRecent: null });
     }
@@ -380,8 +381,8 @@ exports.getMyRecentCommunities = async (req, res) => {
       name: c.name,
       imageUrl: c.imageUrl || null,
       membersCount: c._count.members,
-      type: c.creatorId === userId ? 'created' : 'joined', 
-      at: membership.joinedAt
+      type: c.creatorId === userId ? 'created' : 'joined',
+      at: membership.joinedAt,
     };
 
     return res.json({ mostRecent });
@@ -391,6 +392,7 @@ exports.getMyRecentCommunities = async (req, res) => {
   }
 };
 
+// -------------------- my communities (created/joined/both) --------------------
 exports.getMyCommunities = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -412,12 +414,12 @@ exports.getMyCommunities = async (req, res) => {
           where: { userId },
           select: { joinedAt: true },
           take: 1,
-          orderBy: { joinedAt: 'desc' }
-        }
-      }
+          orderBy: { joinedAt: 'desc' },
+        },
+      },
     });
 
-    const created = createdAll.slice(skip, skip + take).map(c => ({
+    const created = createdAll.slice(skip, skip + take).map((c) => ({
       id: c.id,
       name: c.name,
       imageUrl: c.imageUrl,
@@ -425,7 +427,7 @@ exports.getMyCommunities = async (req, res) => {
       joinedAt: c.members?.[0]?.joinedAt ?? null,
       type: 'created',
       isCreator: true,
-      isMember: true
+      isMember: true,
     }));
 
     // --- Joined ---
@@ -434,16 +436,16 @@ exports.getMyCommunities = async (req, res) => {
         userId,
         community: {
           creatorId: { not: userId },
-          ...nameFilter
-        }
+          ...nameFilter,
+        },
       },
       orderBy: { joinedAt: 'desc' },
       include: {
-        community: { include: { _count: { select: { members: true } } } }
-      }
+        community: { include: { _count: { select: { members: true } } } },
+      },
     });
 
-    const joined = joinedAll.slice(skip, skip + take).map(m => ({
+    const joined = joinedAll.slice(skip, skip + take).map((m) => ({
       id: m.community.id,
       name: m.community.name,
       imageUrl: m.community.imageUrl,
@@ -451,29 +453,19 @@ exports.getMyCommunities = async (req, res) => {
       joinedAt: m.joinedAt,
       type: 'joined',
       isCreator: false,
-      isMember: true
+      isMember: true,
     }));
 
     // --- Scope logic ---
     if (scope === 'created') {
-      return res.json({
-        items: created,
-        total: createdAll.length,
-        skip,
-        take
-      });
+      return res.json({ items: created, total: createdAll.length, skip, take });
     } else if (scope === 'joined') {
-      return res.json({
-        items: joined,
-        total: joinedAll.length,
-        skip,
-        take
-      });
+      return res.json({ items: joined, total: joinedAll.length, skip, take });
     } else {
       // default: both
       return res.json({
         created: { items: created, total: createdAll.length, skip, take },
-        joined: { items: joined, total: joinedAll.length, skip, take }
+        joined: { items: joined, total: joinedAll.length, skip, take },
       });
     }
   } catch (err) {

@@ -2,21 +2,16 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-/**
- * Get Monday of the current week (00:00:00)
- */
+/* ------------------------ utils ------------------------ */
 function getStartOfWeek() {
   const now = new Date();
-  const day = now.getDay(); // Sunday = 0, Monday = 1
+  const day = now.getDay(); // Sun=0, Mon=1
   const diff = now.getDate() - day + (day === 0 ? -6 : 1);
   const monday = new Date(now.setDate(diff));
   monday.setHours(0, 0, 0, 0);
   return monday;
 }
 
-/**
- * Prize mapping
- */
 function getPrizeForRank(rank) {
   if (rank === 1) return '🥇 1st Prize';
   if (rank === 2) return '🥈 2nd Prize';
@@ -26,84 +21,94 @@ function getPrizeForRank(rank) {
   return null;
 }
 
-/**
- * Utility: Calculate points for given user IDs in the current week
- */
-async function calculateWeeklyPoints(userIds, weekStart) {
-  const pointsByUser = {};
+const firstAvatar = (minimeArr) =>
+  Array.isArray(minimeArr) && minimeArr.length > 0
+    ? (minimeArr[0]?.avatarUrl || null)
+    : null;
 
-  // Challenge submissions
-  const submissions = await prisma.submission.findMany({
+/** Sum(finalPoints) for a set of users this week -> Map<userId, points> */
+async function getWeeklyTotalsForUsers(userIds, weekStart) {
+  if (!userIds.length) return new Map();
+
+  const rows = await prisma.pointsLedger.groupBy({
+    by: ['userId'],
     where: {
       userId: { in: userIds },
-      createdAt: { gte: weekStart }
+      createdAt: { gte: weekStart },
     },
-    include: { challenge: true }
+    _sum: { finalPoints: true },
   });
 
-  for (const sub of submissions) {
-    pointsByUser[sub.userId] = (pointsByUser[sub.userId] || 0) + (sub.challenge?.points || 0);
-  }
-
-  // Location points
-  const locationPoints = await prisma.locationPoint.findMany({
-    where: {
-      userId: { in: userIds },
-      createdAt: { gte: weekStart }
-    }
-  });
-
-  for (const loc of locationPoints) {
-    pointsByUser[loc.userId] = (pointsByUser[loc.userId] || 0) + (loc.points || 0);
-  }
-
-  return pointsByUser;
+  const map = new Map();
+  for (const r of rows) map.set(r.userId, r._sum.finalPoints || 0);
+  return map;
 }
 
-
+/* ------------------------ Global Leaderboard ------------------------ */
+/**
+ * Top 50 global this week based on pointsLedger.finalPoints
+ * Note: my rank/prize is returned only if you're within the returned window (top 50).
+ */
 exports.getWeeklyGlobalLeaderboard = async (req, res) => {
   try {
     const userId = req.authData.id;
     const weekStart = getStartOfWeek();
 
-    const users = await prisma.user.findMany({
-      include: {
-        minime: {
-          where: { isSaved: true },
-          orderBy: { createdAt: 'desc' },
-          take: 1
-        }
-      }
+    // 1) Get top 50 userIds by weekly sum(finalPoints)
+    const grouped = await prisma.pointsLedger.groupBy({
+      by: ['userId'],
+      where: { createdAt: { gte: weekStart } },
+      _sum: { finalPoints: true },
+      orderBy: { _sum: { finalPoints: 'desc' } },
+      take: 50,
     });
 
-    const userIds = users.map(u => u.id);
-    const pointsByUser = await calculateWeeklyPoints(userIds, weekStart);
+    const topUserIds = grouped.map(g => g.userId);
 
-    const rawLeaderboard = users.map(user => ({
-      userId: user.id,
-      username: user.username,
-      avatarUrl: user.minime[0]?.avatarUrl || null,
-      points: pointsByUser[user.id] || 0
-    }));
+    // 2) Pull user profiles (for avatars/usernames)
+    const users = topUserIds.length
+      ? await prisma.user.findMany({
+          where: { id: { in: topUserIds } },
+          select: {
+            id: true,
+            username: true,
+            minime: {
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+              take: 1,
+              select: { avatarUrl: true },
+            },
+          },
+        })
+      : [];
 
-    // Sort & rank
-    const sorted = rawLeaderboard
-      .filter(u => u.points > 0) // Optional: only active users
-      .sort((a, b) => b.points - a.points);
+    const userMap = new Map(users.map(u => [u.id, u]));
 
-    const leaderboard = sorted.map((entry, index) => ({
-      ...entry,
-      rank: index + 1,
-      prize: getPrizeForRank(index + 1)
-    }));
+    // 3) Shape leaderboard in correct rank order
+    const leaderboard = grouped
+      .map((g, idx) => {
+        const u = userMap.get(g.userId);
+        const points = g._sum.finalPoints || 0;
+        const rank = idx + 1;
+        return {
+          userId: g.userId,
+          username: u?.username || `user_${g.userId}`,
+          avatarUrl: firstAvatar(u?.minime),
+          points,
+          rank,
+          prize: getPrizeForRank(rank),
+        };
+      })
+      .filter(e => e.points > 0);
 
-    const myInfo = leaderboard.find(u => u.userId === userId) || null;
+    // 4) My info if I’m in the top 50
+    const myInfo = leaderboard.find(e => e.userId === userId) || null;
 
-    res.json({
-      leaderboard: leaderboard.slice(0, 50),
+    return res.json({
+      leaderboard,
       myRank: myInfo?.rank || null,
       myInfo,
-      prize: myInfo?.prize || null
+      prize: myInfo?.prize || null,
     });
   } catch (error) {
     console.error('Error in getWeeklyGlobalLeaderboard:', error);
@@ -111,57 +116,77 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
   }
 };
 
+/* ------------------------ Community Leaderboard ------------------------ */
 /**
- * Leaderboard for members of a specific community
+ * Weekly leaderboard for members of a specific community.
+ * Uses pointsLedger.finalPoints; includes only users with > 0 this week.
  */
 exports.getWeeklyCommunityLeaderboard = async (req, res) => {
   try {
-    const userId = req.authData.id;
-    const communityId = parseInt(req.params.communityId);
+    const requesterId = req.authData.id;
+    const communityId = parseInt(req.params.communityId, 10);
+    if (!Number.isFinite(communityId)) {
+      return res.status(400).json({ error: 'Invalid communityId' });
+    }
     const weekStart = getStartOfWeek();
 
+    // 1) Community members (userIds)
     const members = await prisma.communityMember.findMany({
       where: { communityId },
-      include: {
-        user: {
-          include: {
-            minime: {
-              where: { isSaved: true },
-              orderBy: { createdAt: 'desc' },
-              take: 1
-            }
-          }
-        }
-      }
+      select: { userId: true },
+    });
+    const memberIds = members.map(m => m.userId);
+    if (memberIds.length === 0) {
+      return res.json({ leaderboard: [], myRank: null, myInfo: null, prize: null });
+    }
+
+    // 2) Sum(finalPoints) per member (only within this community)
+    const grouped = await prisma.pointsLedger.groupBy({
+      by: ['userId'],
+      where: { createdAt: { gte: weekStart }, userId: { in: memberIds } },
+      _sum: { finalPoints: true },
+      orderBy: { _sum: { finalPoints: 'desc' } },
     });
 
-    const userIds = members.map(m => m.userId);
-    const pointsByUser = await calculateWeeklyPoints(userIds, weekStart);
+    const users = await prisma.user.findMany({
+      where: { id: { in: grouped.map(g => g.userId) } },
+      select: {
+        id: true,
+        username: true,
+        minime: {
+          where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 1,
+          select: { avatarUrl: true },
+        },
+      },
+    });
+    const userMap = new Map(users.map(u => [u.id, u]));
 
-    const rawLeaderboard = members.map(m => ({
-      userId: m.userId,
-      username: m.user.username,
-      avatarUrl: m.user.minime[0]?.avatarUrl || null,
-      points: pointsByUser[m.userId] || 0
-    }));
-
-    const sorted = rawLeaderboard
+    // 3) Build, rank, slice (top 50)
+    const raw = grouped
+      .map((g) => ({
+        userId: g.userId,
+        username: userMap.get(g.userId)?.username || `user_${g.userId}`,
+        avatarUrl: firstAvatar(userMap.get(g.userId)?.minime),
+        points: g._sum.finalPoints || 0,
+      }))
       .filter(u => u.points > 0)
       .sort((a, b) => b.points - a.points);
 
-    const leaderboard = sorted.map((entry, index) => ({
+    const leaderboard = raw.slice(0, 50).map((entry, idx) => ({
       ...entry,
-      rank: index + 1,
-      prize: getPrizeForRank(index + 1)
+      rank: idx + 1,
+      prize: getPrizeForRank(idx + 1),
     }));
 
-    const myInfo = leaderboard.find(u => u.userId === userId) || null;
+    const myInfo = leaderboard.find(e => e.userId === requesterId) || null;
 
-    res.json({
-      leaderboard: leaderboard.slice(0, 50),
+    return res.json({
+      leaderboard,
       myRank: myInfo?.rank || null,
       myInfo,
-      prize: myInfo?.prize || null
+      prize: myInfo?.prize || null,
     });
   } catch (error) {
     console.error('Error in getWeeklyCommunityLeaderboard:', error);
@@ -169,42 +194,56 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
   }
 };
 
+/* ------------------------ Community Ranks (by total member points) ------------------------ */
 /**
- * Community ranking based on total member points
+ * Rank communities by total weekly points of their members.
+ * Implementation:
+ *  - Fetch all community memberships (communityId,userId)
+ *  - Fetch weekly sums for ALL involved userIds (single pass)
+ *  - Sum per community and rank
  */
 exports.getWeeklyCommunityRanks = async (req, res) => {
   try {
     const weekStart = getStartOfWeek();
 
+    // 1) All communities + members
     const communities = await prisma.community.findMany({
-      include: { members: { select: { userId: true } } }
+      select: { id: true, name: true, members: { select: { userId: true } } },
     });
 
-    const pointsByCommunity = [];
+    if (communities.length === 0) return res.json({ leaderboard: [] });
 
-    for (const community of communities) {
-      const memberIds = community.members.map(m => m.userId);
-      const pointsByUser = await calculateWeeklyPoints(memberIds, weekStart);
-      const total = Object.values(pointsByUser).reduce((sum, p) => sum + p, 0);
+    // 2) Unique userIds across all communities
+    const allUserIds = Array.from(
+      new Set(
+        communities.flatMap(c => c.members.map(m => m.userId))
+      )
+    );
 
-      pointsByCommunity.push({
-        communityId: community.id,
-        name: community.name,
-        points: total
-      });
-    }
+    // 3) Weekly totals for all users (single batch)
+    const totalsMap = await getWeeklyTotalsForUsers(allUserIds, weekStart);
 
-    const sorted = pointsByCommunity
-      .filter(c => c.points > 0)
+    // 4) Sum per community
+    const rows = communities.map(c => {
+      const points = c.members.reduce(
+        (sum, m) => sum + (totalsMap.get(m.userId) || 0),
+        0
+      );
+      return { communityId: c.id, name: c.name, points };
+    });
+
+    // 5) Rank (filter > 0 optional)
+    const sorted = rows
+      .filter(r => r.points > 0)
       .sort((a, b) => b.points - a.points);
 
-    const ranked = sorted.map((c, index) => ({
-      ...c,
-      rank: index + 1,
-      prize: getPrizeForRank(index + 1)
+    const leaderboard = sorted.map((r, idx) => ({
+      ...r,
+      rank: idx + 1,
+      prize: getPrizeForRank(idx + 1),
     }));
 
-    res.json({ leaderboard: ranked });
+    return res.json({ leaderboard });
   } catch (error) {
     console.error('Error in getWeeklyCommunityRanks:', error);
     res.status(500).json({ error: 'Internal server error' });

@@ -2,7 +2,7 @@
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-
+const { addPointsWithMultiplier } = require('../utils/points');
 const { OpenAI } = require('openai');
 const path = require('path');
 const multer = require('multer');
@@ -538,38 +538,33 @@ async function updateName(req, res) {
     return response.response_with_code(res, 500, 'Failed to update name');
   }
 }
-
 // POINTS
 async function getUserPoints(req, res) {
-  const targetUserId = parseInt(req.params.userId);
+  const targetUserId = parseInt(req.params.userId, 10);
 
   try {
     const user = await prisma.user.findUnique({
       where: { id: targetUserId },
       select: { id: true, username: true, totalPoints: true }
     });
-
     if (!user) return res.status(404).json({ error: 'User not found' });
 
+    // সপ্তাহের শুরু (সোমবার-ভিত্তিক)
     const now = new Date();
-    const day = now.getDay(); // Sunday = 0
+    const day = now.getDay(); // Sun=0
     const diff = now.getDate() - day + (day === 0 ? -6 : 1);
     const weekStart = new Date(now.setDate(diff));
     weekStart.setHours(0, 0, 0, 0);
 
-    const challengeSubmissions = await prisma.submission.findMany({
+    // ✅ Ledger থেকে যোগফল নাও — awarded finalPoints
+    const ledgerRows = await prisma.pointsLedger.findMany({
       where: { userId: targetUserId, createdAt: { gte: weekStart } },
-      include: { challenge: true }
+      select: { finalPoints: true }
+      // চাইলে reasons ফিল্টার করতে পারো:
+      // where: { userId: targetUserId, createdAt: { gte: weekStart }, reason: { in: ['CHALLENGE_COMPLETION','MAP_VISIT','REFERRAL_BONUS'] } }
     });
 
-    const challengePoints = challengeSubmissions.reduce((sum, s) => sum + (s.challenge.points || 0), 0);
-
-    const locationPoints = await prisma.locationPoint.findMany({
-      where: { userId: targetUserId, createdAt: { gte: weekStart } }
-    });
-
-    const mapPoints = locationPoints.reduce((sum, p) => sum + (p.points || 0), 0);
-    const thisWeekPoints = challengePoints + mapPoints;
+    const thisWeekPoints = ledgerRows.reduce((sum, r) => sum + (r.finalPoints || 0), 0);
 
     return res.json({
       userId: user.id,
@@ -582,7 +577,7 @@ async function getUserPoints(req, res) {
     res.status(500).json({ error: 'Failed to fetch points' });
   }
 }
-
+// controllers/userController.js
 async function submitForPoints(req, res) {
   const userId = req.authData.id;
   const { placeName, latitude, longitude } = req.body;
@@ -591,30 +586,39 @@ async function submitForPoints(req, res) {
 
   try {
     const mediaUrl = await uploadToS3(req.file, 'points');
-    const points = 5;
+    const basePoints = 5;
 
-    await prisma.locationPoint.create({
+    // 1) আগে locationPoint সেভ করি
+    const lp = await prisma.locationPoint.create({
       data: {
         userId,
         mediaUrl,
         placeName,
         latitude: latitude ? parseFloat(latitude) : null,
         longitude: longitude ? parseFloat(longitude) : null,
-        points
+        points: basePoints
       }
     });
 
-    await prisma.user.update({
-      where: { id: userId },
-      data: { totalPoints: { increment: points } }
-    });
+    // 2) Ledger + totalPoints — multiplier সাপোর্টেড
+    const award = await addPointsWithMultiplier(
+      userId,
+      basePoints,
+      'LOCATION_UPLOAD', // reason
+      lp.id               // refId → এই locationPoint রেকর্ডের id
+    );
 
-    res.json({ message: `You received ${points} points!`, points, mediaUrl });
+    return res.json({
+      message: `You received ${award.finalPoints} points!`,
+      points: award.finalPoints,
+      mediaUrl
+    });
   } catch (err) {
     console.error('Submit for points error:', err);
-    res.status(500).json({ error: 'Submission failed', details: err.message });
+    return res.status(500).json({ error: 'Submission failed', details: err.message });
   }
 }
+
 
 const getLevelFromPoints = (points) => {
   if (points >= 400) return { level: 20, title: 'Legendary Explorer' };
