@@ -73,3 +73,42 @@ exports.clearAll = async (req, res) => {
     res.status(500).json({ error: "Failed to clear notifications" });
   }
 };
+
+exports.getUnreadNotifications = async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    const unreadNotifications = await prisma.notification.findMany({
+      where: {
+        userId: userId,
+        isRead: false
+      },
+      include: {
+        actor: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    res.status(200).json({
+      success: true,
+      data: unreadNotifications,
+      count: unreadNotifications.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching unread notifications:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch unread notifications'
+    });
+  }
+};
