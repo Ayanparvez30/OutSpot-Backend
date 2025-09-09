@@ -226,8 +226,8 @@ exports.acceptFriendRequest = async (req, res) => {
   // 1) Find a pending request requester -> receiver
   const friendRecord = await prisma.friendship.findFirst({
     where: {
-      requesterId: fromUserId,
-      receiverId: currentUserId,
+      requesterId: requesterId,    // ✅ Changed from fromUserId
+      receiverId: receiverId,      // ✅ Changed from currentUserId
       status: "PENDING",
     },
     include: { requester: true, receiver: true },
