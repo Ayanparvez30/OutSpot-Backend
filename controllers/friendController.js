@@ -175,49 +175,95 @@ exports.sendFriendRequest = async (req, res) => {
   if (currentUserId === targetUserId) {
     return res.status(400).json({ error: "You cannot friend yourself." });
   }
-  const targetUser = await prisma.user.findUnique({
-    where: { id: targetUserId },
-  });
-  if (!targetUser) {
-    return res.status(404).json({ error: "User not found." });
-  }
-  const existing = await prisma.friendship.findFirst({
-    where: {
-      OR: [
-        { requesterId: currentUserId, receiverId: targetUserId },
-        { requesterId: targetUserId, receiverId: currentUserId },
-      ],
-    },
-  });
-  if (existing) {
-    return res
-      .status(400)
-      .json({ error: "Friend request already sent or users already friends." });
-  }
-  const blocked = await prisma.block.findFirst({
-    where: {
-      OR: [
-        { blockerId: currentUserId, blockedId: targetUserId },
-        { blockerId: targetUserId, blockedId: currentUserId },
-      ],
-    },
-  });
-  if (blocked) {
-    return res
-      .status(403)
-      .json({ error: "Cannot send request - one user has blocked the other." });
-  }
 
-  await prisma.friendship.create({
-    data: {
-      requesterId: currentUserId,
-      receiverId: targetUserId,
-      status: "PENDING",
-    },
-  });
-  return res.json({ message: "Friend request sent." });
+  try {
+    const targetUser = await prisma.user.findUnique({
+      where: { id: targetUserId },
+    });
+    if (!targetUser) {
+      return res.status(404).json({ error: "User not found." });
+    }
+
+    const existing = await prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId: currentUserId, receiverId: targetUserId },
+          { requesterId: targetUserId, receiverId: currentUserId },
+        ],
+      },
+    });
+    if (existing) {
+      return res
+        .status(400)
+        .json({ error: "Friend request already sent or users already friends." });
+    }
+
+    const blocked = await prisma.block.findFirst({
+      where: {
+        OR: [
+          { blockerId: currentUserId, blockedId: targetUserId },
+          { blockerId: targetUserId, blockedId: currentUserId },
+        ],
+      },
+    });
+    if (blocked) {
+      return res
+        .status(403)
+        .json({ error: "Cannot send request - one user has blocked the other." });
+    }
+
+    // Get current user's info for the notification
+    const currentUser = await prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+      },
+    });
+
+    // Create the friend request
+    await prisma.friendship.create({
+      data: {
+        requesterId: currentUserId,
+        receiverId: targetUserId,
+        status: "PENDING",
+      },
+    });
+
+    // Build sender's full name for notification title
+    const fullName = [currentUser.firstName, currentUser.lastName]
+      .filter(Boolean)
+      .join(" ")
+      .trim() || currentUser.username;
+
+    // Send notification to the receiver
+    try {
+      await notifyUser(
+        targetUserId,                    // recipient of the notification
+        "FRIEND_REQUEST",                // notification type
+        fullName,                        // title shows sender's FULL NAME
+        "sent you a friend request.",    // description
+        {
+          actorId: currentUserId,        // the person who sent the request
+          firstName: currentUser.firstName || "",
+          lastName: currentUser.lastName || "",
+        }
+      );
+    } catch (notificationError) {
+      console.error("Failed to send friend request notification:", notificationError);
+      // Continue with success response even if notification fails
+    }
+
+    return res.json({ message: "Friend request sent." });
+  } catch (error) {
+    console.error("Send friend request error:", error);
+    return res.status(500).json({ error: "Failed to send friend request" });
+  }
 };
-// Accept a friend request
+
+
 exports.acceptFriendRequest = async (req, res) => {
   try {
  
