@@ -9,7 +9,6 @@ const haversineMeters = (a, b) => {
   return 2 * R * Math.asin(Math.sqrt(A));
 };
 
-// UI ক্যাটাগরি ম্যাপ
 const CATEGORIES = [
   { key: 'rooftop-bars',      title: 'Rooftop Bars',      icon: '🍹', keyword: 'rooftop bar',                         type: 'bar',             points: 4 },
   { key: 'outdoor-activities',title: 'Outdoor Activities',icon: '🌳', keyword: 'park OR hiking OR outdoor activity',  type: 'tourist_attraction', points: 3 },
@@ -19,7 +18,7 @@ const CATEGORIES = [
 
 const getCategory = key => CATEGORIES.find(c => c.key === key);
 
-// ── “new” badge count: সাম্প্রতিক গল্পগুলো কাছাকাছি আছে কি না (TTL respected)
+
 async function computeNewCounts({ userId, lat, lng, radius = 2500 }) {
   const ttlMinutes = Number(
     process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
@@ -75,7 +74,7 @@ async function computeNewCounts({ userId, lat, lng, radius = 2500 }) {
   return results;
 }
 
-// GET /api/explore/home?lat&lng&radius=2500
+
 exports.getExploreHome = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -138,8 +137,6 @@ exports.getCategoryPlaces = async (req, res) => {
   }
 };
 
-// POST /api/explore/visit
-// Body: { placeId, name, latitude, longitude, mediaUrl?, categoryKey? }
 exports.recordVisit = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -154,7 +151,7 @@ exports.recordVisit = async (req, res) => {
     const cat = categoryKey ? getCategory(categoryKey) : null;
     const points = cat?.points ?? 4;
 
-    // 12h/50m anti-spam
+   
     const twelveHrsAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
     const recent = await prisma.locationPoint.findMany({
       where: { userId, createdAt: { gte: twelveHrsAgo } },
@@ -165,32 +162,39 @@ exports.recordVisit = async (req, res) => {
       if (lp.latitude == null || lp.longitude == null) return false;
       return haversineMeters(
         { lat: lp.latitude, lng: lp.longitude },
-        { lat: latitude, lng: longitude }
+        { lat: latitude,  lng: longitude }
       ) <= 50;
     });
-    if (already) return res.json({ awarded: false, reason: 'recently-visited' });
+    if (already) {
+      return res.json({ awarded: false, reason: 'recently-visited' });
+    }
 
+    
     const created = await prisma.locationPoint.create({
       data: {
         userId,
         mediaUrl: mediaUrl || '',
         placeName: name || null,
-        latitude, longitude,
+        latitude,
+        longitude,
         points
       }
     });
 
-await addPointsWithMultiplier(userId, points, 'CHALLENGE_COMPLETION', challengeId);
+    await addPointsWithMultiplier(
+      userId,
+      points,
+      'LOCATION_VISIT', 
+      created.id 
+    );
 
-
-    res.json({ awarded: true, points, id: created.id });
+    return res.json({ awarded: true, points, id: created.id });
   } catch (e) {
     console.error('recordVisit error', e);
-    res.status(500).json({ error: 'Failed to record visit' });
+    return res.status(500).json({ error: 'Failed to record visit' });
   }
 };
 
-// GET /api/explore/place/:placeId
 exports.getPlaceDetail = async (req, res) => {
   try {
     const { placeId } = req.params;
