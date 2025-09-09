@@ -214,6 +214,7 @@ model Notification {
 
 enum NotificationType {
   FRIEND_ACCEPTED
+  FRIEND_REQUEST
   NEW_CHALLENGE
 }
 
