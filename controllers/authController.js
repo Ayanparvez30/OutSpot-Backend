@@ -904,7 +904,10 @@ exports.logout = async (req, res) => {
 
     await prisma.user.update({
       where: { id: userId },
-      data: { authorization: "" }
+      data: {
+        authorization: "",
+        fcmToken: "" 
+      }
     });
 
     return response.true_status(res, {}, 'Logged out successfully');
