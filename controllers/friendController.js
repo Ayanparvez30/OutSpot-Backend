@@ -217,58 +217,74 @@ exports.sendFriendRequest = async (req, res) => {
   });
   return res.json({ message: "Friend request sent." });
 };
-
 // Accept a friend request
 exports.acceptFriendRequest = async (req, res) => {
-  const receiverId = req.authData.id;               // the user ACCEPTING (actor)
-  const requesterId = parseInt(req.params.userId, 10); // the one who SENT the request (recipient)
+  try {
+ 
+    const receiverId = req.authData.id;
 
-  // 1) Find a pending request requester -> receiver
-  const friendRecord = await prisma.friendship.findFirst({
-    where: {
-      requesterId: fromUserId,
-      receiverId: currentUserId,
-      status: "PENDING",
-    },
-    include: { requester: true, receiver: true },
-  });
+    const requesterId = parseInt(req.params.userId, 10);
 
-  if (!friendRecord) {
-    return res.status(404).json({ error: "Friend request not found." });
-  }
-
-  // 2) Accept (guard if already accepted)
-  if (friendRecord.status !== 'ACCEPTED') {
-    await prisma.friendship.update({
-      where: { id: friendRecord.id },
-      data: { status: 'ACCEPTED', acceptedAt: new Date() }
-    });
-  }
-
-  // 3) Build actor (the acceptor) full name for the title
-  const actor = friendRecord.receiver; // the one accepting = current user
-  const fullName =
-    [actor.firstName, actor.lastName].filter(Boolean).join(' ').trim() ||
-    actor.username;
-
-  // 4) Notify the original requester (recipient) with actorId
-  await notifyUser(
-    requesterId,                // recipient of the push
-    "FRIEND_ACCEPTED",
-    fullName,                   // title shows actor's name
-    "accepted your friend request.",
-    {
-      actorId: receiverId,      // critical: used to fetch actor's avatar in the list
-      friendId: receiverId,     // optional: helpful for deep links
-      firstName: actor.firstName || '',
-      lastName: actor.lastName || ''
+    if (!Number.isFinite(requesterId)) {
+      return res.status(400).json({ error: "Invalid requester user id." });
     }
-  );
+    if (receiverId === requesterId) {
+      return res.status(400).json({ error: "You cannot accept your own request." });
+    }
 
-  return res.json({ message: "Friend request accepted." });
+    const friendRecord = await prisma.friendship.findFirst({
+      where: {
+        requesterId: requesterId,
+        receiverId: receiverId,
+        status: "PENDING",
+      },
+      include: { requester: true, receiver: true },
+    });
+
+    if (!friendRecord) {
+      return res.status(404).json({ error: "Friend request not found or already handled." });
+    }
+
+    if (friendRecord.status !== "ACCEPTED") {
+      await prisma.friendship.update({
+        where: { id: friendRecord.id },
+        data: { status: "ACCEPTED", acceptedAt: new Date() },
+      });
+    }
+
+
+    const actor = friendRecord.receiver; // acceptor = current user
+    const fullName =
+      [actor.firstName, actor.lastName].filter(Boolean).join(" ").trim() ||
+      actor.username;
+
+   
+    try {
+      await notifyUser(
+        requesterId,                
+        "FRIEND_ACCEPTED",
+        fullName,                    // title shows actor's name
+        "accepted your friend request.",
+        {
+          actorId: receiverId,       // critical: to fetch actor's avatar in list
+          friendId: receiverId,      // optional: helpful for deep links
+          firstName: actor.firstName || "",
+          lastName: actor.lastName || "",
+        }
+      );
+    } catch (e) {
+  
+      console.error("notifyUser failed:", e);
+    }
+
+    return res.json({ message: "Friend request accepted." });
+  } catch (err) {
+    console.error("acceptFriendRequest error:", err);
+    return res.status(500).json({ error: "Failed to accept friend request" });
+  }
 };
 
-// Decline or cancel a friend request
+
 exports.declineFriendRequest = async (req, res) => {
   const currentUserId = req.authData.id;
   const otherUserId = parseInt(req.params.userId);
