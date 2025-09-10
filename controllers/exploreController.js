@@ -166,7 +166,7 @@ exports.recordVisit = async (req, res) => {
       ) <= 50;
     });
     if (already) {
-      return res.json({ awarded: false, reason: 'recently-visited' });
+      return res.status(201).json({ awarded: false, reason: 'recently-visited' });
     }
 
     
