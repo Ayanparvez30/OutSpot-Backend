@@ -76,7 +76,7 @@ exports.clearAll = async (req, res) => {
 
 exports.getUnreadNotifications = async (req, res) => {
   try {
-    const userId = req.user.id;
+    const userId = req.authData.id; // Changed from req.user.id to req.authData.id
 
     const unreadNotifications = await prisma.notification.findMany({
       where: {
@@ -89,7 +89,13 @@ exports.getUnreadNotifications = async (req, res) => {
             id: true,
             username: true,
             firstName: true,
-            lastName: true
+            lastName: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+              take: 1
+            }
           }
         }
       },
@@ -98,10 +104,22 @@ exports.getUnreadNotifications = async (req, res) => {
       }
     });
 
+    // Use the same enrichment format as your getNotifications function
+    const enriched = unreadNotifications.map(n => ({
+      id: n.id,
+      userId: n.userId,
+      type: n.type,
+      title: n.title,
+      description: n.description,
+      isRead: n.isRead,
+      createdAt: n.createdAt,
+      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null
+    }));
+
     res.status(200).json({
       success: true,
-      data: unreadNotifications,
-      count: unreadNotifications.length
+      data: enriched,
+      count: enriched.length
     });
 
   } catch (error) {
