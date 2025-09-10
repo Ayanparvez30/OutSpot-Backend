@@ -4,44 +4,71 @@ const prisma = new PrismaClient();
 exports.getNotifications = async (req, res) => {
   try {
     const userId = req.authData.id;
+    const { type, read } = req.query;
 
-const notifications = await prisma.notification.findMany({
-  where: { userId },
-  orderBy: { createdAt: 'desc' },
-  include: {
-    actor: {
-      select: {
-        id: true,
-        username: true,
-        firstName: true,
-        lastName: true,
-        minime: {
-          select: { avatarUrl: true },
-          where: { isSaved: true },
-          orderBy: { updatedAt: 'desc' },
-          take: 1
+    // Build dynamic where clause based on query parameters
+    let whereClause = { userId };
+
+    // Filter by read status
+    if (read === 'unread') {
+      whereClause.isRead = false;
+    } else if (read === 'read') {
+      whereClause.isRead = true;
+    }
+    // if read is not specified, get all (read and unread)
+
+    // Filter by notification type
+    if (type === 'friend_requests') {
+      whereClause.type = { in: ['FRIEND_REQUEST', 'FRIEND_ACCEPTED'] };
+    } else if (type === 'challenges') {
+      whereClause.type = { in: ['CHALLENGE_COMPLETED', 'CHALLENGE_ASSIGNED'] }; // Add your challenge notification types
+    }
+    // if type is not specified, get all types
+
+    const notifications = await prisma.notification.findMany({
+      where: whereClause,
+      orderBy: { createdAt: 'desc' },
+      include: {
+        actor: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+              take: 1
+            }
+          }
         }
       }
-    }
-  }
-});
+    });
 
-const enriched = notifications.map(n => ({
-  id: n.id,
-  userId: n.userId,
-  type: n.type,
-  title: n.title,
-  description: n.description,
-  isRead: n.isRead,
-  createdAt: n.createdAt,
-  avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null
-}));
+    const enriched = notifications.map(n => ({
+      id: n.id,
+      userId: n.userId,
+      type: n.type,
+      title: n.title,
+      description: n.description,
+      isRead: n.isRead,
+      createdAt: n.createdAt,
+      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null
+    }));
 
+    res.status(200).json({
+      success: true,
+      data: enriched,
+      count: enriched.length
+    });
 
-    res.json(enriched);
-  } catch (err) {
-    console.error("Get notifications error:", err);
-    res.status(500).json({ error: "Failed to fetch notifications" });
+  } catch (error) {
+    console.error('Error fetching notifications:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch notifications'
+    });
   }
 };
 
@@ -185,6 +212,65 @@ exports.getFriendRequestNotifications = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch friend request notifications'
+    });
+  }
+};
+
+exports.getFriendRequestsUnread = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    const unreadFriendRequestNotifications = await prisma.notification.findMany({
+      where: {
+        userId: userId,
+        type: {
+          in: ['FRIEND_REQUEST', 'FRIEND_ACCEPTED']
+        },
+        isRead: false
+      },
+      include: {
+        actor: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+              take: 1
+            }
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    const enriched = unreadFriendRequestNotifications.map(n => ({
+      id: n.id,
+      userId: n.userId,
+      type: n.type,
+      title: n.title,
+      description: n.description,
+      isRead: n.isRead,
+      createdAt: n.createdAt,
+      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: enriched,
+      count: enriched.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching unread friend request notifications:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch unread friend request notifications'
     });
   }
 };
