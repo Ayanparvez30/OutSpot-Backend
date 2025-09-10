@@ -52,7 +52,7 @@ router.post('/me/update-name', checkAuth, userController.updateName);
 
 router.get('/users/:userId/profile', checkAuth, userController.getUserProfile);
 
-router.get('/users/:userId/points', checkAuth, userController.getUserPoints);
+router.get('/users/points/:userId', checkAuth, userController.getUserPoints);
 
 router.post('/submit-for-points', checkAuth,upload.single('media'), userController.submitForPoints);
 
