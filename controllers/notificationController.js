@@ -130,3 +130,61 @@ exports.getUnreadNotifications = async (req, res) => {
     });
   }
 };
+
+exports.getFriendRequestNotifications = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    const friendRequestNotifications = await prisma.notification.findMany({
+      where: {
+        userId: userId,
+        type: {
+          in: ['FRIEND_REQUEST', 'FRIEND_ACCEPTED']
+        }
+      },
+      include: {
+        actor: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+              take: 1
+            }
+          }
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    const enriched = friendRequestNotifications.map(n => ({
+      id: n.id,
+      userId: n.userId,
+      type: n.type,
+      title: n.title,
+      description: n.description,
+      isRead: n.isRead,
+      createdAt: n.createdAt,
+      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: enriched,
+      count: enriched.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching friend request notifications:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch friend request notifications'
+    });
+  }
+};
