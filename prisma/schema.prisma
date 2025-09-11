@@ -223,6 +223,7 @@ model Chat {
   name        String?
   isGroup     Boolean      @default(false)
   isCommunity Boolean      @default(false)
+  isLocked    Boolean      @default(false)
   communityId Int?
   community   Community?   @relation(fields: [communityId], references: [id], onDelete: Cascade)
   users       UserOnChat[]

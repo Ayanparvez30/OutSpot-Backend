@@ -697,3 +697,187 @@ exports.editGroupChat = (req, res) => {
     }
   });
 };
+
+// Lock group chat (admin only) - only admins can send messages
+exports.lockGroupChat = async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const currentUserId = req.authData.id;
+
+    const chat = await prisma.chat.findUnique({
+      where: { id: parseInt(chatId, 10) },
+      include: { 
+        users: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true
+              }
+            }
+          }
+        }
+      },
+    });
+
+    if (!chat) {
+      return res.status(404).json({ message: 'Chat not found' });
+    }
+
+    if (!chat.isGroup) {
+      return res.status(400).json({ message: 'This action is only available for group chats' });
+    }
+
+    // Check if user is admin of this group
+    const userInChat = chat.users.find(u => u.userId === currentUserId);
+    if (!userInChat || userInChat.role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Only group admins can lock the chat' });
+    }
+
+    if (chat.isLocked) {
+      return res.status(400).json({ message: 'Group chat is already locked' });
+    }
+
+    // Update chat to locked status
+    const updatedChat = await prisma.chat.update({
+      where: { id: parseInt(chatId, 10) },
+      data: { isLocked: true },
+      include: {
+        users: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Emit socket event to notify all group members
+    const io = require('../utils/socket').getIO();
+    io.to(`chat_${chatId}`).emit('chatLocked', {
+      chatId: parseInt(chatId, 10),
+      isLocked: true,
+      lockedBy: {
+        id: currentUserId,
+        username: userInChat.user.username,
+        firstName: userInChat.user.firstName,
+        lastName: userInChat.user.lastName
+      },
+      message: 'Group chat has been locked by admin. Only admins can send messages.'
+    });
+
+    return res.json({ 
+      message: 'Group chat locked successfully',
+      chat: {
+        id: updatedChat.id,
+        name: updatedChat.name,
+        isGroup: updatedChat.isGroup,
+        isLocked: updatedChat.isLocked,
+        imageUrl: updatedChat.imageUrl
+      }
+    });
+  } catch (error) {
+    console.error('Error locking group chat:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Unlock group chat (admin only) - all members can send messages
+exports.unlockGroupChat = async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const currentUserId = req.authData.id;
+
+    const chat = await prisma.chat.findUnique({
+      where: { id: parseInt(chatId, 10) },
+      include: { 
+        users: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true
+              }
+            }
+          }
+        }
+      },
+    });
+
+    if (!chat) {
+      return res.status(404).json({ message: 'Chat not found' });
+    }
+
+    if (!chat.isGroup) {
+      return res.status(400).json({ message: 'This action is only available for group chats' });
+    }
+
+    // Check if user is admin of this group
+    const userInChat = chat.users.find(u => u.userId === currentUserId);
+    if (!userInChat || userInChat.role !== 'ADMIN') {
+      return res.status(403).json({ message: 'Only group admins can unlock the chat' });
+    }
+
+    if (!chat.isLocked) {
+      return res.status(400).json({ message: 'Group chat is already unlocked' });
+    }
+
+    // Update chat to unlocked status
+    const updatedChat = await prisma.chat.update({
+      where: { id: parseInt(chatId, 10) },
+      data: { isLocked: false },
+      include: {
+        users: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true
+              }
+            }
+          }
+        }
+      }
+    });
+
+    // Emit socket event to notify all group members
+    const io = require('../utils/socket').getIO();
+    io.to(`chat_${chatId}`).emit('chatUnlocked', {
+      chatId: parseInt(chatId, 10),
+      isLocked: false,
+      unlockedBy: {
+        id: currentUserId,
+        username: userInChat.user.username,
+        firstName: userInChat.user.firstName,
+        lastName: userInChat.user.lastName
+      },
+      message: 'Group chat has been unlocked by admin. All members can now send messages.'
+    });
+
+    return res.json({ 
+      message: 'Group chat unlocked successfully',
+      chat: {
+        id: updatedChat.id,
+        name: updatedChat.name,
+        isGroup: updatedChat.isGroup,
+        isLocked: updatedChat.isLocked,
+        imageUrl: updatedChat.imageUrl
+      }
+    });
+  } catch (error) {
+    console.error('Error unlocking group chat:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};

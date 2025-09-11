@@ -119,7 +119,22 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
 
         if (!chat) {
           console.log('❌ Chat not found');
+          socket.emit('messageError', { error: 'Chat not found' });
           return;
+        }
+
+        // Check if chat is locked and if user is admin
+        if (chat.isGroup && chat.isLocked) {
+          const senderInChat = chat.users.find(u => u.userId === senderId);
+          if (!senderInChat || senderInChat.role !== 'ADMIN') {
+            console.log('🔒 Chat is locked, only admins can send messages');
+            socket.emit('messageError', { 
+              error: 'This group chat is locked. Only admins can send messages.',
+              chatId,
+              isLocked: true
+            });
+            return;
+          }
         }
 
         const recipient = chat.users.find((u) => u.userId !== senderId)?.user;
@@ -135,6 +150,7 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
           });
           if (isBlocked) {
             console.log('🚫 Message blocked');
+            socket.emit('messageError', { error: 'Message blocked' });
             return;
           }
         }
@@ -154,6 +170,7 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
         });
       } catch (error) {
         console.error('❌ Error sending message:', error);
+        socket.emit('messageError', { error: 'Failed to send message' });
       }
     });
 
