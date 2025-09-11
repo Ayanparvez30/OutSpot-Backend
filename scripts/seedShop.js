@@ -196,8 +196,23 @@ async function main() {
       create: p
     });
   }
+  // ---------- POINT BUNDLES ----------
+  const bundles = [
+    { productId: 'bundle_10',  points: 10,  priceUsd: '2.00' },
+    { productId: 'bundle_50',  points: 50,  priceUsd: '3.00' },
+    { productId: 'bundle_100', points: 100, priceUsd: '5.00' },
+  ];
 
-  console.log(`✅ Shop seeded. Items: +${created} created, ~${updated} updated. Multipliers: ${products.length} upserted.`);
+  for (const b of bundles) {
+    await prisma.pointBundleProduct.upsert({
+      where: { productId: b.productId },
+      update: { points: b.points, priceUsd: b.priceUsd, isActive: true },
+      create: b
+    });
+  }
+
+   console.log(`✅ Shop seeded. Items: +${created} created, ~${updated} updated. Multipliers: ${products.length} upserted. Bundles: ${bundles.length} upserted.`);
+
 }
 
 main().finally(() => prisma.$disconnect());

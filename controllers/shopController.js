@@ -191,3 +191,91 @@ exports.equipItem = async (req, res) => {
   }
 };
 
+// ---------- POINT BUNDLES ----------
+exports.listPointBundles = async (_req, res) => {
+  try {
+    const rows = await prisma.pointBundleProduct.findMany({
+      where: { isActive: true },
+      orderBy: [{ points: 'asc' }],
+      select: { productId: true, points: true, priceUsd: true }
+    });
+    res.json({ success: true, data: rows });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to load point bundles', error: e.message });
+  }
+};
+
+/**
+ * POST /shop/bundles/purchase
+ * body: { productId: string, receiptTxId?: string }
+ * → ক্রেডিট দেয় + ledger log + purchase log
+ */
+exports.purchasePointBundle = async (req, res) => {
+  const userId = req.authData.id;
+  const { productId, receiptTxId } = req.body || {};
+  if (!productId) return res.status(400).json({ success: false, message: 'productId required' });
+
+  try {
+    const bundle = await prisma.pointBundleProduct.findUnique({ where: { productId } });
+    if (!bundle || !bundle.isActive) {
+      return res.status(404).json({ success: false, message: 'Bundle not found' });
+    }
+
+    // Optional idempotency
+    if (receiptTxId) {
+      const dup = await prisma.pointBundlePurchase.findUnique({ where: { receiptTxId } }).catch(() => null);
+      if (dup) {
+        return res.json({ success: true, message: 'Already processed', data: { totalPoints: undefined } });
+      }
+    }
+
+    const newTotal = await prisma.$transaction(async (tx) => {
+      // 1) purchase log
+      await tx.pointBundlePurchase.create({
+        data: {
+          userId,
+          productId: bundle.productId,
+          points: bundle.points,
+          priceUsd: bundle.priceUsd,
+          receiptTxId: receiptTxId || null
+        }
+      });
+
+      // 2) ledger entry
+      await tx.pointsLedger.create({
+        data: {
+          userId,
+          basePoints: bundle.points,
+          appliedMultiplier: 1,
+          finalPoints: bundle.points,
+          reason: 'POINT_BUNDLE',
+          refId: null
+        }
+      });
+
+      // 3) denorm user.totalPoints
+      const u = await tx.user.update({
+        where: { id: userId },
+        data: { totalPoints: { increment: bundle.points } },
+        select: { totalPoints: true }
+      });
+
+      return u.totalPoints;
+    });
+
+    return res.json({
+      success: true,
+      message: `+${bundle.points} points credited`,
+      data: {
+        productId: bundle.productId,
+        pointsCredited: bundle.points,
+        totalPoints: newTotal
+      }
+    });
+  } catch (e) {
+    if (e.code === 'P2002' && e.meta?.target?.includes('receiptTxId')) {
+      return res.json({ success: true, message: 'Already processed (duplicate receipt)', data: {} });
+    }
+    res.status(500).json({ success: false, message: 'Purchase failed', error: e.message });
+  }
+};
