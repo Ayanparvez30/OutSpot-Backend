@@ -71,6 +71,7 @@ model User {
   pointsLedger PointsLedger[]
   inventory UserInventory[]
   multipliers ActiveMultiplier[]
+  pointBundlePurchases PointBundlePurchase[]
 }
 
 model Minime {
@@ -479,6 +480,29 @@ model PointsLedger {
   reason     String?   // "CHALLENGE_COMPLETION", "LOCATION_UPLOAD", etc.
   refId      Int?      // optional foreign ref
   createdAt  DateTime  @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+}
+model PointBundleProduct {
+  id        Int      @id @default(autoincrement())
+  productId String   @unique          // e.g. "bundle_10", "bundle_50"
+  points    Int
+  priceUsd  Decimal  @db.Decimal(10,2)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model PointBundlePurchase {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  productId   String
+  points      Int
+  priceUsd    Decimal  @db.Decimal(10,2)
+  receiptTxId String?  @unique        // Apple/Google tx id (optional) – idempotency
+  createdAt   DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 

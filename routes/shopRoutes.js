@@ -17,5 +17,8 @@ router.post('/shop/iap/confirm', checkAuth, shop.confirmIAPPurchase);
 
 // Equip / apply owned item to current MiniMe
 router.post('/shop/equip', checkAuth, shop.equipItem);
+// Point Bundles
+router.get('/shop/bundles', checkAuth, shop.listPointBundles);
+router.post('/shop/bundles/purchase', checkAuth, shop.purchasePointBundle);
 
 module.exports = router;
