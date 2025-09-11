@@ -49,5 +49,9 @@ router.put(
   multer({ storage: multer.memoryStorage() }).single('image'),  chatController.updateGroupChat
 );
 
+// Group chat lock/unlock (admin only)
+router.put('/chats/lock/:chatId', checkAuth, chatController.lockGroupChat);
+router.put('/chats/unlock/:chatId', checkAuth, chatController.unlockGroupChat);
+
 module.exports = router; 
 
