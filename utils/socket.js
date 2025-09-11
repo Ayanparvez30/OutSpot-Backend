@@ -1,6 +1,11 @@
 // utils/socket.js
 const { Server } = require('socket.io');
 const { PrismaClient } = require('@prisma/client');
+const { 
+  subscribeToChatTopic, 
+  unsubscribeFromChatTopic, 
+  notifyNewMessage 
+} = require('./chatNotificationService');
 const prisma = new PrismaClient();
 
 let ioInstance;
@@ -57,14 +62,34 @@ function initSocket(server) {
 
 
     const userId = parseInt(socket.handshake.query?.userId || 0, 10) || null;
+    const fcmToken = socket.handshake.query?.fcmToken || null;
+    
     if (userId) {
       socket.data.userId = userId;
+      socket.data.fcmToken = fcmToken;
 
       socket.join(`user:${userId}`);
 
+      // Subscribe user to their chat topics when they connect
+      if (fcmToken) {
+        try {
+          const userChats = await prisma.userOnChat.findMany({
+            where: { userId },
+            select: { chatId: true }
+          });
+          
+          // Subscribe to all user's chat topics
+          for (const { chatId } of userChats) {
+            await subscribeToChatTopic(fcmToken, chatId);
+          }
+          console.log(`✅ User ${userId} subscribed to ${userChats.length} chat topics`);
+        } catch (error) {
+          console.error('❌ Error subscribing to chat topics:', error);
+        }
+      }
+
       const friendIds = await getFriendIds(userId);
       friendIds.forEach((fid) => {
-
         socket.join(`friendOf:${fid}`); // optional
       });
 
@@ -97,10 +122,35 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
 });
 
 
-    // --------------- CHAT EVENTS (as you had) ---------------
-    socket.on('joinChat', (chatId) => {
+    // --------------- CHAT EVENTS ---------------
+    socket.on('joinChat', async (chatId) => {
       socket.join(`chat_${chatId}`);
-      console.log(`🔵 User joined chat_${chatId}`);
+      console.log(`🔵 User ${userId} joined chat_${chatId}`);
+      
+      // Subscribe to FCM topic when joining chat
+      const fcmToken = socket.data.fcmToken;
+      if (fcmToken) {
+        try {
+          await subscribeToChatTopic(fcmToken, chatId);
+        } catch (error) {
+          console.error('❌ Error subscribing to chat topic on join:', error);
+        }
+      }
+    });
+
+    socket.on('leaveChat', async (chatId) => {
+      socket.leave(`chat_${chatId}`);
+      console.log(`🔴 User ${userId} left chat_${chatId}`);
+      
+      // Unsubscribe from FCM topic when leaving chat
+      const fcmToken = socket.data.fcmToken;
+      if (fcmToken) {
+        try {
+          await unsubscribeFromChatTopic(fcmToken, chatId);
+        } catch (error) {
+          console.error('❌ Error unsubscribing from chat topic on leave:', error);
+        }
+      }
     });
 
     socket.on('sendMessage', async (data) => {
@@ -160,6 +210,7 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
           include: { sender: true },
         });
 
+        // Emit to socket.io room
         io.to(`chat_${chatId}`).emit('newMessage', {
           id: message.id,
           content: message.content,
@@ -168,6 +219,14 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
           chatId: message.chatId,
           createdAt: message.createdAt,
         });
+
+        // Send Firebase notification to chat topic (for offline users)
+        try {
+          await notifyNewMessage(chatId, message, message.sender, chat);
+        } catch (notifError) {
+          console.error('❌ Error sending Firebase notification:', notifError);
+          // Don't fail the message sending if notification fails
+        }
       } catch (error) {
         console.error('❌ Error sending message:', error);
         socket.emit('messageError', { error: 'Failed to send message' });
