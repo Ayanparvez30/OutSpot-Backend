@@ -36,7 +36,7 @@ async function unsubscribeFromChatTopic(fcmToken, chatId) {
 }
 
 /**
- * Send new message notification to chat topic
+ * Send new message notification to chat members (excluding sender)
  * @param {number} chatId - Chat ID
  * @param {object} message - Message data
  * @param {object} sender - Sender data
@@ -44,8 +44,27 @@ async function unsubscribeFromChatTopic(fcmToken, chatId) {
  */
 async function notifyNewMessage(chatId, message, sender, chat) {
   try {
-    const topic = `chat_${chatId}`;
-    
+    // Get all chat members except the sender
+    const chatMembers = await prisma.userOnChat.findMany({
+      where: { 
+        chatId,
+        userId: { not: sender.id } // Exclude sender
+      },
+      include: {
+        user: {
+          select: { id: true, fcmToken: true }
+        }
+      }
+    });
+
+    // Filter members who have FCM tokens
+    const membersWithTokens = chatMembers.filter(member => member.user.fcmToken);
+
+    if (membersWithTokens.length === 0) {
+      console.log(`ℹ️ No members with FCM tokens found for chat ${chatId}`);
+      return;
+    }
+
     // Prepare notification data
     const notificationTitle = chat.isGroup 
       ? `${sender.username} in ${chat.name || 'Group Chat'}`
@@ -55,47 +74,57 @@ async function notifyNewMessage(chatId, message, sender, chat) {
       ? '📷 Photo' 
       : message.content || 'New message';
 
-    const fcmMessage = {
-      topic: topic,
-      notification: {
-        title: notificationTitle,
-        body: notificationBody,
-      },
-      data: {
-        type: 'new_message',
-        chatId: String(chatId),
-        messageId: String(message.id),
-        senderId: String(sender.id),
-        senderUsername: sender.username,
-        isGroup: String(chat.isGroup),
-        chatName: chat.name || '',
-        imageUrl: message.imageUrl || '',
-        timestamp: String(message.createdAt.getTime()),
-      },
-      android: {
+    // Send individual notifications to each member (excluding sender)
+    const notificationPromises = membersWithTokens.map(async (member) => {
+      const fcmMessage = {
+        token: member.user.fcmToken,
         notification: {
-          channelId: 'chat_messages',
-          priority: 'high',
-          defaultSound: true,
-          defaultVibrateTimings: true,
+          title: notificationTitle,
+          body: notificationBody,
         },
-      },
-      apns: {
-        payload: {
-          aps: {
-            alert: {
-              title: notificationTitle,
-              body: notificationBody,
-            },
-            sound: 'default',
-            badge: 1,
+        data: {
+          type: 'new_message',
+          chatId: String(chatId),
+          messageId: String(message.id),
+          senderId: String(sender.id),
+          senderUsername: sender.username,
+          isGroup: String(chat.isGroup),
+          chatName: chat.name || '',
+          imageUrl: message.imageUrl || '',
+          timestamp: String(message.createdAt.getTime()),
+        },
+        android: {
+          notification: {
+            channelId: 'chat_messages',
+            priority: 'high',
+            defaultSound: true,
+            defaultVibrateTimings: true,
           },
         },
-      },
-    };
+        apns: {
+          payload: {
+            aps: {
+              alert: {
+                title: notificationTitle,
+                body: notificationBody,
+              },
+              sound: 'default',
+              badge: 1,
+            },
+          },
+        },
+      };
 
-    await admin.messaging().send(fcmMessage);
-    console.log(`✅ New message notification sent to topic: ${topic}`);
+      try {
+        await admin.messaging().send(fcmMessage);
+        console.log(`✅ Message notification sent to user ${member.user.id}`);
+      } catch (error) {
+        console.error(`❌ Failed to send notification to user ${member.user.id}:`, error);
+      }
+    });
+
+    await Promise.allSettled(notificationPromises);
+    console.log(`✅ New message notifications sent to ${membersWithTokens.length} members (excluding sender)`);
   } catch (error) {
     console.error('❌ Error sending new message notification:', error);
     throw error;
