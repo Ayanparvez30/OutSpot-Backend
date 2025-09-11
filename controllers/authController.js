@@ -4,7 +4,6 @@ const crypto = require('crypto');
 const sendEmail = require('../utils/sendEmail');
 const { hashPassword, comparePassword, randomKey, generateOTP } = require('../utils/helper');
 const { verifyFirebaseIdToken } = require('../utils/firebaseVerify');
-const { subscribeToChatTopic } = require('../utils/chatNotificationService');
 const response = require('../functions/response');
 require('dotenv').config();
 const nodemailer = require('nodemailer');
@@ -1023,67 +1022,12 @@ exports.updateFcmToken = async (req, res) => {
 
   if (!fcmToken) return res.status(400).json({ error: "FCM token required" });
 
-  try {
-    // Update FCM token in database
-    await prisma.user.update({
-      where: { id: userId },
-      data: { fcmToken }
-    });
+  await prisma.user.update({
+    where: { id: userId },
+    data: { fcmToken }
+  });
 
-    // Subscribe to all user's chat topics
-    const userChats = await prisma.userOnChat.findMany({
-      where: { userId },
-      select: { chatId: true }
-    });
-
-    // Subscribe to all chat topics
-    const subscriptionPromises = userChats.map(({ chatId }) => 
-      subscribeToChatTopic(fcmToken, chatId)
-    );
-
-    await Promise.allSettled(subscriptionPromises);
-
-    res.json({ 
-      message: "FCM token updated successfully",
-      subscribedToChats: userChats.length
-    });
-  } catch (error) {
-    console.error('Error updating FCM token:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
-};
-
-exports.subscribeToChatTopic = async (req, res) => {
-  try {
-    const userId = req.authData.id;
-    const chatId = parseInt(req.params.chatId, 10);
-
-    // Verify user is member of the chat
-    const membership = await prisma.userOnChat.findFirst({
-      where: { userId, chatId }
-    });
-
-    if (!membership) {
-      return res.status(403).json({ error: 'You are not a member of this chat' });
-    }
-
-    // Get user's FCM token
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { fcmToken: true }
-    });
-
-    if (!user?.fcmToken) {
-      return res.status(400).json({ error: 'FCM token not found. Please update your token first.' });
-    }
-
-    await subscribeToChatTopic(user.fcmToken, chatId);
-
-    res.json({ message: 'Successfully subscribed to chat notifications' });
-  } catch (error) {
-    console.error('Error subscribing to chat topic:', error);
-    res.status(500).json({ error: 'Internal server error' });
-  }
+  res.json({ message: "Token updated" });
 };
 
 exports.getMyReferral = async (req, res) => {
