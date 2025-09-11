@@ -3,6 +3,11 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const path = require('path');
 const multer = require('multer');
 const uploadToS3 = require('../utils/s3Upload');
+const { 
+  notifyNewChat, 
+  subscribeAllMembersToChatTopic,
+  handleUserLeaveChat
+} = require('../utils/chatNotificationService');
 
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
@@ -122,7 +127,35 @@ exports.createPrivateChat = async (req, res) => {
           ],
         },
       },
+      include: {
+        users: {
+          include: {
+            user: {
+              select: { id: true, username: true, fcmToken: true }
+            }
+          }
+        }
+      }
     });
+
+    // Send new chat notifications to other users (not the creator)
+    const creator = await prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: { id: true, username: true }
+    });
+
+    try {
+      // Notify other users about the new chat
+      for (const userId of UserId) {
+        await notifyNewChat(Number(userId), chat, creator);
+      }
+
+      // Subscribe all members to chat topic
+      await subscribeAllMembersToChatTopic(chat.id);
+    } catch (notifError) {
+      console.error('❌ Error sending new chat notifications:', notifError);
+      // Don't fail chat creation if notifications fail
+    }
 
     return res.json({ message: 'Chat created', chatId: chat.id });
   } catch (error) {
@@ -195,6 +228,27 @@ exports.createGroupChat = async (req, res) => {
         user: { ...u.user, avatarUrl: firstAvatar(u.user.minime) },
       })),
     };
+
+    // Send new group chat notifications to members (except creator)
+    const creator = await prisma.user.findUnique({
+      where: { id: currentUserId },
+      select: { id: true, username: true }
+    });
+
+    try {
+      // Notify other members about the new group chat
+      for (const userId of userIds) {
+        if (userId !== currentUserId) {
+          await notifyNewChat(Number(userId), created, creator);
+        }
+      }
+
+      // Subscribe all members to chat topic
+      await subscribeAllMembersToChatTopic(created.id);
+    } catch (notifError) {
+      console.error('❌ Error sending group chat notifications:', notifError);
+      // Don't fail chat creation if notifications fail
+    }
 
     return res.json({ message: 'Group chat created', chat });
   } catch (error) {
@@ -525,6 +579,34 @@ exports.addUsersToGroup = async (req, res) => {
     },
   });
 
+  // Send notifications to newly added users
+  const creator = await prisma.user.findUnique({
+    where: { id: currentUserId },
+    select: { id: true, username: true }
+  });
+
+  try {
+    // Notify newly added users
+    for (const userId of toAdd) {
+      await notifyNewChat(userId, chat, creator);
+    }
+
+    // Subscribe new members to chat topic
+    const newMembers = await prisma.user.findMany({
+      where: { id: { in: toAdd } },
+      select: { fcmToken: true }
+    });
+    
+    const { subscribeToChatTopic } = require('../utils/chatNotificationService');
+    for (const member of newMembers) {
+      if (member.fcmToken) {
+        await subscribeToChatTopic(member.fcmToken, chat.id);
+      }
+    }
+  } catch (notifError) {
+    console.error('❌ Error sending notifications to new members:', notifError);
+  }
+
   return res.json({ message: 'Users added to the group chat' });
 };
 
@@ -579,6 +661,12 @@ exports.leaveGroup = async (req, res) => {
   const myRow = chat.users.find(u => u.userId === currentUserId);
   if (!myRow) return res.status(403).json({ message: 'You are not in this group' });
 
+  // Get user's FCM token for unsubscription
+  const user = await prisma.user.findUnique({
+    where: { id: currentUserId },
+    select: { fcmToken: true }
+  });
+
   const otherUsers = chat.users.filter(u => u.userId !== currentUserId);
   const adminCount = chat.users.filter(u => u.role === 'ADMIN').length;
 
@@ -595,6 +683,15 @@ exports.leaveGroup = async (req, res) => {
 
     await tx.userOnChat.delete({ where: { id: myRow.id } });
   });
+
+  // Unsubscribe from FCM topic
+  try {
+    if (user?.fcmToken) {
+      await handleUserLeaveChat(user.fcmToken, chat.id);
+    }
+  } catch (notifError) {
+    console.error('❌ Error unsubscribing from chat topic:', notifError);
+  }
 
   return res.json({ message: 'You left the group.' });
 };

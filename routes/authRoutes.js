@@ -71,4 +71,7 @@ router.delete('/me/delete', checkAuth, userController.deleteAccount);
 
 router.post('/me/fcm-token', checkAuth, authController.updateFcmToken);
 
+// Subscribe to specific chat topic  
+router.post('/chat/:chatId/subscribe', checkAuth, authController.subscribeToChatTopic);
+
 module.exports = router;
