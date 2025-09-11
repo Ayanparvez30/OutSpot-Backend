@@ -29,15 +29,17 @@ const socket = io('your-server-url', {
 
 ### New Socket Events
 ```javascript
-// Join a chat (subscribes to FCM topic)
+// Join a chat (subscribes to FCM topic for chat management)
 socket.emit('joinChat', chatId);
 
-// Leave a chat (unsubscribes from FCM topic)
+// Leave a chat (unsubscribes from FCM topic for chat management)
 socket.emit('leaveChat', chatId);
 
 // Mark messages as read (existing)
 socket.emit('markAsRead', { chatId, lastSeenMessageId });
 ```
+
+**Note**: Topics are used for chat management (new members, etc.) but message notifications are sent individually to prevent senders from getting their own notifications.
 
 ## API Endpoints
 
@@ -254,6 +256,21 @@ FirebaseMessaging.instance.onTokenRefresh.listen((newToken) {
 - Only show notifications when user is not actively viewing the chat
 - Clear notifications when user reads messages
 - Use local notification IDs based on chatId for proper grouping
+- **Important**: Senders don't receive notifications for their own messages
+
+## How The System Works
+
+### Message Flow:
+1. **User sends message** → Real-time via Socket.IO to online users
+2. **For offline users** → Individual FCM notifications sent to each recipient (excluding sender)
+3. **New chat created** → Direct FCM notification to added users
+4. **User joins/leaves chat** → Auto-manage FCM topic subscriptions for chat management
+
+### Key Behavior:
+- **Message notifications**: Sent individually to prevent sender self-notifications
+- **Chat management**: Uses Firebase topics for efficiency
+- **Real-time updates**: Socket.IO for immediate delivery to online users
+- **Offline support**: FCM push notifications for offline users
 
 ### 2. Topic Subscription
 - Automatically subscribe to chat topics when Socket.IO connects
