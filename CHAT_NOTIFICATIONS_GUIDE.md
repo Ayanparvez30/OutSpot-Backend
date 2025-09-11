@@ -1,17 +1,15 @@
 # Real-time Chat Notifications Implementation Guide
 
 ## Overview
-This implementation provides real-time chat notifications using Firebase Cloud Messaging (FCM) and Socket.IO for your Flutter app. The system sends notifications for:
-- New chat messages (sent individually to recipients, excluding sender)
+This implementation provides real-time chat notifications using Firebase Cloud Messaging (FCM) with topics and Socket.IO for your Flutter app. The system sends notifications for:
+- New chat messages (while user is offline or not actively viewing the chat)
 - New chat creation (private and group chats)
 - Being added to group chats
 
 ## Firebase Topics Structure
-Firebase topics are used for:
-- **New chat notifications**: When users are added to chats
-- **Group management**: When users join/leave groups
-
-**Note**: Message notifications are sent individually to each recipient (excluding the sender) to prevent senders from receiving notifications for their own messages.
+Each chat gets its own Firebase topic: `chat_{chatId}`
+- Example: Chat with ID 123 → Topic: `chat_123`
+- Users are automatically subscribed/unsubscribed when joining/leaving chats
 
 ## Socket.IO Integration
 
