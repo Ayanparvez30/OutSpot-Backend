@@ -383,40 +383,195 @@ exports.getFilteredChallenges = async (req, res) => {
 
   return res.json({ items });
 };
-
-// ------------------ Legacy helpers ------------------
+// ------------------ Legacy helpers (UPDATED) ------------------
 exports.getSubmissions = async (req, res) => {
-  const { challengeId } = req.params;
-  const userId = req.authData.id;
+  try {
+    const me = req.authData.id;
+    const challengeId = parseInt(req.params.challengeId, 10);
+    if (!Number.isFinite(challengeId)) {
+      return res.status(400).json({ error: 'Invalid challengeId' });
+    }
 
-  const others = await prisma.submission.findMany({
-    where: { challengeId: parseInt(challengeId, 10), NOT: { userId } },
-    include: {
-      user: {
-        select: {
-          id: true, username: true,
-          minime: {
-            where: { isSaved: true },
-            orderBy: { updatedAt: 'desc' },
-            select: { avatarUrl: true },
-            take: 1
+    // 1) challenge + window (daily/week)
+    const challenge = await prisma.challenge.findUnique({
+      where: { id: challengeId },
+      select: { id: true, frequency: true, requiredPhotos: true, points: true },
+    });
+    if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
+
+    const zone = currentZone(req);
+    const now = new Date();
+    const window =
+      challenge.frequency === 'DAILY'
+        ? { startUTC: startOfDayInZone(now, zone), endUTC: endOfDayInZone(now, zone) }
+        : getWeekStartEndInZone(now, zone);
+    const required = challenge.requiredPhotos || 1;
+
+    // 2) this window-এর সব submissions (others only), সাথে basic user info
+    const subs = await prisma.submission.findMany({
+      where: {
+        challengeId: challenge.id,
+        userId: { not: me },
+        createdAt: { gte: window.startUTC, lte: window.endUTC },
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            totalPoints: true,
+            minime: {
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+              select: { avatarUrl: true },
+              take: 1,
+            },
           },
         },
       },
-    },
-    orderBy: { createdAt: 'desc' },
-  });
+    });
 
-  // avatarUrl অ্যারে-সেইফ করে রিটার্ন
-  const shaped = others.map(s => ({
-    ...s,
-    user: {
-      ...s.user,
-      avatarUrl: firstAvatar(s.user?.minime),
+    // 3) per-user aggregate
+    const perUserCount = new Map();
+    const perUserInfo = new Map();
+    for (const s of subs) {
+      const u = s.user;
+      if (!u) continue;
+      perUserInfo.set(u.id, u);
+      perUserCount.set(u.id, (perUserCount.get(u.id) || 0) + 1);
     }
-  }));
+    const submitterIds = Array.from(perUserInfo.keys());
+    if (!submitterIds.length) return res.json({ items: [] });
 
-  res.json(shaped);
+    // 4) earnedPoints (this window, this challenge only) — ledger থেকে
+    const ledgerRows = await prisma.pointsLedger.findMany({
+      where: {
+        userId: { in: submitterIds },
+        createdAt: { gte: window.startUTC, lte: window.endUTC },
+        reason: 'CHALLENGE_COMPLETION',
+        refId: challenge.id,
+      },
+      select: { userId: true, finalPoints: true },
+    });
+    const earnedByUser = ledgerRows.reduce((m, r) => {
+      m.set(r.userId, (m.get(r.userId) || 0) + (r.finalPoints || 0));
+      return m;
+    }, new Map());
+
+    // 5) weeklyPoints (batch helper)
+    const { getWeeklyPointsForUsers } = require('../utils/weeklyPoints');
+    const weekMapRaw = await getWeeklyPointsForUsers(submitterIds);
+    // normalize Map
+    const weekMap =
+      weekMapRaw instanceof Map
+        ? weekMapRaw
+        : new Map(Object.entries(weekMapRaw || {}).map(([k, v]) => [Number(k), Number(v) || 0]));
+
+    // friends
+    const friendRows = await prisma.friendship.findMany({
+      where: {
+        status: 'ACCEPTED',
+        OR: [
+          { requesterId: me, receiverId: { in: submitterIds } },
+          { receiverId: me, requesterId: { in: submitterIds } },
+        ],
+      },
+      select: { requesterId: true, receiverId: true },
+    });
+    const friendSet = new Set(
+      friendRows.map((r) => (r.requesterId === me ? r.receiverId : r.requesterId))
+    );
+
+   
+    const myComms = await prisma.communityMember.findMany({
+      where: { userId: me },
+      include: { community: { select: { id: true, name: true } } },
+    });
+    const myCommIds = myComms.map((c) => c.communityId);
+    const commNameById = new Map(myComms.map((c) => [c.communityId, c.community.name]));
+
+  
+    const sharedCommRows =
+      myCommIds.length > 0
+        ? await prisma.communityMember.findMany({
+            where: { userId: { in: submitterIds }, communityId: { in: myCommIds } },
+            select: { userId: true, communityId: true },
+          })
+        : [];
+    const sharedCommunitiesByUser = new Map();
+    for (const row of sharedCommRows) {
+      const list = sharedCommunitiesByUser.get(row.userId) || [];
+      const name = commNameById.get(row.communityId);
+      if (name && !list.includes(name)) list.push(name);
+      sharedCommunitiesByUser.set(row.userId, list);
+    }
+
+    const myGroups = await prisma.userOnChat.findMany({
+      where: { userId: me, chat: { isGroup: true, isCommunity: false } },
+      include: { chat: { select: { id: true, name: true } } },
+    });
+    const myGroupIds = myGroups.map((g) => g.chatId);
+    const groupNameById = new Map(myGroups.map((g) => [g.chatId, g.chat.name || 'Group']));
+
+    
+    const sharedGroupRows =
+      myGroupIds.length > 0
+        ? await prisma.userOnChat.findMany({
+            where: { userId: { in: submitterIds }, chatId: { in: myGroupIds } },
+            select: { userId: true, chatId: true },
+          })
+        : [];
+    const sharedGroupsByUser = new Map();
+    for (const row of sharedGroupRows) {
+      const list = sharedGroupsByUser.get(row.userId) || [];
+      const gname = groupNameById.get(row.chatId);
+      if (gname && !list.includes(gname)) list.push(gname);
+      sharedGroupsByUser.set(row.userId, list);
+    }
+
+    const buildBadges = (uid) => {
+      const badges = [];
+      if (friendSet.has(uid)) badges.push('Friend');
+      const comms = (sharedCommunitiesByUser.get(uid) || []).slice(0, 2);
+      const groups = (sharedGroupsByUser.get(uid) || []).slice(0, 2);
+      return [...badges, ...comms, ...groups]; 
+    };
+
+    const items = submitterIds
+      .map((uid) => {
+        const u = perUserInfo.get(uid);
+        const uploadedCount = perUserCount.get(uid) || 0;
+        return {
+          userId: uid,
+          username: u?.username || '',
+          avatarUrl: firstAvatar(u?.minime),
+          uploadedCount,
+          completed: uploadedCount >= required,
+          earnedPoints: earnedByUser.get(uid) ?? 0,
+          weeklyPoints: weekMap.get(uid) ?? 0,
+          totalPoints: u?.totalPoints ?? 0,
+          relationship: {
+            isFriend: friendSet.has(uid),
+            sharedCommunities: sharedCommunitiesByUser.get(uid) || [],
+            sharedGroups: sharedGroupsByUser.get(uid) || [],
+            badges: buildBadges(uid),
+          },
+        };
+      })
+    
+      .sort(
+        (a, b) =>
+          (b.completed - a.completed) ||
+          (b.weeklyPoints - a.weeklyPoints) ||
+          String(a.username).localeCompare(String(b.username))
+      )
+      .slice(0, 100);
+
+    return res.json({ items, requiredCount: required });
+  } catch (err) {
+    console.error('getSubmissions (updated) error:', err);
+    return res.status(500).json({ error: 'Failed to fetch submissions' });
+  }
 };
 
 exports.getMySubmission = async (req, res) => {
