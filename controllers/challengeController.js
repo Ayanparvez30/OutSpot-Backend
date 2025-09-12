@@ -219,13 +219,12 @@ async function getFull(req, res, frequency) {
     timeRemainingMs: timeRemainingMs(frequency, zone, now),
     windowKey,
     zone,
-    thisWeekPoints,          // ✅ added for convenience in UI
+    thisWeekPoints,      
     othersCompleted
   });
 }
 exports.getDailyChallenge  = (req, res) => getFull(req, res, 'DAILY');
 exports.getWeeklyChallenge = (req, res) => getFull(req, res, 'WEEKLY');
-
 // ------------------ Submit to a challenge ------------------
 exports.submitToChallenge = async (req, res) => {
   const userId = req.authData.id;
@@ -250,49 +249,77 @@ exports.submitToChallenge = async (req, res) => {
 
     const windowKey = `${frequency}:${frequency === 'DAILY' ? dateKeyInZone(now, zone) : weekKeyInZone(now, zone)}`;
 
-    // already completed in window?
+    const required = challenge.requiredPhotos || 1;
+
+
     const existingCount = await prisma.submission.count({
       where: { userId, challengeId: challenge.id, createdAt: { gte: window.startUTC, lte: window.endUTC } },
     });
-    const required = challenge.requiredPhotos || 1;
-    if (existingCount >= required) return res.status(409).json({ error: 'Challenge already completed' });
+    if (existingCount >= required) {
+      return res.status(409).json({ error: 'Challenge already completed (upload limit reached)' });
+    }
 
-    // S3 upload (outside tx)
     const s3Url = await uploadToS3(req.file, 'challenge-submissions');
 
-    // Transactional save + award
-    const result = await prisma.$transaction(async (tx) => {
-      const submission = await tx.submission.create({
-        data: { userId, challengeId: challenge.id, mediaUrl: s3Url }
-      });
-
-      const newCount = await tx.submission.count({
-        where: { userId, challengeId: challenge.id, createdAt: { gte: window.startUTC, lte: window.endUTC } },
-      });
-
-      let awarded = false;
-      if (newCount >= required) {
-        try {
-          await tx.challengeCompletion.create({ data: { userId, challengeId: challenge.id, windowKey } });
-          await addPointsWithMultiplier(userId, challenge.points, 'CHALLENGE_COMPLETION', challenge.id, tx);
-          awarded = true;
-        } catch (_) {
-          // unique constraint হলে ignore (already awarded)
+    try {
+      const result = await prisma.$transaction(async (tx) => {
+  
+        const countBefore = await tx.submission.count({
+          where: { userId, challengeId: challenge.id, createdAt: { gte: window.startUTC, lte: window.endUTC } },
+        });
+        if (countBefore >= required) {
+          // someone else completed in parallel
+          const err = new Error('LIMIT_REACHED');
+          err.code = 'LIMIT_REACHED';
+          throw err;
         }
+
+
+        const submission = await tx.submission.create({
+          data: { userId, challengeId: challenge.id, mediaUrl: s3Url }
+        });
+
+        const newCount = await tx.submission.count({
+          where: { userId, challengeId: challenge.id, createdAt: { gte: window.startUTC, lte: window.endUTC } },
+        });
+
+        if (newCount > required) {
+          // went over the cap due to a concurrent insert — rollback the whole tx
+          const err = new Error('LIMIT_REACHED_AFTER_INSERT');
+          err.code = 'LIMIT_REACHED';
+          throw err;
+        }
+
+        let awarded = false;
+        if (newCount === required) {
+          try {
+            await tx.challengeCompletion.create({ data: { userId, challengeId: challenge.id, windowKey } });
+            await addPointsWithMultiplier(userId, challenge.points, 'CHALLENGE_COMPLETION', challenge.id, tx);
+            awarded = true;
+          } catch (_) {
+       
+          }
+        }
+
+        return { submission, newCount, awarded };
+      }, { timeout: 15000 });
+
+      return res.json({
+        message: 'Submission saved',
+        submission: result.submission,
+        uploadedCount: result.newCount,
+        requiredCount: required,
+        isCompleted: result.newCount >= required,
+        pointsAwarded: result.awarded ? challenge.points : 0,
+        tier: challenge.tier,
+      });
+    } catch (txErr) {
+      if (txErr && txErr.code === 'LIMIT_REACHED') {
+    
+        return res.status(409).json({ error: 'Challenge already completed (upload limit reached)' });
       }
-
-      return { submission, newCount, awarded };
-    }, { timeout: 15000 });
-
-    res.json({
-      message: 'Submission saved',
-      submission: result.submission,
-      uploadedCount: result.newCount,
-      requiredCount: required,
-      isCompleted: result.newCount >= required,
-      pointsAwarded: result.awarded ? challenge.points : 0, // নোট: multiplier সহ real ledger value client চাইলে আলাদা API দিয়ে টানা যাবে
-      tier: challenge.tier,
-    });
+      throw txErr;
+    }
   } catch (err) {
     console.error('Submit error:', err);
     res.status(500).json({ error: 'Failed to submit', details: err.message });
