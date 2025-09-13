@@ -2,14 +2,10 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { verifyApple, verifyGoogle } = require('../utils/iapVerify');
 const { applyClothingToCurrentMinime } = require('../utils/minimeLoadout');
-
+const { renderCurrentMinime } = require('../utils/minimeGen');
 const VALID_SLOTS = ['TOP','BOTTOM','SHOES','GLASSES','ACCESSORY'];
 
-/**
- * QUICK PREVIEW (no DB writes)
- * body: { slot, imageUrl, name?, payload? }
- * -> শুধু current draft MiniMe তে ফিল্ড বসায় (save করে না, inventory/tables ছোঁয় না)
- */
+
 exports.previewCustomOutfit = async (req, res) => {
   const userId = req.authData.id;
   const { slot, imageUrl, name, payload } = req.body || {};
@@ -21,123 +17,196 @@ exports.previewCustomOutfit = async (req, res) => {
     return res.status(400).json({ success: false, message: 'Valid imageUrl required' });
   }
 
-  // Draft MiniMe নাও/তৈরি করো
   let mm = await prisma.minime.findFirst({
-    where: { userId },
-    orderBy: { createdAt: 'desc' }
+    where: { userId, isDraft: true, isSaved: false },
+    orderBy: { createdAt: 'desc' },
   });
   if (!mm) {
-    mm = await prisma.minime.create({ data: { userId, isSaved: false, isDraft: true } });
+    
+    const saved = await prisma.minime.findFirst({
+      where: { userId, isSaved: true },
+      orderBy: { createdAt: 'desc' },
+    });
+    const base = saved ? {
+      shirt: saved.shirt,
+      pant: saved.pant,
+      shoes: saved.shoes,
+      glasses: saved.glasses,
+      lipstick: saved.lipstick,
+      jewelry: saved.jewelry,
+      bag: saved.bag,
+      selfieUrl: saved.selfieUrl ?? null,
+    } : {};
+    mm = await prisma.minime.create({
+      data: { userId, ...base, isSaved: false, isDraft: true },
+    });
   }
 
+  // পছন্দের স্লটে প্রিভিউ ভ্যালু বসাও (payload > imageUrl > name)
   const data = {};
-  // payload থাকলে আগে সেটা, না থাকলে imageUrl কে ভ্যালু হিসেবে বসাও
   switch (slot) {
     case 'TOP':       data.shirt   = payload?.shirt   || imageUrl || name || 'Custom Top'; break;
     case 'BOTTOM':    data.pant    = payload?.pant    || imageUrl || name || 'Custom Bottom'; break;
     case 'SHOES':     data.shoes   = payload?.shoes   || imageUrl || name || 'Custom Shoes'; break;
     case 'GLASSES':   data.glasses = payload?.glasses || imageUrl || name || 'Custom Glasses'; break;
     case 'ACCESSORY': {
-      if (payload?.bag)       data.bag = payload.bag;
-      else if (payload?.watch) data.jewelry = payload.watch;
+      if (payload?.bag)          data.bag = payload.bag;
+      else if (payload?.watch)   data.jewelry = payload.watch;
       else if (payload?.jewelry) data.jewelry = payload.jewelry;
-      else data.jewelry = imageUrl || name || 'Custom Accessory';
+      else                       data.jewelry = imageUrl || name || 'Custom Accessory';
       break;
     }
   }
 
   await prisma.minime.update({ where: { id: mm.id }, data });
 
-  const latest = await prisma.minime.findUnique({ where: { id: mm.id } });
-  return res.json({ success: true, message: 'Preview applied', data: { minime: latest } });
+  // ✅ রেন্ডার কলে টার্গেট মিনিমে আইডি পাঠাও—saved কখনো স্পর্শ হবে না
+  try {
+    const rendered = await renderCurrentMinime(userId, { targetMinimeId: mm.id });
+    return res.json({
+      success: true,
+      message: 'Preview applied & rendered',
+      data: { minime: rendered },
+    });
+  } catch (e) {
+    console.error('preview render error:', e);
+    const latest = await prisma.minime.findUnique({ where: { id: mm.id } });
+    return res.json({
+      success: true,
+      message: 'Preview applied (render failed; showing draft fields)',
+      data: { minime: latest },
+      error: e.message,
+    });
+  }
 };
-/**
- * QUICK BUY (create ad-hoc ShopItem if needed, add to inventory, optionally equip)
- * body: { slot, imageUrl, name?, brand?, priceUsd?, payload?, applyNow?: boolean }
- */
-exports.quickBuyCustomItem = async (req, res) => {
+exports.quickBuyFromPreview = async (req, res) => {
   const userId = req.authData.id;
   const {
     slot,
-    imageUrl,
-    name,
-    brand,
-    priceUsd = '3.00',
-    payload,
-    applyNow = true
+    name,               
+    brand,            
+    priceUsd = '3.00',  
+    equip = true       
   } = req.body || {};
 
-  if (!VALID_SLOTS.includes(slot)) {
-    return res.status(400).json({ success: false, message: 'Invalid slot' });
-  }
-  if (!imageUrl || !imageUrl.startsWith('http')) {
-    return res.status(400).json({ success: false, message: 'Valid imageUrl required' });
-  }
-
-  // unique নাম বানাও
-  const baseName = (name && String(name).trim()) || `Custom ${slot}`;
-  const safeName = baseName; // এবার timestamp দরকার নাই, কারণ reuse করব
-
-  // আগেই আছে কিনা চেক করো
-  let item = await prisma.shopItem.findFirst({
-    where: { slot, name: safeName }
-  });
-
-  // না থাকলে create করো
-  if (!item) {
-    item = await prisma.shopItem.create({
-      data: {
-        slot,
-        name: safeName,
-        brand: brand || 'Custom',
-        imageUrl,
-        priceUsd,
-        payload,
-        isFeatured: false
-      }
-    });
-  }
-
-  // ইনভেন্টরিতে grant করো
-  const inv = await prisma.userInventory.upsert({
-    where: { userId_itemId: { userId, itemId: item.id } },
-    update: {},
-    create: { userId, itemId: item.id, equipped: false }
-  });
-
-  let minime = null;
-
-  if (applyNow) {
-    // একই slot এর পুরোনোগুলো unequip করো
-    const owned = await prisma.userInventory.findMany({
-      where: { userId },
-      include: { item: true }
-    });
-    const toUnequip = owned.filter(
-      (r) => r.item.slot === slot && r.equipped && r.itemId !== item.id
-    );
-    for (const r of toUnequip) {
-      await prisma.userInventory.update({ where: { id: r.id }, data: { equipped: false } });
+  try {
+    if (!VALID_SLOTS.includes(slot)) {
+      return res.status(400).json({ success: false, message: 'Invalid slot' });
     }
 
-    // নতুনটাকে equip করো
-    await prisma.userInventory.update({ where: { id: inv.id }, data: { equipped: true } });
-    await applyClothingToCurrentMinime(userId, item);
-
-    // সর্বশেষ Minime নিয়ে আসো
-    minime = await prisma.minime.findFirst({
+    const mm = await prisma.minime.findFirst({
       where: { userId },
       orderBy: { createdAt: 'desc' }
     });
+    if (!mm) {
+      return res.status(400).json({ success: false, message: 'No preview/draft found. Call /shop/custom/preview first.' });
+    }
+
+    let valueUrlOrName = null;
+    let payload = {};
+    switch (slot) {
+      case 'TOP':
+        valueUrlOrName = mm.shirt;
+        payload = { shirt: mm.shirt };
+        break;
+      case 'BOTTOM':
+        valueUrlOrName = mm.pant;
+        payload = { pant: mm.pant };
+        break;
+      case 'SHOES':
+        valueUrlOrName = mm.shoes;
+        payload = { shoes: mm.shoes };
+        break;
+      case 'GLASSES':
+        valueUrlOrName = mm.glasses;
+        payload = { glasses: mm.glasses };
+        break;
+      case 'ACCESSORY':
+        // priority: bag -> watch(jewelry) -> jewelry (string/url)
+        if (mm.bag)        { valueUrlOrName = mm.bag;        payload = { bag: mm.bag }; }
+        else if (mm.jewelry && typeof mm.jewelry === 'string' && mm.jewelry.startsWith('http')) {
+          // watch বা generic image-url jewelry
+          valueUrlOrName = mm.jewelry;
+          payload = { watch: mm.jewelry }; // wrist jewelry হিসেবে রাখলাম
+        } else if (mm.jewelry) {
+          valueUrlOrName = mm.jewelry;
+          payload = { jewelry: mm.jewelry };
+        }
+        break;
+    }
+
+    if (!valueUrlOrName) {
+      return res.status(400).json({ success: false, message: `Nothing to buy for slot ${slot}. Did you preview it first?` });
+    }
+
+   
+    let item = null;
+    if (typeof valueUrlOrName === 'string' && valueUrlOrName.startsWith('http')) {
+      item = await prisma.shopItem.findFirst({
+        where: { slot, imageUrl: valueUrlOrName }
+      });
+    }
+    if (!item) {
+  
+      const safeName = (name && String(name).trim())
+        ? name.trim()
+        : (
+
+            (typeof valueUrlOrName === 'string' && valueUrlOrName.startsWith('http'))
+              ? `Custom ${slot} ${valueUrlOrName.split('/').pop()?.split('?')[0] || Date.now()}`
+              : `Custom ${slot} ${Date.now()}`
+          );
+
+   
+      const existed = await prisma.shopItem.findFirst({ where: { slot, name: safeName } });
+      item = existed || await prisma.shopItem.create({
+        data: {
+          slot,
+          name: safeName,
+          brand: brand || 'Custom',
+          imageUrl: (typeof valueUrlOrName === 'string' && valueUrlOrName.startsWith('http')) ? valueUrlOrName : '',
+          priceUsd,
+          payload,
+          isFeatured: false
+        }
+      });
+    }
+
+    const inv = await prisma.userInventory.upsert({
+      where: { userId_itemId: { userId, itemId: item.id } },
+      update: {},
+      create: { userId, itemId: item.id, equipped: false }
+    });
+
+    let minime = mm;
+    if (equip) {
+
+      const owned = await prisma.userInventory.findMany({ where: { userId }, include: { item: true } });
+      const toUnequip = owned.filter(r => r.item.slot === slot && r.equipped && r.itemId !== item.id);
+      for (const r of toUnequip) {
+        await prisma.userInventory.update({ where: { id: r.id }, data: { equipped: false } });
+      }
+      await prisma.userInventory.update({ where: { id: inv.id }, data: { equipped: true } });
+
+      // MiniMe তে apply (fields already set in preview, তবু নিশ্চিত করি)
+      await applyClothingToCurrentMinime(userId, item);
+      minime = await prisma.minime.findFirst({ where: { userId }, orderBy: { createdAt: 'desc' } });
+    }
+
+    return res.json({
+      success: true,
+      message: 'Purchased from preview',
+      data: {
+        item,
+        inventory: { ...inv, equipped: !!equip },
+        minime
+      }
+    });
+  } catch (e) {
+    console.error('quickBuyFromPreview error:', e);
+    return res.status(500).json({ success: false, message: 'Quick buy failed', error: e.message });
   }
-
-  return res.json({
-    success: true,
-    message: 'Custom item purchased (reused if existed)',
-    data: { item, inventory: { ...inv, equipped: applyNow }, minime }
-  });
 };
-
 
 const toInt = (v) => Number.parseInt(v, 10);
 
@@ -301,16 +370,15 @@ exports.equipItem = async (req, res) => {
 
     await prisma.userInventory.update({ where: { id: inv.id }, data: { equipped: true } });
 
-    // Apply to current MiniMe (creates/updates latest draft)
+    
     await applyClothingToCurrentMinime(userId, inv.item);
 
-    // Get latest mini (draft or saved)
     let minime = await prisma.minime.findFirst({
       where: { userId },
       orderBy: { createdAt: 'desc' }
     });
 
-    // optional: auto-save if client asked
+    
     if (save && minime && minime.isDraft) {
       await prisma.minime.update({ where: { id: minime.id }, data: { isSaved: true, isDraft: false } });
       minime = await prisma.minime.findUnique({ where: { id: minime.id } });
@@ -326,7 +394,6 @@ exports.equipItem = async (req, res) => {
   }
 };
 
-// ---------- POINT BUNDLES ----------
 exports.listPointBundles = async (_req, res) => {
   try {
     const rows = await prisma.pointBundleProduct.findMany({
@@ -340,11 +407,7 @@ exports.listPointBundles = async (_req, res) => {
   }
 };
 
-/**
- * POST /shop/bundles/purchase
- * body: { productId: string, receiptTxId?: string }
- * → ক্রেডিট দেয় + ledger log + purchase log
- */
+
 exports.purchasePointBundle = async (req, res) => {
   const userId = req.authData.id;
   const { productId, receiptTxId } = req.body || {};
