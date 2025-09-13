@@ -4,24 +4,24 @@ const prisma = new PrismaClient();
 const { OpenAI } = require('openai');
 const uploadToS3 = require('../utils/s3Upload');
 
-
-const GLASSES_MAP = {
-  none: null,
-  'wayfarer-black': 'matte black wayfarer eyeglasses, medium-thick frame',
-  'round-gold': 'thin round gold metal eyeglasses',
-  'aviator-silver': 'thin silver aviator eyeglasses',
-  'rectangle-black': 'rectangular full-rim black eyeglasses, slim frame',
-};
-
+// ❌ পুরোনোটা URL=>description করত; আর করবেন না
 function mapGlasses(glassesKey) {
   if (!glassesKey || glassesKey === 'none') return null;
+
+  // ✅ যদি URL হয়, ঠিক যেটা এসেছে সেটা-ই রাখুন (STRICT VISUAL REF)
   if (typeof glassesKey === 'string' && glassesKey.startsWith('http')) {
-    if (glassesKey.includes('silver_square')) return 'sleek square silver metal eyeglasses, thin frame';
-    if (glassesKey.includes('black_round'))   return 'round black eyeglasses, medium frame';
-    if (glassesKey.includes('gold_round'))    return 'thin round golden eyeglasses';
-    return 'modern stylish eyeglasses';
+    return glassesKey;
   }
-  return GLASSES_MAP[glassesKey] || null;
+
+  // ✅ শুধুই predefined key হলে description ম্যাপ করুন
+  const GLASSES_MAP = {
+    none: null,
+    'wayfarer-black': 'matte black wayfarer eyeglasses, medium-thick frame',
+    'round-gold': 'thin round gold metal eyeglasses',
+    'aviator-silver': 'thin silver aviator eyeglasses',
+    'rectangle-black': 'rectangular full-rim black eyeglasses, slim frame',
+  };
+  return GLASSES_MAP[glassesKey] || glassesKey; // বাকিটা raw টেক্সট
 }
 
 function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }) {
@@ -35,10 +35,19 @@ function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }
     bag,
   };
 }
-
 function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit }) {
   const o = outfit || {};
   const noGlasses = !o.glasses;
+
+  // Glasses line: URL হলে একদম সেই ছবির মতো করতে বলুন
+  const glassesLine = noGlasses
+    ? `- Glasses: none (REMOVE any eyewear from the face reference; no frames, lenses, reflections or shadows).`
+    : (typeof o.glasses === 'string' && o.glasses.startsWith('http')
+        ? `- Glasses: EXACTLY match this image → ${o.glasses}.
+           Replace/override any eyewear present in the face reference.
+           Use the same frame SHAPE and COLOR from the image.
+           Do NOT switch to black/gray frames if the image has color.`
+        : `- Glasses: ${o.glasses} (must be clearly visible, correctly aligned with the eyes).`);
 
   return `
 Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
@@ -52,19 +61,13 @@ Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 - Background: plain white (or transparent if API parameter is given).
 - Lighting: soft, even, no harsh shadows.
 
-# OUTFIT
-- Shirt/top: ${o.shirt}
-- Pants/bottom: ${o.pant}
-- Shoes: ${o.shoes}
-${noGlasses
-  ? `- Glasses: none (bare face). REMOVE any eyewear present in the face reference.`
-  : `- Glasses: ${o.glasses} (must be clearly visible and aligned with the eyes).`
-}
+# OUTFIT (match EXACTLY; http(s) = strict visual refs)
+- Shirt/top: ${o.shirt || 'basic solid color t-shirt'}
+- Pants/bottom: ${o.pant || 'straight jeans'}
+- Shoes: ${o.shoes || 'casual sneakers'}
+${glassesLine}
 
-# URL REFERENCE RULE
-- If any outfit value above is an http/https URL, TREAT IT AS A STRICT VISUAL REFERENCE for color, material, pattern/texture, and silhouette. Recreate it closely without logos unless present in the URL image.
-
-${isFeminine ? `# ADDITIONAL
+${isFeminine ? `# ACCESSORIES
 - Lipstick: ${o.lipstick || 'natural'}
 - Jewelry: ${o.jewelry || 'none'}
 - Bag: ${o.bag || 'none'}` : ''}
@@ -78,11 +81,14 @@ ${isFeminine ? `# ADDITIONAL
 # NEGATIVE INSTRUCTIONS
 - Do NOT crop hair or shoes.
 - Do NOT turn the body away; keep front-facing.
-${noGlasses ? `- Do NOT include any kind of eyewear or eyewear artifacts.` : ''}
+${noGlasses
+  ? `- Do NOT include any kind of eyewear or eyewear artifacts.`
+  : `- Do NOT ignore the glasses reference. If the reference color is yellow/red/etc., do NOT render black/gray frames.`}
 
 Return a single, centered full-body render.
 `.trim();
 }
+
 
 async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
   const item = imageResponse?.data?.[0];
