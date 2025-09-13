@@ -38,8 +38,13 @@ async function notifyUser(userId, type, title, description, data = {}) {
         }
       };
 
-      await admin.messaging().send(message);
-      console.log(`✅ Push sent to user ${userId}`);
+      try {
+        await admin.messaging().send(message);
+        console.log(`✅ Push sent to user ${userId}`);
+      } catch (fcmError) {
+        console.log(`⚠️ FCM delivery failed for user ${userId}:`, fcmError.message);
+        console.log(`   Notification still saved to database`);
+      }
     } else {
       console.log(`ℹ️ User ${userId} has no FCM token, skipping push`);
     }

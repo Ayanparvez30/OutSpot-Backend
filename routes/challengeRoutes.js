@@ -18,6 +18,10 @@ router.get('/challenges/filter',  checkAuth, challengeController.getFilteredChal
 // ---- Submit (file field must be 'media') ----
 router.post('/challenges/submit', checkAuth, upload.single('media'), challengeController.submitToChallenge);
 
+// ---- Notification endpoints (for testing/admin) ----
+router.post('/challenges/notify/all', checkAuth, challengeController.sendChallengeNotifications);
+router.post('/challenges/notify/me', checkAuth, challengeController.sendChallengeNotificationToUser);
+
 // ---- Admin/Creator create (keep if you use this) ----
 router.post('/challenges',        checkAuth, challengeController.createChallenge);
 

@@ -21,7 +21,7 @@ exports.getNotifications = async (req, res) => {
     if (type === 'friend_requests') {
       whereClause.type = { in: ['FRIEND_REQUEST', 'FRIEND_ACCEPTED'] };
     } else if (type === 'challenges') {
-      whereClause.type = { in: ['CHALLENGE_COMPLETED', 'CHALLENGE_ASSIGNED'] }; // Add your challenge notification types
+      whereClause.type = { in: ['NEW_CHALLENGE', 'DAILY_CHALLENGE', 'WEEKLY_CHALLENGE'] };
     }
     // if type is not specified, get all types
 
@@ -271,6 +271,89 @@ exports.getFriendRequestsUnread = async (req, res) => {
     res.status(500).json({
       success: false,
       message: 'Failed to fetch unread friend request notifications'
+    });
+  }
+};
+
+exports.getChallengeNotifications = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    const challengeNotifications = await prisma.notification.findMany({
+      where: {
+        userId: userId,
+        type: {
+          in: ['NEW_CHALLENGE', 'DAILY_CHALLENGE', 'WEEKLY_CHALLENGE']
+        }
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    const enriched = challengeNotifications.map(n => ({
+      id: n.id,
+      userId: n.userId,
+      type: n.type,
+      title: n.title,
+      description: n.description,
+      isRead: n.isRead,
+      createdAt: n.createdAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: enriched,
+      count: enriched.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching challenge notifications:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch challenge notifications'
+    });
+  }
+};
+
+exports.getChallengeNotificationsUnread = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    const unreadChallengeNotifications = await prisma.notification.findMany({
+      where: {
+        userId: userId,
+        type: {
+          in: ['NEW_CHALLENGE', 'DAILY_CHALLENGE', 'WEEKLY_CHALLENGE']
+        },
+        isRead: false
+      },
+      orderBy: {
+        createdAt: 'desc'
+      }
+    });
+
+    const enriched = unreadChallengeNotifications.map(n => ({
+      id: n.id,
+      userId: n.userId,
+      type: n.type,
+      title: n.title,
+      description: n.description,
+      isRead: n.isRead,
+      createdAt: n.createdAt
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: enriched,
+      count: enriched.length
+    });
+
+  } catch (error) {
+    console.error('Error fetching unread challenge notifications:', error);
+    res.status(500).json({
+      success: false,
+      message: 'Failed to fetch unread challenge notifications'
     });
   }
 };

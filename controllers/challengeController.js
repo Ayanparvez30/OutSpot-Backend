@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 
 const uploadToS3 = require('../utils/s3Upload'); // তোমারটা ব্যবহার করো
 const { addPointsWithMultiplier } = require('../utils/points');
+const { notifyNewChallenge } = require('../utils/challengeNotifications');
 
 // ✅ weekly points single source of truth
 const {
@@ -585,4 +586,80 @@ exports.getMySubmission = async (req, res) => {
   if (!submissions.length) return res.status(404).json({ message: 'No submissions found' });
 
   res.json(submissions);
+};
+
+// ------------------ Manual Challenge Notifications (for testing/admin) ------------------
+exports.sendChallengeNotifications = async (req, res) => {
+  try {
+    const { type } = req.body; // 'daily' or 'weekly'
+    const { notifyAllUsersAboutDailyChallenge, notifyAllUsersAboutWeeklyChallenge } = require('../utils/challengeNotifications');
+    
+    if (!type || !['daily', 'weekly'].includes(type)) {
+      return res.status(400).json({ 
+        error: 'Invalid type. Must be "daily" or "weekly"' 
+      });
+    }
+
+    let result;
+    if (type === 'daily') {
+      result = await notifyAllUsersAboutDailyChallenge();
+    } else {
+      result = await notifyAllUsersAboutWeeklyChallenge();
+    }
+
+    res.json({ 
+      success: true, 
+      message: `${type} challenge notifications sent successfully`,
+      type 
+    });
+  } catch (error) {
+    console.error('Send challenge notifications error:', error);
+    res.status(500).json({ 
+      error: 'Failed to send challenge notifications',
+      details: error.message 
+    });
+  }
+};
+
+// ------------------ Individual Challenge Notification (for testing) ------------------
+exports.sendChallengeNotificationToUser = async (req, res) => {
+  try {
+    const userId = req.authData.id; // Current authenticated user
+    const { frequency } = req.body; // 'DAILY' or 'WEEKLY'
+    
+    if (!frequency || !['DAILY', 'WEEKLY'].includes(frequency)) {
+      return res.status(400).json({ 
+        error: 'Invalid frequency. Must be "DAILY" or "WEEKLY"' 
+      });
+    }
+
+    const zone = currentZone(req);
+    const now = new Date();
+    
+    const assignment = await getAssignedChallenge(prisma, userId, frequency, zone, now);
+    
+    if (!assignment?.challenge) {
+      return res.status(404).json({ 
+        error: `No ${frequency.toLowerCase()} challenge available` 
+      });
+    }
+
+    await notifyNewChallenge(userId, assignment.challenge, frequency);
+
+    res.json({ 
+      success: true, 
+      message: `${frequency.toLowerCase()} challenge notification sent`,
+      challenge: {
+        id: assignment.challenge.id,
+        title: assignment.challenge.title,
+        points: assignment.challenge.points
+      }
+    });
+  } catch (error) {
+    console.error('Send individual challenge notification error:', error);
+    res.status(500).json({ 
+      error: 'Failed to send challenge notification',
+      details: error.message 
+    });
+  }
 };
