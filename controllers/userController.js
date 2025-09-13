@@ -86,23 +86,17 @@ function mapGlasses(glassesKey) {
   return GLASSES_MAP[glassesKey] || null;
 }
 
-// Outfit normalization
 function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }) {
   return {
     shirt: shirt || 'basic solid color t-shirt',
     pant: pant || 'straight jeans',
     shoes: shoes || 'casual sneakers',
-    glasses: mapGlasses(glasses), // now always description or null
-    lipstick: lipstick,
-    jewelry: jewelry,
-    bag: bag,
+    glasses: mapGlasses(glasses), // description or null
+    lipstick: lipstick || 'none',
+    jewelry: jewelry || 'none',
+    bag: bag || 'none',
   };
 }
-
-/* -------------------------------------------------------------------------- */
-/*                               PROMPT BUILDER                                */
-/* -------------------------------------------------------------------------- */
-
 function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit }) {
   const o = outfit || {};
   const noGlasses = !o.glasses;
@@ -113,28 +107,28 @@ Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 # HARD CONSTRAINTS
 - STRICT body shape reference: ${bodyShapeUrl}
 - STRICT facial likeness from: ${faceUrl}
-- Camera: straight-on, full-body. Subject fully contained in frame.
-- Keep ~10–12% empty space above the head and below the shoe soles.
+- Camera: straight-on, full-body, subject fully contained in frame.
+- Keep ~10–12% empty space above the head and below the soles.
 - Both feet visible, standing on a flat plane. No cropping anywhere.
 - Background: plain white (or transparent if API parameter is given).
 - Lighting: soft, even, no harsh shadows.
 
-# OUTFIT (match exactly; use URLs as strict visual refs)
+# OUTFIT (match exactly)
 - Shirt/top: ${o.shirt}
 - Pants/bottom: ${o.pant}
 - Shoes: ${o.shoes}
 ${noGlasses
-  ? `- Glasses: none (bare face). REMOVE any eyewear present in the face reference. No frames, lenses, reflections, or shadows from eyewear.`
-  : `- Glasses: ${o.glasses} (must be clearly visible and aligned with the eyes; treat as exact accessory).`
+    ? `- Glasses: none (REMOVE any eyewear from face reference)`
+    : `- Glasses: ${o.glasses} (must be clearly visible and aligned with the eyes)`
 }
 
-# URL REFERENCE RULE
-- If any outfit value above is an http/https URL, TREAT IT AS A STRICT VISUAL REFERENCE for color, material, pattern/texture, and silhouette. Recreate it closely without logos unless present in the URL image.
+# ACCESSORIES
+- Lipstick: ${o.lipstick}
+- Jewelry: ${o.jewelry}
+- Bag: ${o.bag}
 
-${isFeminine ? `# ADDITIONAL
-- Lipstick: ${o.lipstick || 'natural'}
-- Jewelry: ${o.jewelry || 'none'}
-- Bag: ${o.bag || 'none'}` : ''}
+# URL REFERENCE RULE
+- If any outfit/accessory above is an http/https URL, TREAT IT AS A STRICT VISUAL REFERENCE for color, material, pattern/texture, and silhouette. Recreate it closely without logos unless present in the image.
 
 # COMPOSITION & STYLE
 - Neutral pose, arms relaxed by sides, single character only.
@@ -143,14 +137,14 @@ ${isFeminine ? `# ADDITIONAL
 - No extra props, text, or background objects.
 
 # NEGATIVE INSTRUCTIONS
+${noGlasses ? `- Do NOT include any eyewear or eyewear artifacts.` : ''}
+- Do NOT ignore lipstick/jewelry/bag instructions (if "none", show nothing).
 - Do NOT crop hair or shoes.
 - Do NOT turn the body away; keep front-facing.
-${noGlasses ? `- Do NOT include any kind of eyewear or eyewear artifacts.` : ''}
 
 Return a single, centered full-body render.
 `.trim();
 }
-
 
 /* -------------------------------------------------------------------------- */
 /*                                MULTER (local)                               */
