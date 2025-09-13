@@ -20,5 +20,8 @@ router.post('/shop/equip', checkAuth, shop.equipItem);
 // Point Bundles
 router.get('/shop/bundles', checkAuth, shop.listPointBundles);
 router.post('/shop/bundles/purchase', checkAuth, shop.purchasePointBundle);
+// ✅ NEW: custom preview + quick buy
+router.post('/shop/custom/preview', checkAuth, shop.previewCustomOutfit);
+router.post('/shop/custom/quick-buy', checkAuth, shop.quickBuyCustomItem);
 
 module.exports = router;

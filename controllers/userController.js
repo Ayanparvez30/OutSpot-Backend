@@ -51,10 +51,7 @@ async function uploadToS3FromUrl(url, keyPrefix) {
   return await uploadToS3(file, 'minimes');
 }
 
-/* -------------------------------------------------------------------------- */
-/*                             OUTFIT NORMALIZATION                            */
-/* -------------------------------------------------------------------------- */
-// Glasses map (keys → descriptions)
+// ---- Glasses map (keys → descriptions)
 const GLASSES_MAP = {
   none: null,
   'wayfarer-black': 'matte black wayfarer eyeglasses, medium-thick frame',
@@ -63,40 +60,35 @@ const GLASSES_MAP = {
   'rectangle-black': 'rectangular full-rim black eyeglasses, slim frame',
 };
 
-// Custom URL matcher → descriptions
+// Return:
+// - null for none
+// - the URL untouched (STRICT reference in the prompt)
+// - a known key → description
+// - otherwise return the raw text so prompt can still use it
 function mapGlasses(glassesKey) {
   if (!glassesKey || glassesKey === 'none') return null;
+  if (typeof glassesKey !== 'string') return null;
 
-  // If a URL is passed
-  if (glassesKey.startsWith('http')) {
-    if (glassesKey.includes('silver_square')) {
-      return 'sleek square silver metal eyeglasses, thin frame';
-    }
-    if (glassesKey.includes('black_round')) {
-      return 'round black eyeglasses, medium frame';
-    }
-    if (glassesKey.includes('gold_round')) {
-      return 'thin round golden eyeglasses';
-    }
-    // fallback for unknown URLs
-    return 'modern stylish eyeglasses';
-  }
+  // ✅ keep URL as-is
+  if (glassesKey.startsWith('http')) return glassesKey;
 
-  // Otherwise treat as key
-  return GLASSES_MAP[glassesKey] || null;
+  // ✅ map known keys, else pass through the raw text
+  return GLASSES_MAP[glassesKey] ?? glassesKey;
 }
 
+// Outfit normalization (do NOT down-convert URLs to descriptions)
 function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }) {
   return {
     shirt: shirt || 'basic solid color t-shirt',
     pant: pant || 'straight jeans',
     shoes: shoes || 'casual sneakers',
-    glasses: mapGlasses(glasses), // description or null
-    lipstick: lipstick || 'none',
-    jewelry: jewelry || 'none',
-    bag: bag || 'none',
+    glasses: mapGlasses(glasses),   // 👈 now preserves URLs
+    lipstick: lipstick || null,
+    jewelry: jewelry || null,
+    bag: bag || null,
   };
 }
+
 function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit }) {
   const o = outfit || {};
   const noGlasses = !o.glasses;
