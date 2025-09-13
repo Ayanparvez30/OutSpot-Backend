@@ -12,16 +12,14 @@ router.get('/shop/inventory', checkAuth, shop.getInventory);
 router.get('/shop/multipliers', checkAuth, shop.listMultipliers);
 router.get('/shop/multiplier/active', checkAuth, shop.getActiveMultiplier);
 
-// IAP confirmation (Apple/Google)
 router.post('/shop/iap/confirm', checkAuth, shop.confirmIAPPurchase);
 
-// Equip / apply owned item to current MiniMe
 router.post('/shop/equip', checkAuth, shop.equipItem);
-// Point Bundles
+
 router.get('/shop/bundles', checkAuth, shop.listPointBundles);
 router.post('/shop/bundles/purchase', checkAuth, shop.purchasePointBundle);
-// ✅ NEW: custom preview + quick buy
+
 router.post('/shop/custom/preview', checkAuth, shop.previewCustomOutfit);
-router.post('/shop/custom/quick-buy', checkAuth, shop.quickBuyCustomItem);
+router.post('/shop/custom/quick-buy', checkAuth, shop.quickBuyFromPreview);
 
 module.exports = router;

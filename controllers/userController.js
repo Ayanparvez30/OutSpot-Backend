@@ -8,7 +8,7 @@ const path = require('path');
 const multer = require('multer');
 const response = require('../functions/response');
 const uploadToS3 = require('../utils/s3Upload');
-
+const { renderCurrentMinime } = require('../utils/minimeGen');
 require('dotenv').config();
 
 // ====== Lazy import fetch for CommonJS ======
@@ -17,27 +17,27 @@ const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fet
 // ====== Allowed body types ======
 const validBodyTypes = ['masculine', 'feminine'];
 
-/* -------------------------------------------------------------------------- */
-/*                               IMAGE UPLOADERS                               */
-/* -------------------------------------------------------------------------- */
+// /* -------------------------------------------------------------------------- */
+// /*                               IMAGE UPLOADERS                               */
+// /* -------------------------------------------------------------------------- */
 
-async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
-  const item = imageResponse?.data?.[0];
-  if (!item) throw new Error('OpenAI image response empty');
+// async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
+//   const item = imageResponse?.data?.[0];
+//   if (!item) throw new Error('OpenAI image response empty');
 
-  if (item.url) return await uploadToS3FromUrl(item.url, keyPrefix);
+//   if (item.url) return await uploadToS3FromUrl(item.url, keyPrefix);
 
-  if (item.b64_json) {
-    const buffer = Buffer.from(item.b64_json, 'base64');
-    const file = {
-      originalname: `${keyPrefix}.png`,
-      buffer,
-      mimetype: 'image/png',
-    };
-    return await uploadToS3(file, 'minimes');
-  }
-  throw new Error('No url or b64_json in OpenAI image response');
-}
+//   if (item.b64_json) {
+//     const buffer = Buffer.from(item.b64_json, 'base64');
+//     const file = {
+//       originalname: `${keyPrefix}.png`,
+//       buffer,
+//       mimetype: 'image/png',
+//     };
+//     return await uploadToS3(file, 'minimes');
+//   }
+//   throw new Error('No url or b64_json in OpenAI image response');
+// }
 
 async function uploadToS3FromUrl(url, keyPrefix) {
   const res = await fetch(url);
@@ -49,94 +49,89 @@ async function uploadToS3FromUrl(url, keyPrefix) {
     mimetype: 'image/png',
   };
   return await uploadToS3(file, 'minimes');
-}
+ }
 
-// ---- Glasses map (keys → descriptions)
-const GLASSES_MAP = {
-  none: null,
-  'wayfarer-black': 'matte black wayfarer eyeglasses, medium-thick frame',
-  'round-gold': 'thin round gold metal eyeglasses',
-  'aviator-silver': 'thin silver aviator eyeglasses',
-  'rectangle-black': 'rectangular full-rim black eyeglasses, slim frame',
-};
+// // ---- Glasses map (keys → descriptions)
+// const GLASSES_MAP = {
+//   none: null,
+//   'wayfarer-black': 'matte black wayfarer eyeglasses, medium-thick frame',
+//   'round-gold': 'thin round gold metal eyeglasses',
+//   'aviator-silver': 'thin silver aviator eyeglasses',
+//   'rectangle-black': 'rectangular full-rim black eyeglasses, slim frame',
+// };
 
-// Return:
-// - null for none
-// - the URL untouched (STRICT reference in the prompt)
-// - a known key → description
-// - otherwise return the raw text so prompt can still use it
-function mapGlasses(glassesKey) {
-  if (!glassesKey || glassesKey === 'none') return null;
-  if (typeof glassesKey !== 'string') return null;
+// function mapGlasses(glassesKey) {
+//   if (!glassesKey || glassesKey === 'none') return null;
+//   if (typeof glassesKey !== 'string') return null;
 
-  // ✅ keep URL as-is
-  if (glassesKey.startsWith('http')) return glassesKey;
+//   // ✅ keep URL as-is
+//   if (glassesKey.startsWith('http')) return glassesKey;
 
-  // ✅ map known keys, else pass through the raw text
-  return GLASSES_MAP[glassesKey] ?? glassesKey;
-}
+//   // ✅ map known keys, else pass through the raw text
+//   return GLASSES_MAP[glassesKey] ?? glassesKey;
+// }
 
-// Outfit normalization (do NOT down-convert URLs to descriptions)
-function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }) {
-  return {
-    shirt: shirt || 'basic solid color t-shirt',
-    pant: pant || 'straight jeans',
-    shoes: shoes || 'casual sneakers',
-    glasses: mapGlasses(glasses),   // 👈 now preserves URLs
-    lipstick: lipstick || null,
-    jewelry: jewelry || null,
-    bag: bag || null,
-  };
-}
+// // Outfit normalization (do NOT down-convert URLs to descriptions)
+// function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }) {
+//   return {
+//     shirt: shirt || 'basic solid color t-shirt',
+//     pant: pant || 'straight jeans',
+//     shoes: shoes || 'casual sneakers',
+//     glasses: mapGlasses(glasses),   // 👈 now preserves URLs
+//     lipstick: lipstick || null,
+//     jewelry: jewelry || null,
+//     bag: bag || null,
+//   };
+// }
 
-function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit }) {
-  const o = outfit || {};
-  const noGlasses = !o.glasses;
+// function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit }) {
+//   const o = outfit || {};
+//   const noGlasses = !o.glasses;
 
-  return `
-Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
+//   return `
+// Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 
-# HARD CONSTRAINTS
-- STRICT body shape reference: ${bodyShapeUrl}
-- STRICT facial likeness from: ${faceUrl}
-- Camera: straight-on, full-body, subject fully contained in frame.
-- Keep ~10–12% empty space above the head and below the soles.
-- Both feet visible, standing on a flat plane. No cropping anywhere.
-- Background: plain white (or transparent if API parameter is given).
-- Lighting: soft, even, no harsh shadows.
+// # HARD CONSTRAINTS
+// - STRICT body shape reference: ${bodyShapeUrl}
+// - STRICT facial likeness from: ${faceUrl}
+// - Camera: straight-on, full-body, subject fully contained in frame.
+// - Keep ~10–12% empty space above the head and below the soles.
+// - Both feet visible, standing on a flat plane. No cropping anywhere.
+// - Background: plain white (or transparent if API parameter is given).
+// - Lighting: soft, even, no harsh shadows.
 
-# OUTFIT (match exactly)
-- Shirt/top: ${o.shirt}
-- Pants/bottom: ${o.pant}
-- Shoes: ${o.shoes}
-${noGlasses
-    ? `- Glasses: none (REMOVE any eyewear from face reference)`
-    : `- Glasses: ${o.glasses} (must be clearly visible and aligned with the eyes)`
-}
+// # OUTFIT (match exactly)
+// - Shirt/top: ${o.shirt}
+// - Pants/bottom: ${o.pant}
+// - Shoes: ${o.shoes}
+// ${noGlasses
+//     ? `- Glasses: none (REMOVE any eyewear from face reference)`
+//     : `- Glasses: ${o.glasses} (must be clearly visible and aligned with the eyes)`
+// }
 
-# ACCESSORIES
-- Lipstick: ${o.lipstick}
-- Jewelry: ${o.jewelry}
-- Bag: ${o.bag}
+// # ACCESSORIES
+// - Lipstick: ${o.lipstick}
+// - Jewelry: ${o.jewelry}
+// - Bag: ${o.bag}
 
-# URL REFERENCE RULE
-- If any outfit/accessory above is an http/https URL, TREAT IT AS A STRICT VISUAL REFERENCE for color, material, pattern/texture, and silhouette. Recreate it closely without logos unless present in the image.
+// # URL REFERENCE RULE
+// - If any outfit/accessory above is an http/https URL, TREAT IT AS A STRICT VISUAL REFERENCE for color, material, pattern/texture, and silhouette. Recreate it closely without logos unless present in the image.
 
-# COMPOSITION & STYLE
-- Neutral pose, arms relaxed by sides, single character only.
-- Clean edges, smooth materials, vivid but realistic colors.
-- Maintain the proportions of the provided body shape; do not exaggerate head size.
-- No extra props, text, or background objects.
+// # COMPOSITION & STYLE
+// - Neutral pose, arms relaxed by sides, single character only.
+// - Clean edges, smooth materials, vivid but realistic colors.
+// - Maintain the proportions of the provided body shape; do not exaggerate head size.
+// - No extra props, text, or background objects.
 
-# NEGATIVE INSTRUCTIONS
-${noGlasses ? `- Do NOT include any eyewear or eyewear artifacts.` : ''}
-- Do NOT ignore lipstick/jewelry/bag instructions (if "none", show nothing).
-- Do NOT crop hair or shoes.
-- Do NOT turn the body away; keep front-facing.
+// # NEGATIVE INSTRUCTIONS
+// ${noGlasses ? `- Do NOT include any eyewear or eyewear artifacts.` : ''}
+// - Do NOT ignore lipstick/jewelry/bag instructions (if "none", show nothing).
+// - Do NOT crop hair or shoes.
+// - Do NOT turn the body away; keep front-facing.
 
-Return a single, centered full-body render.
-`.trim();
-}
+// Return a single, centered full-body render.
+// `.trim();
+// }
 
 /* -------------------------------------------------------------------------- */
 /*                                MULTER (local)                               */
@@ -229,139 +224,176 @@ async function uploadAvatarWithMulter(req, res) {
   }
 }
 
-// GENERATE MINI-ME
+// // GENERATE MINI-ME
+// async function generateMinime(req, res) {
+//   try {
+//     const userId = req.authData.id;
+//     const { shirt, pant, shoes, glasses: glassesKey, lipstick, jewelry, bag } = req.body;
+
+//     const user = await prisma.user.findUnique({ where: { id: userId } });
+//     if (!user || !user.bodyShapeUrl) {
+//       return response.response_with_code(res, 400, 'Missing body shape');
+//     }
+
+//     const isFeminine = user.bodyType === 'feminine';
+//     const lastMini = await prisma.minime.findFirst({
+//       where: { userId },
+//       orderBy: { createdAt: 'desc' }
+//     });
+
+//     const faceReference = lastMini?.selfieUrl || lastMini?.avatarUrl || user.bodyShapeUrl;
+//     if (!faceReference) {
+//       return response.response_with_code(res, 400, 'No face reference available');
+//     }
+
+//     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
+
+//     const outfitForModel = normalizeOutfit({ shirt, pant, shoes, glasses: glassesKey, lipstick, jewelry, bag });
+
+//     const prompt = buildMinimePrompt({
+//       bodyShapeUrl: user.bodyShapeUrl,
+//       faceUrl: faceReference,
+//       isFeminine,
+//       outfit: outfitForModel
+//     });
+
+//     const imageResponse = await openai.images.generate({
+//       model: 'gpt-image-1',
+//       prompt,
+//       size: '1024x1536', // portrait – avoid head/shoe crop
+//       background: 'transparent'
+//     });
+
+//     const uploadedImageUrl = await uploadOpenAIImageResult(imageResponse, `minime-${userId}-${Date.now()}`);
+
+//     const newMini = await prisma.minime.create({
+//       data: {
+//         userId,
+//         avatarUrl: uploadedImageUrl,
+//         selfieUrl: lastMini?.selfieUrl || null,
+//         shirt, pant, shoes, glasses: glassesKey, lipstick, jewelry, bag,
+//         isSaved: false,
+//         isDraft: true
+//       }
+//     });
+
+//     return response.true_status(res, newMini, 'MiniMe draft generated');
+//   } catch (error) {
+//     console.error('generateMinime error:', error);
+//     return response.response_with_code(res, 500, 'Failed to generate MiniMe');
+//   }
+// }
+
+// // REGENERATE MINI-ME
+// async function regenerateMinime(req, res) {
+//   try {
+//     const userId = req.authData.id;
+
+//     const user = await prisma.user.findUnique({ where: { id: userId } });
+//     const lastMini = await prisma.minime.findFirst({
+//       where: { userId },
+//       orderBy: { createdAt: 'desc' }
+//     });
+
+//     if (!user || !lastMini) {
+//       return response.response_with_code(res, 404, 'No MiniMe available');
+//     }
+
+//     const isFeminine = user.bodyType === 'feminine';
+//     const faceReference = lastMini.selfieUrl || lastMini.avatarUrl || user.bodyShapeUrl;
+
+//     const outfitForModel = normalizeOutfit({
+//       shirt: lastMini.shirt,
+//       pant: lastMini.pant,
+//       shoes: lastMini.shoes,
+//       glasses: lastMini.glasses,
+//       lipstick: lastMini.lipstick,
+//       jewelry: lastMini.jewelry,
+//       bag: lastMini.bag
+//     });
+
+//     const expressions = ['natural face', 'slight smile', 'happy look'];
+//     const base = buildMinimePrompt({
+//       bodyShapeUrl: user.bodyShapeUrl,
+//       faceUrl: faceReference,
+//       isFeminine,
+//       outfit: outfitForModel
+//     });
+//     const prompt = `${base}\n\n# Expression\n- ${expressions[Math.floor(Math.random() * expressions.length)]}`;
+
+//     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
+
+//     const imageResponse = await openai.images.generate({
+//       model: 'gpt-image-1',
+//       prompt,
+//       size: '1024x1536',
+//       background: 'transparent'
+//     });
+
+//     const uploadedImageUrl = await uploadOpenAIImageResult(imageResponse, `minime-${userId}-${Date.now()}`);
+
+//     const newMini = await prisma.minime.create({
+//       data: {
+//         userId,
+//         avatarUrl: uploadedImageUrl,
+//         selfieUrl: lastMini.selfieUrl || null,
+//         shirt: lastMini.shirt,
+//         pant: lastMini.pant,
+//         shoes: lastMini.shoes,
+//         glasses: lastMini.glasses,
+//         lipstick: lastMini.lipstick,
+//         jewelry: lastMini.jewelry,
+//         bag: lastMini.bag,
+//         isSaved: false,
+//         isDraft: true
+//       }
+//     });
+
+//     return response.true_status(res, newMini, 'MiniMe regenerated');
+//   } catch (err) {
+//     console.error('regenerateMinime error:', err);
+//     return response.response_with_code(res, 500, 'Regeneration failed');
+//   }
+// }
 async function generateMinime(req, res) {
   try {
     const userId = req.authData.id;
-    const { shirt, pant, shoes, glasses: glassesKey, lipstick, jewelry, bag } = req.body;
+    const { shirt, pant, shoes, glasses, lipstick, jewelry, bag } = req.body || {};
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
-    if (!user || !user.bodyShapeUrl) {
-      return response.response_with_code(res, 400, 'Missing body shape');
-    }
-
-    const isFeminine = user.bodyType === 'feminine';
-    const lastMini = await prisma.minime.findFirst({
-      where: { userId },
-      orderBy: { createdAt: 'desc' }
-    });
-
-    const faceReference = lastMini?.selfieUrl || lastMini?.avatarUrl || user.bodyShapeUrl;
-    if (!faceReference) {
-      return response.response_with_code(res, 400, 'No face reference available');
-    }
-
+    
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
-    const outfitForModel = normalizeOutfit({ shirt, pant, shoes, glasses: glassesKey, lipstick, jewelry, bag });
-
-    const prompt = buildMinimePrompt({
-      bodyShapeUrl: user.bodyShapeUrl,
-      faceUrl: faceReference,
-      isFeminine,
-      outfit: outfitForModel
+    const draft = await prisma.minime.create({
+      data: { userId, shirt, pant, shoes, glasses, lipstick, jewelry, bag, isSaved: false, isDraft: true }
     });
 
-    const imageResponse = await openai.images.generate({
-      model: 'gpt-image-1',
-      prompt,
-      size: '1024x1536', // portrait – avoid head/shoe crop
-      background: 'transparent'
-    });
+    const rendered = await renderCurrentMinime(userId);
 
-    const uploadedImageUrl = await uploadOpenAIImageResult(imageResponse, `minime-${userId}-${Date.now()}`);
-
-    const newMini = await prisma.minime.create({
-      data: {
-        userId,
-        avatarUrl: uploadedImageUrl,
-        selfieUrl: lastMini?.selfieUrl || null,
-        shirt, pant, shoes, glasses: glassesKey, lipstick, jewelry, bag,
-        isSaved: false,
-        isDraft: true
-      }
-    });
-
-    return response.true_status(res, newMini, 'MiniMe draft generated');
+    return response.true_status(res, rendered, 'MiniMe draft generated');
   } catch (error) {
     console.error('generateMinime error:', error);
     return response.response_with_code(res, 500, 'Failed to generate MiniMe');
   }
 }
 
-// REGENERATE MINI-ME
 async function regenerateMinime(req, res) {
   try {
     const userId = req.authData.id;
 
-    const user = await prisma.user.findUnique({ where: { id: userId } });
     const lastMini = await prisma.minime.findFirst({
       where: { userId },
       orderBy: { createdAt: 'desc' }
     });
+    if (!lastMini) return response.response_with_code(res, 404, 'No MiniMe available');
 
-    if (!user || !lastMini) {
-      return response.response_with_code(res, 404, 'No MiniMe available');
-    }
-
-    const isFeminine = user.bodyType === 'feminine';
-    const faceReference = lastMini.selfieUrl || lastMini.avatarUrl || user.bodyShapeUrl;
-
-    const outfitForModel = normalizeOutfit({
-      shirt: lastMini.shirt,
-      pant: lastMini.pant,
-      shoes: lastMini.shoes,
-      glasses: lastMini.glasses,
-      lipstick: lastMini.lipstick,
-      jewelry: lastMini.jewelry,
-      bag: lastMini.bag
-    });
-
-    const expressions = ['natural face', 'slight smile', 'happy look'];
-    const base = buildMinimePrompt({
-      bodyShapeUrl: user.bodyShapeUrl,
-      faceUrl: faceReference,
-      isFeminine,
-      outfit: outfitForModel
-    });
-    const prompt = `${base}\n\n# Expression\n- ${expressions[Math.floor(Math.random() * expressions.length)]}`;
-
-    await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
-
-    const imageResponse = await openai.images.generate({
-      model: 'gpt-image-1',
-      prompt,
-      size: '1024x1536',
-      background: 'transparent'
-    });
-
-    const uploadedImageUrl = await uploadOpenAIImageResult(imageResponse, `minime-${userId}-${Date.now()}`);
-
-    const newMini = await prisma.minime.create({
-      data: {
-        userId,
-        avatarUrl: uploadedImageUrl,
-        selfieUrl: lastMini.selfieUrl || null,
-        shirt: lastMini.shirt,
-        pant: lastMini.pant,
-        shoes: lastMini.shoes,
-        glasses: lastMini.glasses,
-        lipstick: lastMini.lipstick,
-        jewelry: lastMini.jewelry,
-        bag: lastMini.bag,
-        isSaved: false,
-        isDraft: true
-      }
-    });
-
-    return response.true_status(res, newMini, 'MiniMe regenerated');
+    const rendered = await renderCurrentMinime(userId);
+    return response.true_status(res, rendered, 'MiniMe regenerated');
   } catch (err) {
     console.error('regenerateMinime error:', err);
     return response.response_with_code(res, 500, 'Regeneration failed');
   }
 }
 
-// SAVE/GET MINI-ME
 async function saveLatestMinime(req, res) {
   const userId = req.authData.id;
   const draft = await prisma.minime.findFirst({
