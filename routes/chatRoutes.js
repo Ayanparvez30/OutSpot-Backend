@@ -11,10 +11,9 @@ router.get('/chats', checkAuth, chatController.getMyChats);
 router.get('/chats/messages/:chatId', checkAuth, chatController.getMessages);
 router.get('/chats/messages-paginated/:chatId', checkAuth, chatController.getMessagesPaginated);
 router.get('/chats/:user2Id', checkAuth, chatController.getChatsByUsers);
-router.put('/chats/addUser/:chatId', checkAuth, chatController.addUsersToGroup);
 router.get('/chats/groupMembers/:chatId', checkAuth, chatController.getGroupMembers);
 
-// add users (admin only now)
+// add users (admin only)
 router.put('/chats/addUser/:chatId', checkAuth, chatController.addUsersToGroup);
 
 // remove user (admin only)
