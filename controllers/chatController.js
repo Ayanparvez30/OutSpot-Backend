@@ -14,6 +14,9 @@ const {
   getWeeklyPointsForUser,
 } = require('../utils/weeklyPoints');
 
+// ✅ Chat helpers for unread counts
+const { getBulkUnreadCounts } = require('../utils/chatHelpers');
+
 // -------------------- AWS + Multer setup --------------------
 const s3Client = new S3Client({
   region: process.env.AWS_REGION,
@@ -96,17 +99,27 @@ exports.createPrivateChat = async (req, res) => {
     if (!isGroup && UserId.length === 1) {
       const targetUserId = Number(UserId[0]);
 
+      // ✅ Better logic: find private chat between exactly these two users
       const existingChat = await prisma.chat.findFirst({
         where: {
           isGroup: false,
-          users: { some: { userId: currentUserId } },
+          users: {
+            every: {
+              userId: { in: [currentUserId, targetUserId] }
+            }
+          }
         },
-        include: { users: true },
+        include: { 
+          users: { select: { userId: true } } 
+        },
       });
 
       if (existingChat) {
         const memberIds = existingChat.users.map(u => u.userId);
-        if (memberIds.includes(currentUserId) && memberIds.includes(targetUserId)) {
+        // Check if it's exactly these two users (no more, no less)
+        if (memberIds.length === 2 && 
+            memberIds.includes(currentUserId) && 
+            memberIds.includes(targetUserId)) {
           return res.json({ message: 'Private chat already exists', chatId: existingChat.id });
         }
       }
@@ -319,7 +332,20 @@ exports.getMyChats = async (req, res) => {
             },
           },
         },
-        messages: true, // keep as-is; can be trimmed if heavy
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1, // Only get latest message for preview
+          select: {
+            id: true,
+            content: true,
+            imageUrl: true,
+            createdAt: true,
+            senderId: true,
+          },
+        },
+        _count: {
+          select: { messages: true }, // Total message count
+        },
       },
       orderBy: { updatedAt: 'desc' },
     });
@@ -329,6 +355,10 @@ exports.getMyChats = async (req, res) => {
       new Set(chats.flatMap(c => c.users.map(u => u.userId)))
     );
     const weekPointsMap = await getWeeklyPointsForUsers(allUserIds);
+
+    // ✅ Get accurate unread counts for all chats
+    const chatIds = chats.map(c => c.id);
+    const unreadCountsMap = await getBulkUnreadCounts(currentUserId, chatIds);
 
     const enrichedChats = chats.map(chat => {
       const chatUsers = chat.users.map(userOnChat => {
@@ -347,7 +377,27 @@ exports.getMyChats = async (req, res) => {
         };
       });
 
-      return { ...chat, users: chatUsers };
+      // ✅ Get accurate unread count
+      const unreadCount = unreadCountsMap.get(chat.id) || 0;
+
+      // ✅ Get latest message for preview
+      const latestMessage = chat.messages.length > 0 
+        ? chat.messages[0] // Already ordered desc, so first is latest
+        : null;
+
+      return { 
+        ...chat, 
+        users: chatUsers,
+        unreadCount,
+        latestMessage: latestMessage ? {
+          id: latestMessage.id,
+          content: latestMessage.content,
+          imageUrl: latestMessage.imageUrl,
+          createdAt: latestMessage.createdAt,
+          senderId: latestMessage.senderId
+        } : null,
+        totalMessages: chat._count.messages
+      };
     });
 
     res.json(enrichedChats);
@@ -529,9 +579,27 @@ exports.addUsersToGroup = async (req, res) => {
   await prisma.chat.update({
     where: { id: chat.id },
     data: {
-      users: { create: toAdd.map(id => ({ userId: id, role: 'MEMBER' })) },
+      users: { 
+        create: toAdd.map(id => ({
+          userId: id, 
+          role: 'MEMBER',
+          lastSeenMessageId: 0 // ✅ Initialize read position
+        }))
+      },
     },
   });
+
+  // ✅ Notify via socket about new members added
+  try {
+    const io = require('../utils/socket').getIO();
+    io.to(`chat_${chat.id}`).emit('usersAdded', {
+      chatId: chat.id,
+      addedUserIds: toAdd,
+      addedBy: currentUserId,
+    });
+  } catch (socketErr) {
+    console.error('Socket notification error:', socketErr);
+  }
 
   return res.json({ message: 'Users added to the group chat' });
 };

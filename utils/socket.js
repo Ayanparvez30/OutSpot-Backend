@@ -205,6 +205,12 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
           include: { sender: true },
         });
 
+        // ✅ Update chat's updatedAt timestamp
+        await prisma.chat.update({
+          where: { id: chatId },
+          data: { updatedAt: new Date() },
+        });
+
         io.to(`chat_${chatId}`).emit('newMessage', {
           id: message.id,
           content: message.content,
