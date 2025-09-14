@@ -53,5 +53,8 @@ router.put(
 router.put('/chats/lock/:chatId', checkAuth, chatController.lockGroupChat);
 router.put('/chats/unlock/:chatId', checkAuth, chatController.unlockGroupChat);
 
+// 🚀 NEW: Bulk mark messages as read
+router.put('/chats/markAsRead', checkAuth, chatController.bulkMarkAsRead);
+
 module.exports = router; 
 
