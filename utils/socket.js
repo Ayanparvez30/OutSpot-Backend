@@ -88,25 +88,56 @@ function initSocket(server) {
     // ✅ mark messages as read
 socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
   const userId = socket.data.userId;
-  if (!userId || !chatId || !lastSeenMessageId) return;
+  if (!userId || !chatId || !lastSeenMessageId) {
+    console.log('❌ markAsRead: Missing required fields', { userId, chatId, lastSeenMessageId });
+    return;
+  }
 
   try {
+    // Verify user is part of the chat and message exists
+    const userInChat = await prisma.userOnChat.findFirst({
+      where: { userId, chatId: parseInt(chatId, 10) }
+    });
+
+    if (!userInChat) {
+      console.log(`❌ User ${userId} not found in chat ${chatId}`);
+      return;
+    }
+
+    // Verify the message exists in this chat
+    const messageExists = await prisma.message.findFirst({
+      where: { 
+        id: parseInt(lastSeenMessageId, 10), 
+        chatId: parseInt(chatId, 10) 
+      }
+    });
+
+    if (!messageExists) {
+      console.log(`❌ Message ${lastSeenMessageId} not found in chat ${chatId}`);
+      return;
+    }
+
     // Update lastSeenMessageId in UserOnChat
-    await prisma.userOnChat.updateMany({
-      where: { userId, chatId },
-      data: { lastSeenMessageId }
+    const updated = await prisma.userOnChat.update({
+      where: { id: userInChat.id },
+      data: { lastSeenMessageId: parseInt(lastSeenMessageId, 10) }
     });
 
     // Notify other users in the chat
     io.to(`chat_${chatId}`).emit('messageRead', {
-      chatId,
+      chatId: parseInt(chatId, 10),
       userId,
-      lastSeenMessageId
+      lastSeenMessageId: parseInt(lastSeenMessageId, 10)
     });
 
     console.log(`✅ User ${userId} read messages up to ${lastSeenMessageId} in chat ${chatId}`);
   } catch (err) {
     console.error('❌ markAsRead error:', err);
+    socket.emit('markAsReadError', { 
+      error: 'Failed to mark messages as read',
+      chatId,
+      lastSeenMessageId 
+    });
   }
 });
 

@@ -909,9 +909,21 @@ exports.bulkMarkAsRead = async (req, res) => {
       return res.status(403).json({ message: 'You are not part of this chat' });
     }
 
-    // Update the lastSeenMessageId
-    await prisma.userOnChat.updateMany({
-      where: { userId: currentUserId, chatId: parseInt(chatId, 10) },
+    // Verify the message exists in this chat
+    const messageExists = await prisma.message.findFirst({
+      where: { 
+        id: parseInt(lastSeenMessageId, 10), 
+        chatId: parseInt(chatId, 10) 
+      }
+    });
+
+    if (!messageExists) {
+      return res.status(400).json({ message: 'Message not found in this chat' });
+    }
+
+    // Update the lastSeenMessageId using the specific UserOnChat record
+    const updated = await prisma.userOnChat.update({
+      where: { id: userInChat.id },
       data: { lastSeenMessageId: parseInt(lastSeenMessageId, 10) },
     });
 
@@ -930,8 +942,9 @@ exports.bulkMarkAsRead = async (req, res) => {
 
     return res.json({ 
       message: 'Messages marked as read',
-      chatId,
+      chatId: parseInt(chatId, 10),
       lastSeenMessageId: parseInt(lastSeenMessageId, 10),
+      success: true
     });
   } catch (error) {
     console.error('Error in bulkMarkAsRead:', error);
