@@ -434,6 +434,11 @@ exports.getMessagesPaginated = async (req, res) => {
             },
           },
         },
+        chat: {
+          include: {
+            users: { select: { userId: true, lastSeenMessageId: true } },
+          },
+        },
       },
       orderBy: { createdAt: 'desc' },
       skip,
@@ -449,6 +454,9 @@ exports.getMessagesPaginated = async (req, res) => {
         lastName: m.sender.lastName,
         avatarUrl: firstAvatar(m.sender.minime),
       },
+      readBy: m.chat.users
+        .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
+        .map(u => u.userId),
     }));
 
     res.json(shaped);
@@ -878,6 +886,55 @@ exports.unlockGroupChat = async (req, res) => {
     });
   } catch (error) {
     console.error('Error unlocking group chat:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// 🚀 NEW: Bulk mark messages as read (for catching up)
+exports.bulkMarkAsRead = async (req, res) => {
+  try {
+    const currentUserId = req.authData.id;
+    const { chatId, lastSeenMessageId } = req.body;
+
+    if (!chatId || !lastSeenMessageId) {
+      return res.status(400).json({ message: 'chatId and lastSeenMessageId are required' });
+    }
+
+    // Verify user is part of the chat
+    const userInChat = await prisma.userOnChat.findFirst({
+      where: { userId: currentUserId, chatId: parseInt(chatId, 10) },
+    });
+
+    if (!userInChat) {
+      return res.status(403).json({ message: 'You are not part of this chat' });
+    }
+
+    // Update the lastSeenMessageId
+    await prisma.userOnChat.updateMany({
+      where: { userId: currentUserId, chatId: parseInt(chatId, 10) },
+      data: { lastSeenMessageId: parseInt(lastSeenMessageId, 10) },
+    });
+
+    // Emit socket event to notify other users
+    try {
+      const io = require('../utils/socket').getIO();
+      io.to(`chat_${chatId}`).emit('messageRead', {
+        chatId: parseInt(chatId, 10),
+        userId: currentUserId,
+        lastSeenMessageId: parseInt(lastSeenMessageId, 10),
+      });
+    } catch (socketErr) {
+      console.error('Socket emission error:', socketErr);
+      // Don't fail the request if socket fails
+    }
+
+    return res.json({ 
+      message: 'Messages marked as read',
+      chatId,
+      lastSeenMessageId: parseInt(lastSeenMessageId, 10),
+    });
+  } catch (error) {
+    console.error('Error in bulkMarkAsRead:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 };

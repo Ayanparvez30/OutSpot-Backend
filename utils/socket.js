@@ -55,7 +55,6 @@ function initSocket(server) {
   io.on('connection', async (socket) => {
     console.log('✅ Socket connected:', socket.id);
 
-
     const userId = parseInt(socket.handshake.query?.userId || 0, 10) || null;
     if (userId) {
       socket.data.userId = userId;
@@ -64,9 +63,24 @@ function initSocket(server) {
 
       const friendIds = await getFriendIds(userId);
       friendIds.forEach((fid) => {
-
         socket.join(`friendOf:${fid}`); // optional
       });
+
+      // 🚀 Auto-join all user's chats for better UX
+      try {
+        const userChats = await prisma.chat.findMany({
+          where: { users: { some: { userId } } },
+          select: { id: true },
+        });
+        
+        userChats.forEach(chat => {
+          socket.join(`chat_${chat.id}`);
+        });
+        
+        console.log(`🔵 User ${userId} auto-joined ${userChats.length} chats`);
+      } catch (err) {
+        console.error('❌ Error auto-joining chats:', err);
+      }
 
       socket.emit('socket:ready', { userId });
     }
