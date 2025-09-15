@@ -123,8 +123,8 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
       data: { lastSeenMessageId: parseInt(lastSeenMessageId, 10) }
     });
 
-    // Notify other users in the chat
-    io.to(`chat_${chatId}`).emit('messageRead', {
+    // Notify other users in the chat (excluding the user who marked as read)
+    socket.to(`chat_${chatId}`).emit('messageRead', {
       chatId: parseInt(chatId, 10),
       userId,
       lastSeenMessageId: parseInt(lastSeenMessageId, 10)
