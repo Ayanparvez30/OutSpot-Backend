@@ -727,6 +727,7 @@ exports.getGroupMembers = async (req, res) => {
       groupName: chat.name,
       groupImage: chat.imageUrl || null,
       createdById: chat.createdById,
+      isLocked: chat.isLocked || false,
       members,
     });
   } catch (error) {
