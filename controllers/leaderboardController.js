@@ -188,22 +188,31 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+// controllers/leaderboardController.js
 
 exports.getWeeklyCommunityRanks = async (req, res) => {
   try {
-    const weekStart = getStartOfWeek();
+    const weekStart   = getStartOfWeek();
+    const requesterId = req.authData.id; // ✅ whose communities are “mine”
 
-    // 1) All communities + members
+    // 1) All communities + members (+ creator/owner)
     const communities = await prisma.community.findMany({
       select: {
         id: true,
         name: true,
-        imageUrl: true,            // ✅ include image
+        imageUrl: true,
+        creatorId: true,               // ⬅️ make sure your schema has this (or rename to ownerId/createdById)
         members: { select: { userId: true } },
       },
     });
 
-    if (communities.length === 0) return res.json({ leaderboard: [] });
+    if (communities.length === 0) {
+      return res.json({
+        leaderboard: [],
+        myTopCreatedCommunity: null,
+        myCreatedCommunities: [],
+      });
+    }
 
     // 2) Unique userIds across all communities
     const allUserIds = Array.from(
@@ -213,7 +222,7 @@ exports.getWeeklyCommunityRanks = async (req, res) => {
     // 3) Weekly totals for all users
     const totalsMap = await getWeeklyTotalsForUsers(allUserIds, weekStart);
 
-    // 4) Sum per community + member count
+    // 4) Sum per community + member count (+ carry creatorId)
     const rows = communities.map(c => {
       const points = c.members.reduce(
         (sum, m) => sum + (totalsMap.get(m.userId) || 0),
@@ -222,22 +231,40 @@ exports.getWeeklyCommunityRanks = async (req, res) => {
       return {
         communityId: c.id,
         name: c.name,
-        imageUrl: c.imageUrl || null,    // ✅ return community image
+        imageUrl: c.imageUrl || null,
+        creatorId: c.creatorId || null,   // ✅ keep who created it
         points,
         membersCount: c.members.length,
       };
     });
 
-    // 5) Rank + prize
-    const sorted = rows.filter(r => r.points > 0).sort((a, b) => b.points - a.points);
+    // 5) Rank across ALL communities (even 0 points)
+    const rankedAll = [...rows]
+      .sort((a, b) => b.points - a.points)
+      .map((r, idx) => ({
+        ...r,
+        rank: idx + 1,
+        prize: getPrizeForRank(idx + 1),
+      }));
 
-    const leaderboard = sorted.map((r, idx) => ({
-      ...r,
-      rank: idx + 1,
-      prize: getPrizeForRank(idx + 1),
-    }));
+    // 6) Public leaderboard = only > 0 points (backward compatible)
+    const leaderboard = rankedAll.filter(r => r.points > 0);
 
-    return res.json({ leaderboard });
+    // 7) Among MY created communities, pick the best (lowest rank number)
+    const myCreatedCommunities = rankedAll
+      .filter(r => r.creatorId === requesterId);
+
+    // best = item with smallest rank (rankedAll already desc-sorted,
+    // but we explicitly reduce to be clear)
+    const myTopCreatedCommunity = myCreatedCommunities.length
+      ? myCreatedCommunities.reduce((best, cur) => (cur.rank < best.rank ? cur : best))
+      : null;
+
+    return res.json({
+      leaderboard,                // unchanged (top scorers only)
+      myTopCreatedCommunity,      // ✅ best among user's created communities (can be 0 points)
+      myCreatedCommunities,       // ✅ all user's created communities with rank/points
+    });
   } catch (error) {
     console.error('Error in getWeeklyCommunityRanks:', error);
     res.status(500).json({ error: 'Internal server error' });
