@@ -93,11 +93,15 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
     return;
   }
 
+  console.log(`🔍 markAsRead called by User ${userId} for message ${lastSeenMessageId} in chat ${chatId}`);
+
   try {
     // Verify user is part of the chat and message exists
     const userInChat = await prisma.userOnChat.findFirst({
       where: { userId, chatId: parseInt(chatId, 10) }
     });
+
+    console.log(`🔍 Found userInChat record:`, JSON.stringify(userInChat));
 
     if (!userInChat) {
       console.log(`❌ User ${userId} not found in chat ${chatId}`);
@@ -123,6 +127,8 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
       data: { lastSeenMessageId: parseInt(lastSeenMessageId, 10) }
     });
 
+    console.log(`🔍 Updated userOnChat record:`, JSON.stringify(updated));
+
     // Notify other users in the chat (excluding the user who marked as read)
     socket.to(`chat_${chatId}`).emit('messageRead', {
       chatId: parseInt(chatId, 10),
@@ -130,7 +136,7 @@ socket.on('markAsRead', async ({ chatId, lastSeenMessageId }) => {
       lastSeenMessageId: parseInt(lastSeenMessageId, 10)
     });
 
-    console.log(`✅ User ${userId} read messages up to ${lastSeenMessageId} in chat ${chatId}`);
+    console.log(`✅ User ${userId} read messages up to ${lastSeenMessageId} in chat ${chatId} - Event emitted to other users`);
   } catch (err) {
     console.error('❌ markAsRead error:', err);
     socket.emit('markAsReadError', { 
