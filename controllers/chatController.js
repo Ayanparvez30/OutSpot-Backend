@@ -705,6 +705,10 @@ exports.getGroupMembers = async (req, res) => {
       return res.status(404).json({ message: 'Group not found' });
     }
 
+    // ✅ Batch weekly points for all group members
+    const memberUserIds = chat.users.map(u => u.user.id);
+    const weekPointsMap = await getWeeklyPointsForUsers(memberUserIds);
+
     const members = chat.users.map(u => ({
       id: u.user.id,
       username: u.user.username,
@@ -712,6 +716,7 @@ exports.getGroupMembers = async (req, res) => {
       lastName: u.user.lastName,
       avatarUrl: firstAvatar(u.user.minime),
       totalPoints: u.user.totalPoints || 0,
+      thisWeekPoints: weekPointsMap.get(u.user.id) || 0,
       profileUrl: `/api/users/${u.user.id}/profile`,
       role: u.role,
       joinedAt: u.joinedAt,
