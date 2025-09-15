@@ -1,0 +1,475 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Outspot Chat Test</title>
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            border-radius: 10px;
+            padding: 20px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .connection-panel {
+            background: #e3f2fd;
+            padding: 15px;
+            border-radius: 8px;
+            margin-bottom: 20px;
+        }
+        .connection-panel h3 {
+            margin-top: 0;
+            color: #1976d2;
+        }
+        .input-group {
+            margin-bottom: 10px;
+        }
+        label {
+            display: inline-block;
+            width: 80px;
+            font-weight: bold;
+        }
+        input[type="text"], input[type="number"] {
+            width: 200px;
+            padding: 8px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        button {
+            background: #4caf50;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #45a049;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .disconnect-btn {
+            background: #f44336;
+        }
+        .disconnect-btn:hover {
+            background: #da190b;
+        }
+        .status {
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+            font-weight: bold;
+        }
+        .status.connected {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .status.disconnected {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .chat-container {
+            display: none;
+            margin-top: 20px;
+        }
+        .messages {
+            height: 400px;
+            overflow-y: auto;
+            border: 1px solid #ddd;
+            padding: 10px;
+            background: #fafafa;
+            margin-bottom: 10px;
+            border-radius: 4px;
+        }
+        .message {
+            margin-bottom: 15px;
+            padding: 10px;
+            background: white;
+            border-radius: 8px;
+            border-left: 4px solid #2196f3;
+        }
+        .message.own {
+            border-left-color: #4caf50;
+            background: #f1f8e9;
+        }
+        .message-header {
+            font-size: 12px;
+            color: #666;
+            margin-bottom: 5px;
+        }
+        .message-content {
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        .message-image {
+            max-width: 200px;
+            border-radius: 4px;
+            margin-top: 5px;
+        }
+        .read-receipts {
+            font-size: 11px;
+            color: #888;
+            font-style: italic;
+        }
+        .message-input {
+            display: flex;
+            gap: 10px;
+        }
+        .message-input input {
+            flex: 1;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+        }
+        .typing-indicator {
+            font-style: italic;
+            color: #666;
+            margin: 10px 0;
+            min-height: 20px;
+        }
+        .events-log {
+            margin-top: 20px;
+            height: 200px;
+            overflow-y: auto;
+            background: #f9f9f9;
+            border: 1px solid #ddd;
+            padding: 10px;
+            font-family: monospace;
+            font-size: 12px;
+            border-radius: 4px;
+        }
+        .read-receipt-panel {
+            background: #fff3e0;
+            padding: 10px;
+            border-radius: 4px;
+            margin: 10px 0;
+        }
+        .read-receipt-panel h4 {
+            margin-top: 0;
+            color: #e65100;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 Outspot Chat Test</h1>
+        
+        <!-- Connection Panel -->
+        <div class="connection-panel">
+            <h3>Connection Settings</h3>
+            <div class="input-group">
+                <label>Server:</label>
+                <input type="text" id="serverUrl" value="http://52.54.126.36:4000" />
+            </div>
+            <div class="input-group">
+                <label>User ID:</label>
+                <input type="number" id="userId" placeholder="Enter your user ID" />
+            </div>
+            <div class="input-group">
+                <label>Chat ID:</label>
+                <input type="number" id="chatId" placeholder="Enter chat ID" />
+            </div>
+            <button id="connectBtn">Connect</button>
+            <button id="disconnectBtn" class="disconnect-btn" disabled>Disconnect</button>
+        </div>
+
+        <div id="connectionStatus" class="status disconnected">
+            Disconnected
+        </div>
+
+        <!-- Chat Container -->
+        <div class="chat-container" id="chatContainer">
+            <h3>Chat Messages</h3>
+            <div class="messages" id="messages"></div>
+            <div class="typing-indicator" id="typingIndicator"></div>
+            
+            <!-- Read Receipt Panel -->
+            <div class="read-receipt-panel">
+                <h4>Read Receipts Test</h4>
+                <div class="input-group">
+                    <label>Message ID:</label>
+                    <input type="number" id="readReceiptMessageId" placeholder="Enter message ID to mark as read" />
+                    <button id="markAsReadBtn">Mark as Read</button>
+                </div>
+                <div style="font-size: 12px; color: #666; margin-top: 5px;">
+                    Click on any message to auto-mark it as read
+                </div>
+            </div>
+            
+            <!-- Message Input -->
+            <div class="message-input">
+                <input type="text" id="messageInput" placeholder="Type your message..." />
+                <input type="file" id="imageInput" accept="image/*" style="display: none;" />
+                <button id="imageBtn">📷</button>
+                <button id="sendBtn">Send</button>
+            </div>
+        </div>
+
+        <!-- Events Log -->
+        <div>
+            <h3>Events Log</h3>
+            <div class="events-log" id="eventsLog"></div>
+            <button onclick="clearLog()">Clear Log</button>
+        </div>
+    </div>
+
+    <script>
+        let socket = null;
+        let currentUserId = null;
+        let currentChatId = null;
+        let typingTimer = null;
+
+        // DOM elements
+        const connectBtn = document.getElementById('connectBtn');
+        const disconnectBtn = document.getElementById('disconnectBtn');
+        const connectionStatus = document.getElementById('connectionStatus');
+        const chatContainer = document.getElementById('chatContainer');
+        const messagesDiv = document.getElementById('messages');
+        const messageInput = document.getElementById('messageInput');
+        const sendBtn = document.getElementById('sendBtn');
+        const imageBtn = document.getElementById('imageBtn');
+        const imageInput = document.getElementById('imageInput');
+        const typingIndicator = document.getElementById('typingIndicator');
+        const eventsLog = document.getElementById('eventsLog');
+        const markAsReadBtn = document.getElementById('markAsReadBtn');
+        const readReceiptMessageId = document.getElementById('readReceiptMessageId');
+
+        function log(message) {
+            const timestamp = new Date().toLocaleTimeString();
+            eventsLog.innerHTML += `<div>[${timestamp}] ${message}</div>`;
+            eventsLog.scrollTop = eventsLog.scrollHeight;
+            console.log(message);
+        }
+
+        function clearLog() {
+            eventsLog.innerHTML = '';
+        }
+
+        function updateConnectionStatus(connected) {
+            if (connected) {
+                connectionStatus.textContent = `Connected as User ${currentUserId} in Chat ${currentChatId}`;
+                connectionStatus.className = 'status connected';
+                connectBtn.disabled = true;
+                disconnectBtn.disabled = false;
+                chatContainer.style.display = 'block';
+            } else {
+                connectionStatus.textContent = 'Disconnected';
+                connectionStatus.className = 'status disconnected';
+                connectBtn.disabled = false;
+                disconnectBtn.disabled = true;
+                chatContainer.style.display = 'none';
+            }
+        }
+
+        function addMessage(message, isOwn = false) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${isOwn ? 'own' : ''}`;
+            messageDiv.onclick = () => markMessageAsRead(message.id);
+            
+            let content = `
+                <div class="message-header">
+                    <strong>${message.sender ? message.sender.username : 'Unknown'} (ID: ${message.sender ? message.sender.id : 'N/A'})</strong>
+                    - ${new Date(message.createdAt).toLocaleTimeString()}
+                    - Message ID: ${message.id}
+                </div>
+            `;
+            
+            if (message.content) {
+                content += `<div class="message-content">${message.content}</div>`;
+            }
+            
+            if (message.imageUrl) {
+                content += `<img src="${message.imageUrl}" alt="Image" class="message-image" />`;
+            }
+            
+            if (message.readBy && Array.isArray(message.readBy)) {
+                content += `<div class="read-receipts">Read by: ${message.readBy.join(', ') || 'None'}</div>`;
+            }
+            
+            messageDiv.innerHTML = content;
+            messagesDiv.appendChild(messageDiv);
+            messagesDiv.scrollTop = messagesDiv.scrollHeight;
+        }
+
+        function markMessageAsRead(messageId) {
+            if (!socket || !currentChatId || !messageId) return;
+            
+            readReceiptMessageId.value = messageId;
+            socket.emit('markAsRead', {
+                chatId: currentChatId,
+                lastSeenMessageId: messageId
+            });
+            log(`📖 Marking message ${messageId} as read`);
+        }
+
+        connectBtn.addEventListener('click', () => {
+            const serverUrl = document.getElementById('serverUrl').value;
+            const userId = parseInt(document.getElementById('userId').value);
+            const chatId = parseInt(document.getElementById('chatId').value);
+
+            if (!serverUrl || !userId || !chatId) {
+                alert('Please fill in all fields');
+                return;
+            }
+
+            currentUserId = userId;
+            currentChatId = chatId;
+
+            log(`🔌 Connecting to ${serverUrl} as user ${userId}`);
+
+            socket = io(serverUrl, {
+                query: { userId: userId }
+            });
+
+            socket.on('connect', () => {
+                log(`✅ Connected to server`);
+                updateConnectionStatus(true);
+                
+                // Join the specific chat
+                socket.emit('joinChat', chatId);
+                log(`🏠 Joined chat ${chatId}`);
+            });
+
+            socket.on('socket:ready', (data) => {
+                log(`🚀 Socket ready for user ${data.userId}`);
+            });
+
+            socket.on('newMessage', (message) => {
+                log(`📨 New message: ${JSON.stringify(message)}`);
+                addMessage(message, message.sender.id === currentUserId);
+            });
+
+            socket.on('messageRead', (data) => {
+                log(`👁️ Message read: User ${data.userId} read up to message ${data.lastSeenMessageId} in chat ${data.chatId}`);
+            });
+
+            socket.on('messageError', (error) => {
+                log(`❌ Message error: ${JSON.stringify(error)}`);
+                alert(`Error: ${error.error}`);
+            });
+
+            socket.on('markAsReadError', (error) => {
+                log(`❌ Mark as read error: ${JSON.stringify(error)}`);
+                alert(`Mark as read error: ${error.error}`);
+            });
+
+            socket.on('typing', (data) => {
+                typingIndicator.textContent = `${data.username} is typing...`;
+                log(`⌨️ ${data.username} is typing`);
+            });
+
+            socket.on('stopTyping', (data) => {
+                typingIndicator.textContent = '';
+                log(`⌨️ ${data.username} stopped typing`);
+            });
+
+            socket.on('disconnect', () => {
+                log(`❌ Disconnected from server`);
+                updateConnectionStatus(false);
+            });
+
+            socket.on('connect_error', (error) => {
+                log(`❌ Connection error: ${error.message}`);
+                updateConnectionStatus(false);
+            });
+        });
+
+        disconnectBtn.addEventListener('click', () => {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+                currentUserId = null;
+                currentChatId = null;
+                messagesDiv.innerHTML = '';
+                log(`🔌 Manually disconnected`);
+            }
+        });
+
+        sendBtn.addEventListener('click', () => {
+            const content = messageInput.value.trim();
+            if (!content || !socket) return;
+
+            const messageData = {
+                chatId: currentChatId,
+                content: content,
+                senderId: currentUserId
+            };
+
+            socket.emit('sendMessage', messageData);
+            log(`📤 Sent message: ${content}`);
+            messageInput.value = '';
+        });
+
+        messageInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter') {
+                sendBtn.click();
+                return;
+            }
+
+            // Typing indicator
+            if (socket && currentChatId) {
+                socket.emit('typing', {
+                    chatId: currentChatId,
+                    username: `User${currentUserId}`
+                });
+
+                clearTimeout(typingTimer);
+                typingTimer = setTimeout(() => {
+                    socket.emit('stopTyping', {
+                        chatId: currentChatId,
+                        username: `User${currentUserId}`
+                    });
+                }, 1000);
+            }
+        });
+
+        imageBtn.addEventListener('click', () => {
+            imageInput.click();
+        });
+
+        imageInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (!file || !socket) return;
+
+            // For demo purposes, we'll just send a placeholder
+            // In real implementation, you'd upload to your server first
+            const messageData = {
+                chatId: currentChatId,
+                content: `[Image: ${file.name}]`,
+                senderId: currentUserId,
+                imageUrl: URL.createObjectURL(file) // This is just for demo
+            };
+
+            socket.emit('sendMessage', messageData);
+            log(`📤 Sent image: ${file.name}`);
+            imageInput.value = '';
+        });
+
+        markAsReadBtn.addEventListener('click', () => {
+            const messageId = parseInt(readReceiptMessageId.value);
+            if (!messageId) {
+                alert('Please enter a message ID');
+                return;
+            }
+            markMessageAsRead(messageId);
+        });
+
+        // Initialize
+        updateConnectionStatus(false);
+        log('🎯 Chat test page loaded. Fill in connection details and click Connect.');
+    </script>
+</body>
+</html>
