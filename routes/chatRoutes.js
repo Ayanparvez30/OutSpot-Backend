@@ -42,22 +42,21 @@ router.post(
   chatController.createGroupChat
 );
 
-router.put(
-  '/chats/:chatId',
-  checkAuth,
-  multer({ storage: multer.memoryStorage() }).single('image'),  chatController.updateGroupChat
-);
+// 🚀 NEW: Mark entire chat as read (simpler approach) - MUST come before /:chatId route
+router.put('/chats/markChatAsRead', checkAuth, chatController.markChatAsRead);
+
+// 🚀 NEW: Get chat read status
+router.get('/chats/readStatus/:chatId', checkAuth, chatController.getChatReadStatus);
 
 // Group chat lock/unlock (admin only)
 router.put('/chats/lock/:chatId', checkAuth, chatController.lockGroupChat);
 router.put('/chats/unlock/:chatId', checkAuth, chatController.unlockGroupChat);
 
-
-// 🚀 NEW: Mark entire chat as read (simpler approach)
-router.put('/chats/markChatAsRead', checkAuth, chatController.markChatAsRead);
-
-// 🚀 NEW: Get chat read status
-router.get('/chats/readStatus/:chatId', checkAuth, chatController.getChatReadStatus);
+router.put(
+  '/chats/:chatId',
+  checkAuth,
+  multer({ storage: multer.memoryStorage() }).single('image'),  chatController.updateGroupChat
+);
 
 module.exports = router; 
 
