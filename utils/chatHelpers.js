@@ -81,7 +81,89 @@ async function getBulkUnreadCounts(userId, chatIds) {
   }
 }
 
+/**
+ * Chat-based read receipt: Mark entire chat as read
+ * @param {number} userId 
+ * @param {number} chatId 
+ * @returns {Promise<boolean>}
+ */
+async function markChatAsRead(userId, chatId) {
+  try {
+    // Get the latest message in this chat
+    const latestMessage = await prisma.message.findFirst({
+      where: { chatId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true }
+    });
+
+    if (!latestMessage) {
+      console.log(`No messages found in chat ${chatId}, nothing to mark as read`);
+      return true; // No messages to mark as read
+    }
+
+    // Update user's lastSeenMessageId to the latest message
+    await prisma.userOnChat.updateMany({
+      where: { userId, chatId },
+      data: { lastSeenMessageId: latestMessage.id }
+    });
+
+    return true;
+  } catch (error) {
+    console.error('Error marking chat as read:', error);
+    return false;
+  }
+}
+
+/**
+ * Get chat read status for all users in a chat
+ * @param {number} chatId 
+ * @returns {Promise<Object>}
+ */
+async function getChatReadStatus(chatId) {
+  try {
+    const latestMessage = await prisma.message.findFirst({
+      where: { chatId },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true, createdAt: true }
+    });
+
+    if (!latestMessage) {
+      return { latestMessageId: null, readByUsers: [] };
+    }
+
+    // Get users who have read up to the latest message
+    const readByUsers = await prisma.userOnChat.findMany({
+      where: { 
+        chatId,
+        lastSeenMessageId: { gte: latestMessage.id }
+      },
+      select: { 
+        userId: true,
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true
+          }
+        }
+      }
+    });
+
+    return {
+      latestMessageId: latestMessage.id,
+      latestMessageAt: latestMessage.createdAt,
+      readByUsers: readByUsers.map(u => u.user)
+    };
+  } catch (error) {
+    console.error('Error getting chat read status:', error);
+    return { latestMessageId: null, readByUsers: [] };
+  }
+}
+
 module.exports = {
   getUnreadCount,
   getBulkUnreadCounts,
+  markChatAsRead,
+  getChatReadStatus,
 };

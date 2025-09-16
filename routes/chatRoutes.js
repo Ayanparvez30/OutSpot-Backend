@@ -56,5 +56,8 @@ router.put('/chats/unlock/:chatId', checkAuth, chatController.unlockGroupChat);
 // 🚀 NEW: Mark entire chat as read (simpler approach)
 router.put('/chats/markChatAsRead', checkAuth, chatController.markChatAsRead);
 
+// 🚀 NEW: Get chat read status
+router.get('/chats/readStatus/:chatId', checkAuth, chatController.getChatReadStatus);
+
 module.exports = router; 
 
