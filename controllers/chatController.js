@@ -15,7 +15,7 @@ const {
 } = require('../utils/weeklyPoints');
 
 // ✅ Chat helpers for unread counts
-const { getBulkUnreadCounts, markChatAsRead, getChatReadStatus } = require('../utils/chatHelpers');
+const { getBulkUnreadCounts } = require('../utils/chatHelpers');
 
 // -------------------- AWS + Multer setup --------------------
 const s3Client = new S3Client({
@@ -1031,29 +1031,49 @@ exports.markChatAsRead = async (req, res) => {
   }
 };
 
-// 🚀 NEW: Get chat read status for all users
+// 🚀 NEW: Get chat read status
 exports.getChatReadStatus = async (req, res) => {
   try {
-    const { chatId } = req.params;
     const currentUserId = req.authData.id;
+    const { chatId } = req.params;
+
+    if (!chatId) {
+      return res.status(400).json({ message: 'chatId is required' });
+    }
 
     // Verify user is part of the chat
     const userInChat = await prisma.userOnChat.findFirst({
       where: { userId: currentUserId, chatId: parseInt(chatId, 10) },
+      include: {
+        chat: {
+          include: {
+            messages: {
+              orderBy: { createdAt: 'desc' },
+              take: 1,
+              select: { id: true, createdAt: true }
+            }
+          }
+        }
+      }
     });
 
     if (!userInChat) {
       return res.status(403).json({ message: 'You are not part of this chat' });
     }
 
-    const readStatus = await getChatReadStatus(parseInt(chatId, 10));
+    const latestMessage = userInChat.chat.messages[0];
+    const isRead = latestMessage ? 
+      userInChat.lastSeenMessageId >= latestMessage.id : true;
 
     return res.json({
       chatId: parseInt(chatId, 10),
-      ...readStatus
+      lastSeenMessageId: userInChat.lastSeenMessageId,
+      latestMessageId: latestMessage?.id || 0,
+      isRead,
+      success: true
     });
   } catch (error) {
-    console.error('Error getting chat read status:', error);
+    console.error('Error in getChatReadStatus:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
