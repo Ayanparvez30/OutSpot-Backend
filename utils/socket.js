@@ -97,9 +97,27 @@ function initSocket(server) {
 
     // ✅ mark entire chat as read (chat-based approach)
     socket.on('markChatAsRead', async ({ chatId }) => {
-      const userId = socket.data.userId;
-      if (!userId || !chatId) {
-        console.log('❌ markChatAsRead: Missing required fields', { userId, chatId });
+      const userId = socket.data?.userId;
+      
+      if (!userId) {
+        console.log('❌ markChatAsRead: No userId found in socket data. User might not be authenticated.', { 
+          socketId: socket.id, 
+          chatId,
+          handshakeUserId: socket.handshake.query?.userId 
+        });
+        socket.emit('markChatAsReadError', { 
+          error: 'User not authenticated',
+          chatId
+        });
+        return;
+      }
+      
+      if (!chatId) {
+        console.log('❌ markChatAsRead: chatId is required', { userId, chatId });
+        socket.emit('markChatAsReadError', { 
+          error: 'chatId is required',
+          chatId
+        });
         return;
       }
 
@@ -113,6 +131,10 @@ function initSocket(server) {
 
         if (!userInChat) {
           console.log(`❌ User ${userId} not found in chat ${chatId}`);
+          socket.emit('markChatAsReadError', { 
+            error: 'User not part of this chat',
+            chatId
+          });
           return;
         }
 
@@ -138,7 +160,8 @@ function initSocket(server) {
         console.error('❌ markChatAsRead error:', err);
         socket.emit('markChatAsReadError', { 
           error: 'Failed to mark chat as read',
-          chatId
+          chatId,
+          details: err.message
         });
       }
     });

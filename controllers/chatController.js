@@ -15,7 +15,7 @@ const {
 } = require('../utils/weeklyPoints');
 
 // ✅ Chat helpers for unread counts
-const { getBulkUnreadCounts } = require('../utils/chatHelpers');
+const { getBulkUnreadCounts, markChatAsRead, getChatReadStatus } = require('../utils/chatHelpers');
 
 // -------------------- AWS + Multer setup --------------------
 const s3Client = new S3Client({
