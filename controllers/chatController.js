@@ -964,14 +964,16 @@ exports.unlockGroupChat = async (req, res) => {
   }
 };
 
-// 🚀 NEW: Bulk mark messages as read (for catching up)
-exports.bulkMarkAsRead = async (req, res) => {
+
+
+// 🚀 NEW: Mark entire chat as read (simpler approach)
+exports.markChatAsRead = async (req, res) => {
   try {
     const currentUserId = req.authData.id;
-    const { chatId, lastSeenMessageId } = req.body;
+    const { chatId } = req.body;
 
-    if (!chatId || !lastSeenMessageId) {
-      return res.status(400).json({ message: 'chatId and lastSeenMessageId are required' });
+    if (!chatId) {
+      return res.status(400).json({ message: 'chatId is required' });
     }
 
     // Verify user is part of the chat
@@ -983,31 +985,34 @@ exports.bulkMarkAsRead = async (req, res) => {
       return res.status(403).json({ message: 'You are not part of this chat' });
     }
 
-    // Verify the message exists in this chat
-    const messageExists = await prisma.message.findFirst({
-      where: { 
-        id: parseInt(lastSeenMessageId, 10), 
-        chatId: parseInt(chatId, 10) 
-      }
+    // Get the latest message in this chat
+    const latestMessage = await prisma.message.findFirst({
+      where: { chatId: parseInt(chatId, 10) },
+      orderBy: { createdAt: 'desc' },
+      select: { id: true }
     });
 
-    if (!messageExists) {
-      return res.status(400).json({ message: 'Message not found in this chat' });
+    if (!latestMessage) {
+      return res.json({ 
+        message: 'No messages in chat to mark as read',
+        chatId: parseInt(chatId, 10),
+        success: true
+      });
     }
 
-    // Update the lastSeenMessageId using the specific UserOnChat record
-    const updated = await prisma.userOnChat.update({
+    // Update lastSeenMessageId to the latest message
+    await prisma.userOnChat.update({
       where: { id: userInChat.id },
-      data: { lastSeenMessageId: parseInt(lastSeenMessageId, 10) },
+      data: { lastSeenMessageId: latestMessage.id }
     });
 
-    // Emit socket event to notify other users
+    // Emit socket event to notify other users (optional)
     try {
       const io = require('../utils/socket').getIO();
-      io.to(`chat_${chatId}`).emit('messageRead', {
+      io.to(`chat_${chatId}`).emit('chatRead', {
         chatId: parseInt(chatId, 10),
         userId: currentUserId,
-        lastSeenMessageId: parseInt(lastSeenMessageId, 10),
+        readAt: new Date().toISOString()
       });
     } catch (socketErr) {
       console.error('Socket emission error:', socketErr);
@@ -1015,13 +1020,13 @@ exports.bulkMarkAsRead = async (req, res) => {
     }
 
     return res.json({ 
-      message: 'Messages marked as read',
+      message: 'Chat marked as read',
       chatId: parseInt(chatId, 10),
-      lastSeenMessageId: parseInt(lastSeenMessageId, 10),
+      lastSeenMessageId: latestMessage.id,
       success: true
     });
   } catch (error) {
-    console.error('Error in bulkMarkAsRead:', error);
+    console.error('Error in markChatAsRead:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
