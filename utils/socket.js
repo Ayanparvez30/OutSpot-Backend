@@ -95,76 +95,57 @@ function initSocket(server) {
       socket.emit('socket:ready', { userId });
     }
 
-    // ✅ mark entire chat as read (chat-based approach)
-    socket.on('markChatAsRead', async ({ chatId }) => {
-      const userId = socket.data?.userId;
-      
-      if (!userId) {
-        console.log('❌ markChatAsRead: No userId found in socket data. User might not be authenticated.', { 
-          socketId: socket.id, 
-          chatId,
-          handshakeUserId: socket.handshake.query?.userId 
-        });
-        socket.emit('markChatAsReadError', { 
-          error: 'User not authenticated',
-          chatId
-        });
-        return;
-      }
-      
-      if (!chatId) {
-        console.log('❌ markChatAsRead: chatId is required', { userId, chatId });
-        socket.emit('markChatAsReadError', { 
-          error: 'chatId is required',
-          chatId
-        });
-        return;
-      }
+    // ✅ mark entire chat as read (chat-based approach) - DISABLED: Using REST API only
+    // socket.on('markChatAsRead', async ({ chatId }) => {
+    //   const userId = socket.data.userId;
+    //   if (!userId || !chatId) {
+    //     console.log('❌ markChatAsRead: No userId found in socket data. User might not be authenticated.', { 
+    //       socketId: socket.id, 
+    //       chatId, 
+    //       handshakeUserId: socket.handshake.query?.userId 
+    //     });
+    //     return;
+    //   }
 
-      console.log(`🔍 markChatAsRead called by User ${userId} for chat ${chatId}`);
+    //   console.log(`🔍 markChatAsRead called by User ${userId} for chat ${chatId}`);
 
-      try {
-        // Verify user is part of the chat
-        const userInChat = await prisma.userOnChat.findFirst({
-          where: { userId, chatId: parseInt(chatId, 10) }
-        });
+    //   try {
+    //     // Verify user is part of the chat
+    //     const userInChat = await prisma.userOnChat.findFirst({
+    //       where: { userId, chatId: parseInt(chatId, 10) }
+    //     });
 
-        if (!userInChat) {
-          console.log(`❌ User ${userId} not found in chat ${chatId}`);
-          socket.emit('markChatAsReadError', { 
-            error: 'User not part of this chat',
-            chatId
-          });
-          return;
-        }
+    //     if (!userInChat) {
+    //       console.log(`❌ User ${userId} not found in chat ${chatId}`);
+    //       return;
+    //     }
 
-        // Update lastReadAt to current timestamp for chat-based read receipt
-        const updated = await prisma.userOnChat.update({
-          where: { id: userInChat.id },
-          data: { 
-            lastSeenMessageId: await getLatestMessageId(parseInt(chatId, 10)),
-            // Add lastReadAt if you add it to schema later
-          }
-        });
+    //     // Update lastReadAt to current timestamp for chat-based read receipt
+    //     const updated = await prisma.userOnChat.update({
+    //       where: { id: userInChat.id },
+    //       data: { 
+    //         lastSeenMessageId: await getLatestMessageId(parseInt(chatId, 10)),
+    //         // Add lastReadAt if you add it to schema later
+    //       }
+    //     });
 
-        console.log(`✅ User ${userId} marked chat ${chatId} as read`);
+    //     console.log(`✅ User ${userId} marked chat ${chatId} as read`);
 
-        // Notify other users in the chat that this user has read the chat
-        socket.to(`chat_${chatId}`).emit('chatRead', {
-          chatId: parseInt(chatId, 10),
-          userId,
-          readAt: new Date().toISOString()
-        });
+    //     // Notify other users in the chat that this user has read the chat
+    //     socket.to(`chat_${chatId}`).emit('chatRead', {
+    //       chatId: parseInt(chatId, 10),
+    //       userId,
+    //       readAt: new Date().toISOString()
+    //     });
 
-      } catch (err) {
-        console.error('❌ markChatAsRead error:', err);
-        socket.emit('markChatAsReadError', { 
-          error: 'Failed to mark chat as read',
-          chatId,
-          details: err.message
-        });
-      }
-    });
+    //   } catch (err) {
+    //     console.error('❌ markChatAsRead error:', err);
+    //     socket.emit('markChatAsReadError', { 
+    //       error: 'Failed to mark chat as read',
+    //       chatId
+    //     });
+    //   }
+    // });
 
     // --------------- CHAT EVENTS (as you had) ---------------
     socket.on('joinChat', (chatId) => {
