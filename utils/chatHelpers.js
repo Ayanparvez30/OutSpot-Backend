@@ -72,6 +72,15 @@ async function getBulkUnreadCounts(userId, chatIds) {
       });
       
       unreadCounts.set(chatId, count);
+      
+      // Debug logging for specific chat if it has unread messages
+      if (count > 0) {
+        console.log(`🔍 Chat ${chatId} unread count for user ${userId}:`, {
+          lastSeenMessageId,
+          unreadCount: count,
+          query: { chatId, 'id > ': lastSeenMessageId }
+        });
+      }
     }
 
     return unreadCounts;

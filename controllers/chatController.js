@@ -1001,9 +1001,16 @@ exports.markChatAsRead = async (req, res) => {
     }
 
     // Update lastSeenMessageId to the latest message
-    await prisma.userOnChat.update({
+    const updated = await prisma.userOnChat.update({
       where: { id: userInChat.id },
       data: { lastSeenMessageId: latestMessage.id }
+    });
+
+    console.log(`✅ Updated UserOnChat for user ${currentUserId} in chat ${chatId}:`, {
+      userOnChatId: userInChat.id,
+      oldLastSeenMessageId: userInChat.lastSeenMessageId,
+      newLastSeenMessageId: latestMessage.id,
+      updatedRecord: updated
     });
 
     // Emit socket event to notify other users (optional)
