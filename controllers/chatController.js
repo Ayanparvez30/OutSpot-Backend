@@ -380,7 +380,7 @@ exports.getMyChats = async (req, res) => {
       // ✅ Get accurate unread count
       const unreadCount = unreadCountsMap.get(chat.id) || 0;
 
-      // ✅ Get latest message for preview
+      // ✅ Get latest message for preview with proper readBy information
       const latestMessage = chat.messages.length > 0 
         ? chat.messages[0] // Already ordered desc, so first is latest
         : null;
@@ -394,7 +394,11 @@ exports.getMyChats = async (req, res) => {
           content: latestMessage.content,
           imageUrl: latestMessage.imageUrl,
           createdAt: latestMessage.createdAt,
-          senderId: latestMessage.senderId
+          senderId: latestMessage.senderId,
+          // ✅ Add readBy array based on lastSeenMessageId
+          readBy: chat.users
+            .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
+            .map(u => u.userId)
         } : null,
         totalMessages: chat._count.messages
       };
