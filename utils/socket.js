@@ -49,6 +49,16 @@ async function smartPersistLocation(userId, latitude, longitude, threshold = 50)
   return { moved: true, dist };
 }
 
+// Helper function to get latest message ID in a chat
+async function getLatestMessageId(chatId) {
+  const latestMessage = await prisma.message.findFirst({
+    where: { chatId },
+    orderBy: { createdAt: 'desc' },
+    select: { id: true }
+  });
+  return latestMessage?.id || 0;
+}
+
 function initSocket(server) {
   const io = new Server(server, { cors: { origin: '*' } });
 
@@ -85,7 +95,7 @@ function initSocket(server) {
       socket.emit('socket:ready', { userId });
     }
 
-    // ✅ mark entire chat as read (simpler approach)
+    // ✅ mark entire chat as read (chat-based approach)
     socket.on('markChatAsRead', async ({ chatId }) => {
       const userId = socket.data.userId;
       if (!userId || !chatId) {
@@ -106,27 +116,18 @@ function initSocket(server) {
           return;
         }
 
-        // Get the latest message in this chat
-        const latestMessage = await prisma.message.findFirst({
-          where: { chatId: parseInt(chatId, 10) },
-          orderBy: { createdAt: 'desc' },
-          select: { id: true }
-        });
-
-        if (!latestMessage) {
-          console.log(`ℹ️ No messages found in chat ${chatId}, nothing to mark as read`);
-          return;
-        }
-
-        // Update lastSeenMessageId to the latest message
+        // Update lastReadAt to current timestamp for chat-based read receipt
         const updated = await prisma.userOnChat.update({
           where: { id: userInChat.id },
-          data: { lastSeenMessageId: latestMessage.id }
+          data: { 
+            lastSeenMessageId: await getLatestMessageId(parseInt(chatId, 10)),
+            // Add lastReadAt if you add it to schema later
+          }
         });
 
-        console.log(`✅ User ${userId} marked chat ${chatId} as read (up to message ${latestMessage.id})`);
+        console.log(`✅ User ${userId} marked chat ${chatId} as read`);
 
-        // Optionally notify other users in the chat that this user has read the chat
+        // Notify other users in the chat that this user has read the chat
         socket.to(`chat_${chatId}`).emit('chatRead', {
           chatId: parseInt(chatId, 10),
           userId,
@@ -141,7 +142,6 @@ function initSocket(server) {
         });
       }
     });
-
 
     // --------------- CHAT EVENTS (as you had) ---------------
     socket.on('joinChat', (chatId) => {

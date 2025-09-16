@@ -15,7 +15,7 @@ const {
 } = require('../utils/weeklyPoints');
 
 // ✅ Chat helpers for unread counts
-const { getBulkUnreadCounts } = require('../utils/chatHelpers');
+const { getBulkUnreadCounts, markChatAsRead, getChatReadStatus } = require('../utils/chatHelpers');
 
 // -------------------- AWS + Multer setup --------------------
 const s3Client = new S3Client({
@@ -1027,6 +1027,33 @@ exports.markChatAsRead = async (req, res) => {
     });
   } catch (error) {
     console.error('Error in markChatAsRead:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// 🚀 NEW: Get chat read status for all users
+exports.getChatReadStatus = async (req, res) => {
+  try {
+    const { chatId } = req.params;
+    const currentUserId = req.authData.id;
+
+    // Verify user is part of the chat
+    const userInChat = await prisma.userOnChat.findFirst({
+      where: { userId: currentUserId, chatId: parseInt(chatId, 10) },
+    });
+
+    if (!userInChat) {
+      return res.status(403).json({ message: 'You are not part of this chat' });
+    }
+
+    const readStatus = await getChatReadStatus(parseInt(chatId, 10));
+
+    return res.json({
+      chatId: parseInt(chatId, 10),
+      ...readStatus
+    });
+  } catch (error) {
+    console.error('Error getting chat read status:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
