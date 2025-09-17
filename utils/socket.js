@@ -60,8 +60,8 @@ async function getLatestMessageId(chatId) {
   return latestMessage?.id || 0;
 }
 
-// Function to send push notifications to offline users
-async function sendPushNotificationToOfflineUsers(chatId, senderName, messageContent) {
+// Updated function to exclude the sender from receiving push notifications
+async function sendPushNotificationToOfflineUsers(chatId, senderId, senderName, messageContent) {
   try {
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
@@ -76,6 +76,9 @@ async function sendPushNotificationToOfflineUsers(chatId, senderName, messageCon
     // Iterate through users in the chat
     for (const userOnChat of chat.users) {
       const user = userOnChat.user;
+
+      // Skip the sender
+      if (user.id === senderId) continue;
 
       // Check if the user is offline (not connected to the socket)
       const isUserOnline = ioInstance.sockets.adapter.rooms.has(`user:${user.id}`);
@@ -281,10 +284,10 @@ function initSocket(server) {
           createdAt: message.createdAt,
         });
 
-        // Send push notifications to offline users
+        // Send push notifications to offline users, excluding the sender
         const sender = await prisma.user.findUnique({ where: { id: senderId } });
         if (sender) {
-          sendPushNotificationToOfflineUsers(chatId, sender.username, content);
+          sendPushNotificationToOfflineUsers(chatId, senderId, sender.username, content);
         }
       } catch (error) {
         console.error('❌ Error sending message:', error);
