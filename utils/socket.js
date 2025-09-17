@@ -61,7 +61,7 @@ async function getLatestMessageId(chatId) {
 }
 
 // Updated function to exclude the sender from receiving push notifications
-async function sendPushNotificationToOfflineUsers(chatId, senderId, senderName, messageContent) {
+async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstName, senderLastName, messageContent) {
   try {
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
@@ -87,12 +87,12 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderName, 
         const notificationPayload = {
           token: user.fcmToken,
           notification: {
-            title: `${senderName} sent a message`,
+            title: `${senderFirstName} ${senderLastName} sent you a message`,
             body: messageContent,
           },
           data: {
             chatId: String(chatId),
-            senderName,
+            senderName: `${senderFirstName} ${senderLastName}`,
           },
         };
 
@@ -284,10 +284,10 @@ function initSocket(server) {
           createdAt: message.createdAt,
         });
 
-        // Send push notifications to offline users, excluding the sender
+        // Send push notifications to offline users, including sender's first and last name
         const sender = await prisma.user.findUnique({ where: { id: senderId } });
         if (sender) {
-          sendPushNotificationToOfflineUsers(chatId, senderId, sender.username, content);
+          sendPushNotificationToOfflineUsers(chatId, senderId, sender.firstName, sender.lastName, content);
         }
       } catch (error) {
         console.error('❌ Error sending message:', error);
