@@ -70,8 +70,7 @@ function initSocket(server) {
     if (userId) {
       socket.data.userId = userId;
 
-      // Join user to their own room for direct messages
-      socket.join(`user_${userId}`);
+      socket.join(`user:${userId}`);
 
       const friendIds = await getFriendIds(userId);
       friendIds.forEach((fid) => {
@@ -227,7 +226,8 @@ function initSocket(server) {
           data: { lastSeenMessageId: message.id }
         });
 
-        io.to(`chat_${chatId}`).emit('newMessage', {
+        // Notify other users in the chat when a message is sent
+        socket.to(`chat_${chatId}`).emit('newMessage', {
           id: message.id,
           content: message.content,
           imageUrl: message.imageUrl,
@@ -236,37 +236,22 @@ function initSocket(server) {
           createdAt: message.createdAt,
         });
 
-        // Notify all users in the chat room
-        const participants = await prisma.userOnChat.findMany({
+        // Notify offline users
+        const chatUsers = await prisma.userOnChat.findMany({
           where: { chatId },
-          select: { userId: true },
+          select: { userId: true, user: { select: { fcmToken: true } } },
         });
 
-        for (const participant of participants) {
-          if (participant.userId !== senderId) {
-            const isConnected = Array.from(io.sockets.sockets.values()).some(
-              (s) => s.data.userId === participant.userId
-            );
-
-            if (!isConnected) {
-              // Send push notification to offline user
-              const recipient = await prisma.user.findUnique({
-                where: { id: participant.userId },
-                select: { fcmToken: true },
+        chatUsers.forEach(({ userId: chatUserId, user }) => {
+          if (chatUserId !== senderId && !io.sockets.sockets.has(chatUserId)) {
+            if (user.fcmToken) {
+              notifyUser(chatUserId, 'chat_message', 'New Message', content, {
+                chatId,
+                senderId,
               });
-
-              if (recipient?.fcmToken) {
-                await notifyUser(
-                  participant.userId,
-                  'chat_message',
-                  'New Message',
-                  `You have a new message in chat ${chatId}`,
-                  { chatId, senderId: userId }
-                );
-              }
             }
           }
-        }
+        });
       } catch (error) {
         console.error('❌ Error sending message:', error);
         socket.emit('messageError', { error: 'Failed to send message' });
