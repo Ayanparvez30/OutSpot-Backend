@@ -671,10 +671,9 @@ exports.resendOtp = async (req, res) => {
     return response.response_with_code(res, 500, 'Internal server error');
   }
 };
-
 exports.login = async (req, res) => {
   try {
-    const { identifier, password, forceLogin } = req.body;
+    const { identifier, password } = req.body;
 
     if (!identifier || !password) {
       return response.response_with_code(res, 400, 'Identifier and password required');
@@ -694,21 +693,39 @@ exports.login = async (req, res) => {
       return response.response_with_code(res, 401, 'User not found, please sign up first');
     }
 
-    // Check password
+    // Password check
     const passwordMatch = comparePassword(password, user.password);
     if (!passwordMatch) {
       return response.response_with_code(res, 401, 'Invalid credentials');
     }
 
-    // Check if user is verified
+    // Must be verified
     if (!user.isVerified) {
       return response.response_with_code(res, 403, 'User not verified');
     }
 
-    // If a token exists but onboarding incomplete → rotate token & let them resume
-if (user.authorization && !forceLogin) {
-  if (isOnboardingIncomplete(user)) {
+    // Always rotate token (replace any existing session)
     const newToken = randomKey(40);
+
+    // If onboarding incomplete: rotate token and explicitly allow resume
+    if (isOnboardingIncomplete(user)) {
+      await prisma.user.update({
+        where: { id: user.id },
+        data: { authorization: newToken }
+      });
+
+      return response.true_status(res, {
+        token: newToken,
+        user: {
+          id: user.id,
+          email: user.email,
+          phone: user.phone,
+          username: user.username,
+        },
+      }, 'Resumed unfinished onboarding (token rotated).');
+    }
+
+    // Normal login: replace old session (no 409)
     await prisma.user.update({
       where: { id: user.id },
       data: { authorization: newToken }
@@ -722,31 +739,8 @@ if (user.authorization && !forceLogin) {
         phone: user.phone,
         username: user.username,
       },
-    }, 'Resumed unfinished onboarding (token rotated).');
-  }
+    }, user.authorization ? 'Existing session replaced by new login.' : 'Login successful');
 
-  // else, still block unless client passes forceLogin
-  return response.response_with_code(res, 409, 'Another device is logged in. Force login?');
-}
-
-
-    
-// Generate/rotate token for password login
-const newToken = randomKey(40);
-await prisma.user.update({
-  where: { id: user.id },
-  data: { authorization: newToken },
-});
-
-return response.true_status(res, {
-  token: newToken,
-  user: {
-    id: user.id,
-    email: user.email,
-    phone: user.phone,
-    username: user.username,
-  },
-}, user.authorization ? 'Existing session replaced by new login.' : 'Login successful');
   } catch (error) {
     console.error('Login error:', error);
     return response.response_with_code(res, 500, 'Internal server error');
