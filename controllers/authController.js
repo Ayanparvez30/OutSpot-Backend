@@ -13,12 +13,11 @@ const { addPointsWithMultiplier } = require('../utils/points');
 
 const REFERRAL_REWARD_POINTS = Number(process.env.REFERRAL_REWARD_POINTS || 50);
 function isOnboardingIncomplete(user) {
-  // adjust the checks to match your flow
-  // e.g., you require firstName, lastName, bodyType, bodyShapeUrl to complete onboarding
+
   const missingProfile =
     !user.firstName || !user.lastName || !user.bodyType || !user.bodyShapeUrl;
 
-  // you can add more conditions later (e.g., miniMe saved, etc.)
+
   return missingProfile;
 }
 
@@ -731,24 +730,23 @@ if (user.authorization && !forceLogin) {
 }
 
 
-    // Generate new auth token
-    const newToken = randomKey(40);
+    
+// Generate/rotate token for password login
+const newToken = randomKey(40);
+await prisma.user.update({
+  where: { id: user.id },
+  data: { authorization: newToken },
+});
 
-    await prisma.user.update({
-      where: { id: user.id },
-      data: { authorization: newToken },
-    });
-
-    return response.true_status(res, {
-      token: newToken,
-      user: {
-        id: user.id,
-        email: user.email,
-        phone: user.phone,
-        username: user.username,
-      },
-    }, 'Login successful');
-
+return response.true_status(res, {
+  token: newToken,
+  user: {
+    id: user.id,
+    email: user.email,
+    phone: user.phone,
+    username: user.username,
+  },
+}, user.authorization ? 'Existing session replaced by new login.' : 'Login successful');
   } catch (error) {
     console.error('Login error:', error);
     return response.response_with_code(res, 500, 'Internal server error');
