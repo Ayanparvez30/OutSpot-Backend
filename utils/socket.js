@@ -1,6 +1,7 @@
 // utils/socket.js
 const { Server } = require('socket.io');
 const { PrismaClient } = require('@prisma/client');
+const admin = require('../firebaseAdmin'); // Import Firebase Admin
 const prisma = new PrismaClient();
 
 let ioInstance;
@@ -57,6 +58,52 @@ async function getLatestMessageId(chatId) {
     select: { id: true }
   });
   return latestMessage?.id || 0;
+}
+
+// Function to send push notifications to offline users
+async function sendPushNotificationToOfflineUsers(chatId, senderName, messageContent) {
+  try {
+    const chat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      include: { users: { include: { user: true } } },
+    });
+
+    if (!chat) {
+      console.error('Chat not found for push notification');
+      return;
+    }
+
+    // Iterate through users in the chat
+    for (const userOnChat of chat.users) {
+      const user = userOnChat.user;
+
+      // Check if the user is offline (not connected to the socket)
+      const isUserOnline = ioInstance.sockets.adapter.rooms.has(`user:${user.id}`);
+
+      if (!isUserOnline && user.fcmToken) {
+        const notificationPayload = {
+          token: user.fcmToken,
+          notification: {
+            title: `${senderName} sent a message`,
+            body: messageContent,
+          },
+          data: {
+            chatId: String(chatId),
+            senderName,
+          },
+        };
+
+        try {
+          await admin.messaging().send(notificationPayload);
+          console.log(`Push notification sent to user ${user.id}`);
+        } catch (error) {
+          console.error(`Failed to send push notification to user ${user.id}:`, error);
+        }
+      }
+    }
+  } catch (error) {
+    console.error('Error in sendPushNotificationToOfflineUsers:', error);
+  }
 }
 
 function initSocket(server) {
@@ -233,6 +280,12 @@ function initSocket(server) {
           chatId: message.chatId,
           createdAt: message.createdAt,
         });
+
+        // Send push notifications to offline users
+        const sender = await prisma.user.findUnique({ where: { id: senderId } });
+        if (sender) {
+          sendPushNotificationToOfflineUsers(chatId, sender.username, content);
+        }
       } catch (error) {
         console.error('❌ Error sending message:', error);
         socket.emit('messageError', { error: 'Failed to send message' });
