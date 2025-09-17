@@ -60,18 +60,23 @@ async function getLatestMessageId(chatId) {
   return latestMessage?.id || 0;
 }
 
-// Updated function to remove 'sent you a message' from the notification title
+// Updated function to include group name in the notification title if the message is from a group
 async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstName, senderLastName, messageContent) {
   try {
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
-      include: { users: { include: { user: true } } },
+      include: { users: { include: { user: true } }, name: true, isGroup: true },
     });
 
     if (!chat) {
       console.error('Chat not found for push notification');
       return;
     }
+
+    // Determine the notification title based on whether the chat is a group
+    const notificationTitle = chat.isGroup
+      ? `${senderFirstName} ${senderLastName} (inside ${chat.name})`
+      : `${senderFirstName} ${senderLastName}`;
 
     // Iterate through users in the chat
     for (const userOnChat of chat.users) {
@@ -87,7 +92,7 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
         const notificationPayload = {
           token: user.fcmToken,
           notification: {
-            title: `${senderFirstName} ${senderLastName}`,
+            title: notificationTitle,
             body: messageContent,
           },
           data: {
