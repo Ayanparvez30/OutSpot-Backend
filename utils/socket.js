@@ -1,7 +1,6 @@
 // utils/socket.js
 const { Server } = require('socket.io');
 const { PrismaClient } = require('@prisma/client');
-const { notifyUser } = require('../utils/notificationService');
 const prisma = new PrismaClient();
 
 let ioInstance;
@@ -70,8 +69,7 @@ function initSocket(server) {
     if (userId) {
       socket.data.userId = userId;
 
-      // Join user to their own room for direct messages
-      socket.join(`user_${userId}`);
+      socket.join(`user:${userId}`);
 
       const friendIds = await getFriendIds(userId);
       friendIds.forEach((fid) => {
@@ -235,38 +233,6 @@ function initSocket(server) {
           chatId: message.chatId,
           createdAt: message.createdAt,
         });
-
-        // Notify all users in the chat room
-        const participants = await prisma.userOnChat.findMany({
-          where: { chatId },
-          select: { userId: true },
-        });
-
-        for (const participant of participants) {
-          if (participant.userId !== senderId) {
-            const isConnected = Array.from(io.sockets.sockets.values()).some(
-              (s) => s.data.userId === participant.userId
-            );
-
-            if (!isConnected) {
-              // Send push notification to offline user
-              const recipient = await prisma.user.findUnique({
-                where: { id: participant.userId },
-                select: { fcmToken: true },
-              });
-
-              if (recipient?.fcmToken) {
-                await notifyUser(
-                  participant.userId,
-                  'chat_message',
-                  'New Message',
-                  `You have a new message in chat ${chatId}`,
-                  { chatId, senderId: userId }
-                );
-              }
-            }
-          }
-        }
       } catch (error) {
         console.error('❌ Error sending message:', error);
         socket.emit('messageError', { error: 'Failed to send message' });
