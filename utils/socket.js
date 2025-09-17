@@ -60,7 +60,7 @@ async function getLatestMessageId(chatId) {
   return latestMessage?.id || 0;
 }
 
-// Updated function to exclude the sender from receiving push notifications
+// Updated function to remove 'sent you a message' from the notification title
 async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstName, senderLastName, messageContent) {
   try {
     const chat = await prisma.chat.findUnique({
@@ -87,7 +87,7 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
         const notificationPayload = {
           token: user.fcmToken,
           notification: {
-            title: `${senderFirstName} ${senderLastName} sent you a message`,
+            title: `${senderFirstName} ${senderLastName}`,
             body: messageContent,
           },
           data: {
