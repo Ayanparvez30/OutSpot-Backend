@@ -12,6 +12,15 @@ const nodemailer = require('nodemailer');
 const { addPointsWithMultiplier } = require('../utils/points');
 
 const REFERRAL_REWARD_POINTS = Number(process.env.REFERRAL_REWARD_POINTS || 50);
+function isOnboardingIncomplete(user) {
+  // adjust the checks to match your flow
+  // e.g., you require firstName, lastName, bodyType, bodyShapeUrl to complete onboarding
+  const missingProfile =
+    !user.firstName || !user.lastName || !user.bodyType || !user.bodyShapeUrl;
+
+  // you can add more conditions later (e.g., miniMe saved, etc.)
+  return missingProfile;
+}
 
 // --- helper: refer when user becomes verified or at creation ---
 // NOTE: no nested transaction here; caller may pass a tx client.
@@ -697,10 +706,30 @@ exports.login = async (req, res) => {
       return response.response_with_code(res, 403, 'User not verified');
     }
 
-    // Check active session token
-    if (user.authorization && !forceLogin) {
-      return response.response_with_code(res, 409, 'Another device is logged in. Force login?');
-    }
+    // If a token exists but onboarding incomplete → rotate token & let them resume
+if (user.authorization && !forceLogin) {
+  if (isOnboardingIncomplete(user)) {
+    const newToken = randomKey(40);
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { authorization: newToken }
+    });
+
+    return response.true_status(res, {
+      token: newToken,
+      user: {
+        id: user.id,
+        email: user.email,
+        phone: user.phone,
+        username: user.username,
+      },
+    }, 'Resumed unfinished onboarding (token rotated).');
+  }
+
+  // else, still block unless client passes forceLogin
+  return response.response_with_code(res, 409, 'Another device is logged in. Force login?');
+}
+
 
     // Generate new auth token
     const newToken = randomKey(40);
