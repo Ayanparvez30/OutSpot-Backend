@@ -5,6 +5,7 @@ const prisma = new PrismaClient();
 const uploadToS3 = require('../utils/s3Upload'); // তোমারটা ব্যবহার করো
 const { addPointsWithMultiplier } = require('../utils/points');
 const { notifyNewChallenge } = require('../utils/challengeNotifications');
+const { notifyUser } = require('../utils/notificationService'); // Import notification service
 
 // ✅ weekly points single source of truth
 const {
@@ -50,6 +51,22 @@ exports.createChallenge = async (req, res) => {
         requiredPhotos,
       },
     });
+
+    // Notify all users about the new challenge
+    const users = await prisma.user.findMany({
+      select: { id: true, fcmToken: true },
+    });
+
+    for (const user of users) {
+      await notifyUser(
+        user.id,
+        'NEW_CHALLENGE',
+        `New ${frequency} Challenge Available!`,
+        `Participate in the new ${frequency.toLowerCase()} challenge: ${challenge.title}.`,
+        { challengeId: challenge.id }
+      );
+    }
+
     res.json(challenge);
   } catch (err) {
     console.error('Create Challenge Error:', err);

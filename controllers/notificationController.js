@@ -54,7 +54,8 @@ exports.getNotifications = async (req, res) => {
       description: n.description,
       isRead: n.isRead,
       createdAt: n.createdAt,
-      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null
+      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null,
+      challengeId: n.data?.challengeId || null // Include challengeId if available
     }));
 
     res.status(200).json({
