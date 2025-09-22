@@ -203,7 +203,7 @@ async function getFull(req, res, frequency) {
         earnedPoints: awardedByUser.get(uid) ?? challenge.points
       };
     })
-    // কিছু স্টেবল অর্ডার (username/id ভিত্তিক)
+  
     .sort((a, b) => String(a.username).localeCompare(String(b.username)))
     .slice(0, 12);
 
