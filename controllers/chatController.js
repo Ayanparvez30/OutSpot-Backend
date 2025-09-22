@@ -1151,56 +1151,46 @@ exports.getUnreadChats = async (req, res) => {
     const unreadCountsMap = await getBulkUnreadCounts(currentUserId, chatIds);
 
     const enrichedChats = chats.map(chat => {
-      const latestMessage = chat.messages[0] || null;
-      const unreadCount = unreadCountsMap[chat.id] || 0;
-
-      const enrichedUsers = chat.users.map(userChat => {
-        const user = userChat.user;
-        const weekPoints = weekPointsMap[user.id] || 0;
-
+      const chatUsers = chat.users.map(userOnChat => {
+        const u = userOnChat.user;
         return {
-          id: user.id,
-          username: user.username,
-          firstName: user.firstName,
-          lastName: user.lastName,
-          avatarUrl: firstAvatar(user.minime),
-          totalPoints: user.totalPoints,
-          thisWeekPoints: weekPoints,
-          profileUrl: `/api/users/${user.id}/profile`,
-          role: userChat.role,
-          joinedAt: userChat.joinedAt,
+          id: u.id,
+          username: u.username,
+          firstName: u.firstName || null,
+          lastName: u.lastName || null,
+          avatarUrl: firstAvatar(u.minime),
+          totalPoints: u.totalPoints || 0,
+          thisWeekPoints: weekPointsMap.get(u.id) || 0,
+          profileUrl: `/api/users/${u.id}/profile`,
+          role: userOnChat.role,
+          joinedAt: userOnChat.joinedAt
         };
       });
 
-      let latestMessageWithReadBy = null;
-      if (latestMessage) {
-        const readBy = chat.users
-          .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
-          .map(u => u.userId);
+      // ✅ Get accurate unread count
+      const unreadCount = unreadCountsMap.get(chat.id) || 0;
 
-        latestMessageWithReadBy = {
-          ...latestMessage,
-          readBy,
-        };
-      }
+      // ✅ Get latest message for preview with proper readBy information
+      const latestMessage = chat.messages.length > 0 
+        ? chat.messages[0] // Already ordered desc, so first is latest
+        : null;
 
-      return {
-        id: chat.id,
-        name: chat.name,
-        isGroup: chat.isGroup,
-        isCommunity: chat.isCommunity,
-        isLocked: chat.isLocked,
-        communityId: chat.communityId,
-        imageUrl: chat.imageUrl,
-        updatedAt: chat.updatedAt,
-        createdAt: chat.createdAt,
-        createdById: chat.createdById,
-        users: enrichedUsers,
-        messages: chat.messages,
-        _count: chat._count,
+      return { 
+        ...chat, 
+        users: chatUsers,
         unreadCount,
-        latestMessage: latestMessageWithReadBy,
-        totalMessages: chat._count.messages,
+        latestMessage: latestMessage ? {
+          id: latestMessage.id,
+          content: latestMessage.content,
+          imageUrl: latestMessage.imageUrl,
+          createdAt: latestMessage.createdAt,
+          senderId: latestMessage.senderId,
+          // ✅ Add readBy array based on lastSeenMessageId
+          readBy: chat.users
+            .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
+            .map(u => u.userId)
+        } : null,
+        totalMessages: chat._count.messages
       };
     });
 
