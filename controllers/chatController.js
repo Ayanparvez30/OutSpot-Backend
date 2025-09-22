@@ -1203,3 +1203,113 @@ exports.getUnreadChats = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+exports.getMyGroupChats = async (req, res) => {
+  const currentUserId = req.authData.id;
+
+  try {
+    const chats = await prisma.chat.findMany({
+      where: { 
+        users: { some: { userId: currentUserId } },
+        isGroup: true // ✅ Only group chats
+      },
+      include: {
+        users: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                totalPoints: true,
+                minime: {
+                  select: { avatarUrl: true },
+                  where: { isSaved: true },
+                  orderBy: { updatedAt: 'desc' },
+                  take: 1,
+                },
+              },
+            },
+          },
+        },
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            content: true,
+            imageUrl: true,
+            createdAt: true,
+            senderId: true,
+          },
+        },
+        _count: {
+          select: { messages: true },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    // ✅ Batch weekly points for all unique users across all chats
+    const allUserIds = Array.from(
+      new Set(chats.flatMap(c => c.users.map(u => u.userId)))
+    );
+    const weekPointsMap = await getWeeklyPointsForUsers(allUserIds);
+
+    // ✅ Get accurate unread counts for all chats
+    const chatIds = chats.map(c => c.id);
+    const unreadCountsMap = await getBulkUnreadCounts(currentUserId, chatIds);
+
+    const enrichedChats = chats.map(chat => {
+      const latestMessage = chat.messages[0] || null;
+      
+      const enrichedUsers = chat.users.map(userOnChat => {
+        const weekPoints = weekPointsMap[userOnChat.userId] || 0;
+        return {
+          id: userOnChat.user.id,
+          username: userOnChat.user.username,
+          firstName: userOnChat.user.firstName,
+          lastName: userOnChat.user.lastName,
+          avatarUrl: firstAvatar(userOnChat.user.minime),
+          totalPoints: userOnChat.user.totalPoints,
+          thisWeekPoints: weekPoints,
+          profileUrl: `/api/users/${userOnChat.user.id}/profile`,
+          role: userOnChat.role,
+          joinedAt: userOnChat.joinedAt,
+        };
+      });
+
+      let readBy = [];
+      if (latestMessage) {
+        readBy = chat.users
+          .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
+          .map(u => u.userId);
+      }
+
+      return {
+        id: chat.id,
+        name: chat.name,
+        isGroup: chat.isGroup,
+        isCommunity: chat.isCommunity,
+        isLocked: chat.isLocked,
+        communityId: chat.communityId,
+        imageUrl: chat.imageUrl,
+        updatedAt: chat.updatedAt,
+        createdAt: chat.createdAt,
+        createdById: chat.createdById,
+        users: enrichedUsers,
+        messages: latestMessage ? [latestMessage] : [],
+        _count: { messages: chat._count.messages },
+        unreadCount: unreadCountsMap[chat.id] || 0,
+        latestMessage: latestMessage ? { ...latestMessage, readBy } : null,
+        totalMessages: chat._count.messages,
+      };
+    });
+
+    res.json(enrichedChats);
+  } catch (error) {
+    console.error('Error fetching group chats:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
