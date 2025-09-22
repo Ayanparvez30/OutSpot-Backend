@@ -52,20 +52,8 @@ exports.createChallenge = async (req, res) => {
       },
     });
 
-    // Notify all users about the new challenge
-    const users = await prisma.user.findMany({
-      select: { id: true, fcmToken: true },
-    });
-
-    for (const user of users) {
-      await notifyUser(
-        user.id,
-        'NEW_CHALLENGE',
-        `New ${frequency} Challenge Available!`,
-        `Participate in the new ${frequency.toLowerCase()} challenge: ${challenge.title}.`,
-        { challengeId: challenge.id }
-      );
-    }
+    // Note: Notifications are sent automatically via cron jobs when challenges become available
+    // No need to notify on creation since challenges are premade and assigned deterministically
 
     res.json(challenge);
   } catch (err) {
