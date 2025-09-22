@@ -286,7 +286,7 @@ exports.updateGroupChat = async (req, res) => {
   }
 };
 
-// Delete a chat (participant only)
+// Delete a chat (participant only) - removes user from chat instead of deleting entire chat
 exports.deleteChat = async (req, res) => {
   const { chatId } = req.params;
   const currentUserId = req.authData.id;
@@ -299,14 +299,139 @@ exports.deleteChat = async (req, res) => {
 
     if (!chat) return res.status(404).json({ message: 'Chat not found' });
 
-    const isParticipant = chat.users.some(u => u.userId === currentUserId);
-    if (!isParticipant) return res.status(403).json({ message: 'You are not part of this chat' });
+    const userInChat = chat.users.find(u => u.userId === currentUserId);
+    if (!userInChat) return res.status(403).json({ message: 'You are not part of this chat' });
 
-    await prisma.chat.delete({ where: { id: chat.id } });
+    // Use transaction to handle the deletion logic
+    await prisma.$transaction(async (tx) => {
+      // Remove the user from the chat
+      await tx.userOnChat.delete({
+        where: { id: userInChat.id }
+      });
+
+      // Check remaining users after deletion
+      const remainingUsers = await tx.userOnChat.count({
+        where: { chatId: chat.id }
+      });
+
+      // Delete the entire chat if:
+      // 1. No users left, OR
+      // 2. It's a private chat (not a group) and only 1 user remains
+      if (remainingUsers === 0 || (!chat.isGroup && remainingUsers === 1)) {
+        await tx.chat.delete({ where: { id: chat.id } });
+      }
+    });
 
     return res.json({ message: 'Chat deleted successfully' });
   } catch (error) {
     console.error('Error deleting chat:', error);
+    return res.status(500).json({ message: 'Internal server error' });
+  }
+};
+
+// Delete multiple chats (participant only for each) - removes user from chats instead of deleting entire chats
+exports.deleteBulkChats = async (req, res) => {
+  const { chatIds } = req.body;
+  const currentUserId = req.authData.id;
+
+  try {
+    // Validate input
+    if (!chatIds || !Array.isArray(chatIds) || chatIds.length === 0) {
+      return res.status(400).json({ message: 'Chat IDs array is required' });
+    }
+
+    // Convert all IDs to integers and validate
+    const validChatIds = chatIds.map(id => {
+      const parsedId = parseInt(id, 10);
+      if (isNaN(parsedId)) {
+        throw new Error(`Invalid chat ID: ${id}`);
+      }
+      return parsedId;
+    });
+
+    // Find all chats with their users
+    const chats = await prisma.chat.findMany({
+      where: { 
+        id: { in: validChatIds } 
+      },
+      include: { users: true },
+    });
+
+    // Check if all requested chats exist
+    const foundChatIds = chats.map(chat => chat.id);
+    const missingChatIds = validChatIds.filter(id => !foundChatIds.includes(id));
+    
+    if (missingChatIds.length > 0) {
+      return res.status(404).json({ 
+        message: 'Some chats not found', 
+        missingChatIds 
+      });
+    }
+
+    // Check if user is participant in all chats and collect user-chat relationships
+    const unauthorizedChats = [];
+    const userChatRelations = [];
+
+    chats.forEach(chat => {
+      const userInChat = chat.users.find(u => u.userId === currentUserId);
+      if (!userInChat) {
+        unauthorizedChats.push(chat.id);
+      } else {
+        userChatRelations.push({
+          chatId: chat.id,
+          userOnChatId: userInChat.id,
+          isGroup: chat.isGroup,
+          totalUsers: chat.users.length
+        });
+      }
+    });
+
+    if (unauthorizedChats.length > 0) {
+      return res.status(403).json({ 
+        message: 'You are not authorized to delete some chats', 
+        unauthorizedChats 
+      });
+    }
+
+    // Process each chat deletion in a transaction
+    const processedChatIds = [];
+    const chatsToDelete = [];
+
+    await prisma.$transaction(async (tx) => {
+      for (const relation of userChatRelations) {
+        // Remove the user from the chat
+        await tx.userOnChat.delete({
+          where: { id: relation.userOnChatId }
+        });
+
+        processedChatIds.push(relation.chatId);
+
+        // Check if chat should be completely deleted
+        // For private chats: delete if only 1 user remains
+        // For group chats: delete if no users remain
+        const remainingUsers = relation.totalUsers - 1;
+        
+        if (remainingUsers === 0 || (!relation.isGroup && remainingUsers === 1)) {
+          chatsToDelete.push(relation.chatId);
+        }
+      }
+
+      // Delete empty chats or private chats with only 1 user left
+      if (chatsToDelete.length > 0) {
+        await tx.chat.deleteMany({
+          where: { id: { in: chatsToDelete } }
+        });
+      }
+    });
+
+    return res.json({ 
+      message: 'Chats processed successfully',
+      processedCount: processedChatIds.length,
+      processedChatIds: processedChatIds,
+      completelyDeletedChats: chatsToDelete
+    });
+  } catch (error) {
+    console.error('Error deleting bulk chats:', error);
     return res.status(500).json({ message: 'Internal server error' });
   }
 };

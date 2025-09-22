@@ -6,6 +6,7 @@ const { checkAuth } = require('../middlewares/authMiddleware');
 
 router.post('/chats/create', checkAuth, chatController.createPrivateChat);
 router.delete('/chats/delete/:chatId', checkAuth, chatController.deleteChat);
+router.delete('/chats/delete', checkAuth, chatController.deleteBulkChats);
 
 router.get('/chats', checkAuth, chatController.getMyChats);
 router.get('/chats/unread', checkAuth, chatController.getUnreadChats);
