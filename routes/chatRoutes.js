@@ -9,6 +9,7 @@ router.delete('/chats/delete/:chatId', checkAuth, chatController.deleteChat);
 
 router.get('/chats', checkAuth, chatController.getMyChats);
 router.get('/chats/unread', checkAuth, chatController.getUnreadChats);
+router.get('/chats/groupsOnly', checkAuth, chatController.getMyGroupChats);
 router.get('/chats/messages/:chatId', checkAuth, chatController.getMessages);
 router.get('/chats/messages-paginated/:chatId', checkAuth, chatController.getMessagesPaginated);
 router.get('/chats/:user2Id', checkAuth, chatController.getChatsByUsers);
