@@ -99,29 +99,35 @@ exports.createPrivateChat = async (req, res) => {
     if (!isGroup && UserId.length === 1) {
       const targetUserId = Number(UserId[0]);
 
-      // ✅ Better logic: find private chat between exactly these two users
-      const existingChat = await prisma.chat.findFirst({
+      // ✅ Check if these two users are the same (prevent self-chat)
+      if (currentUserId === targetUserId) {
+        return res.status(400).json({ message: 'Cannot create chat with yourself' });
+      }
+
+      // ✅ Find existing private chat between exactly these two users
+      const existingChats = await prisma.chat.findMany({
         where: {
           isGroup: false,
-          users: {
-            every: {
-              userId: { in: [currentUserId, targetUserId] }
-            }
-          }
+          AND: [
+            { users: { some: { userId: currentUserId } } },
+            { users: { some: { userId: targetUserId } } }
+          ]
         },
         include: { 
-          users: { select: { userId: true } } 
+          users: { select: { userId: true } },
+          _count: { select: { users: true } }
         },
       });
 
-      if (existingChat) {
-        const memberIds = existingChat.users.map(u => u.userId);
-        // Check if it's exactly these two users (no more, no less)
-        if (memberIds.length === 2 && 
-            memberIds.includes(currentUserId) && 
-            memberIds.includes(targetUserId)) {
-          return res.json({ message: 'Private chat already exists', chatId: existingChat.id });
-        }
+      // Find chat with exactly 2 users (current user and target user)
+      const exactMatch = existingChats.find(chat => 
+        chat._count.users === 2 && 
+        chat.users.some(u => u.userId === currentUserId) &&
+        chat.users.some(u => u.userId === targetUserId)
+      );
+
+      if (exactMatch) {
+        return res.json({ message: 'Private chat already exists', chatId: exactMatch.id });
       }
     }
 
