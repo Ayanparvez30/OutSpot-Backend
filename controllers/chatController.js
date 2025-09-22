@@ -1094,3 +1094,122 @@ exports.getChatReadStatus = async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
+
+// 🚀 NEW: Get unread chats only (excludes chats with unreadCount = 0)
+exports.getUnreadChats = async (req, res) => {
+  const currentUserId = req.authData.id;
+
+  try {
+    const chats = await prisma.chat.findMany({
+      where: { users: { some: { userId: currentUserId } } },
+      include: {
+        users: {
+          include: {
+            user: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                totalPoints: true,
+                minime: {
+                  select: { avatarUrl: true },
+                  where: { isSaved: true },
+                  orderBy: { updatedAt: 'desc' },
+                  take: 1,
+                },
+              },
+            },
+          },
+        },
+        messages: {
+          orderBy: { createdAt: 'desc' },
+          take: 1,
+          select: {
+            id: true,
+            content: true,
+            imageUrl: true,
+            createdAt: true,
+            senderId: true,
+          },
+        },
+        _count: {
+          select: { messages: true },
+        },
+      },
+      orderBy: { updatedAt: 'desc' },
+    });
+
+    // ✅ Batch weekly points for all unique users across all chats
+    const allUserIds = Array.from(
+      new Set(chats.flatMap(c => c.users.map(u => u.userId)))
+    );
+    const weekPointsMap = await getWeeklyPointsForUsers(allUserIds);
+
+    // ✅ Get accurate unread counts for all chats
+    const chatIds = chats.map(c => c.id);
+    const unreadCountsMap = await getBulkUnreadCounts(currentUserId, chatIds);
+
+    const enrichedChats = chats.map(chat => {
+      const latestMessage = chat.messages[0] || null;
+      const unreadCount = unreadCountsMap[chat.id] || 0;
+
+      const enrichedUsers = chat.users.map(userChat => {
+        const user = userChat.user;
+        const weekPoints = weekPointsMap[user.id] || 0;
+
+        return {
+          id: user.id,
+          username: user.username,
+          firstName: user.firstName,
+          lastName: user.lastName,
+          avatarUrl: firstAvatar(user.minime),
+          totalPoints: user.totalPoints,
+          thisWeekPoints: weekPoints,
+          profileUrl: `/api/users/${user.id}/profile`,
+          role: userChat.role,
+          joinedAt: userChat.joinedAt,
+        };
+      });
+
+      let latestMessageWithReadBy = null;
+      if (latestMessage) {
+        const readBy = chat.users
+          .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
+          .map(u => u.userId);
+
+        latestMessageWithReadBy = {
+          ...latestMessage,
+          readBy,
+        };
+      }
+
+      return {
+        id: chat.id,
+        name: chat.name,
+        isGroup: chat.isGroup,
+        isCommunity: chat.isCommunity,
+        isLocked: chat.isLocked,
+        communityId: chat.communityId,
+        imageUrl: chat.imageUrl,
+        updatedAt: chat.updatedAt,
+        createdAt: chat.createdAt,
+        createdById: chat.createdById,
+        users: enrichedUsers,
+        messages: chat.messages,
+        _count: chat._count,
+        unreadCount,
+        latestMessage: latestMessageWithReadBy,
+        totalMessages: chat._count.messages,
+      };
+    });
+
+    // 🚀 Filter out chats with unreadCount = 0
+    const unreadChats = enrichedChats.filter(chat => chat.unreadCount > 0);
+
+    res.json(unreadChats);
+  } catch (error) {
+    console.error('Error fetching unread chats:', error);
+    res.status(500).json({ message: 'Server error' });
+  }
+};
