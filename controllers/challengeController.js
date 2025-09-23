@@ -85,6 +85,18 @@ exports.getChallengeCards = async (req, res) => {
     const required = challenge.requiredPhotos || 1;
     const status = cnt >= required ? 'completed' : cnt > 0 ? 'in_progress' : 'incomplete';
 
+    // Create a notification for the assigned challenge
+    await prisma.notification.create({
+      data: {
+        userId,
+        type: freq === 'DAILY' ? 'DAILY_CHALLENGE' : 'WEEKLY_CHALLENGE',
+        title: `New ${freq === 'DAILY' ? 'Daily' : 'Weekly'} Challenge`,
+        description: `You have a new ${freq === 'DAILY' ? 'daily' : 'weekly'} challenge: ${challenge.title}`,
+        isRead: false,
+        createdAt: new Date(),
+      },
+    });
+
     return {
       id: challenge.id,
       title: challenge.title,
