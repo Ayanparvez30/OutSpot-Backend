@@ -24,4 +24,7 @@ router.delete('/notifications/clearAll', checkAuth, notificationController.clear
 router.put('/notifications/mute/:chatId', checkAuth, notificationController.muteChat);
 router.put('/notifications/unmute/:chatId', checkAuth, notificationController.unmuteChat);
 
+// Add route for getting chat mute status
+router.get('/notifications/mute-status/:chatId', checkAuth, notificationController.getChatMuteStatus);
+
 module.exports = router;
