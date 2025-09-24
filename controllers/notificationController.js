@@ -362,7 +362,7 @@ exports.getChallengeNotificationsUnread = async (req, res) => {
 exports.muteChat = async (req, res) => {
   try {
     const userId = req.authData.id;
-    const { chatId } = req.body; // Assuming chatId is sent in the request body
+    const { chatId } = req.params; // Retrieve chatId from req.params
 
     await prisma.notification.updateMany({
       where: {
@@ -383,7 +383,7 @@ exports.muteChat = async (req, res) => {
 exports.unmuteChat = async (req, res) => {
   try {
     const userId = req.authData.id;
-    const { chatId } = req.body; // Assuming chatId is sent in the request body
+    const { chatId } = req.params; // Retrieve chatId from req.params
 
     await prisma.notification.updateMany({
       where: {
