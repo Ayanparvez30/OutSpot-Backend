@@ -409,4 +409,32 @@ exports.unmuteChat = async (req, res) => {
   }
 };
 
+exports.getChatMuteStatus = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const { chatId } = req.params; // Retrieve chatId from req.params
+
+    const userOnChat = await prisma.userOnChat.findUnique({
+      where: {
+        userId_chatId: {
+          userId: parseInt(userId, 10),
+          chatId: parseInt(chatId, 10),
+        },
+      },
+      select: {
+        isMuted: true,
+      },
+    });
+
+    if (!userOnChat) {
+      return res.status(404).json({ error: "Chat not found or user not part of the chat" });
+    }
+
+    res.json({ isMuted: userOnChat.isMuted });
+  } catch (err) {
+    console.error("Get chat mute status error:", err);
+    res.status(500).json({ error: "Failed to get chat mute status" });
+  }
+};
+
 //test
