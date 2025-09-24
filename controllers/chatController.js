@@ -1451,37 +1451,11 @@ exports.searchChats = async (req, res) => {
 
     const chats = await prisma.chat.findMany({
       where: {
-        OR: [
-          { name: { contains: keyword, mode: "insensitive" } },
-          { messages: { some: { content: { contains: keyword, mode: "insensitive" } } } },
-        ],
+        messages: { some: { content: { contains: keyword, mode: "insensitive" } } },
         users: { some: { userId } },
       },
-      include: {
-        users: {
-          select: {
-            id: true,
-            username: true,
-            firstName: true,
-            lastName: true,
-            avatarUrl: true,
-            totalPoints: true,
-            thisWeekPoints: true,
-            profileUrl: true,
-            role: true,
-            joinedAt: true,
-          },
-        },
-        messages: {
-          select: {
-            id: true,
-            content: true,
-            imageUrl: true,
-            createdAt: true,
-            senderId: true,
-          },
-          where: { content: { contains: keyword, mode: "insensitive" } },
-        },
+      select: {
+        id: true,
       },
     });
 
