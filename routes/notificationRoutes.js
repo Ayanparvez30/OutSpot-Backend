@@ -20,4 +20,8 @@ router.get('/notifications/challenges/unread', checkAuth, notificationController
 router.put('/notifications/read/:id', checkAuth, notificationController.markAsRead);
 router.delete('/notifications/clearAll', checkAuth, notificationController.clearAll);
 
+// Add routes for mute/unmute chat functionality
+router.put('/notifications/mute/:chatId', checkAuth, notificationController.muteChat);
+router.put('/notifications/unmute/:chatId', checkAuth, notificationController.unmuteChat);
+
 module.exports = router;
