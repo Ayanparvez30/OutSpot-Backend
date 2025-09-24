@@ -1438,3 +1438,56 @@ exports.getMyGroupChats = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
+
+// Search chats by keyword (in name or message content)
+exports.searchChats = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const { keyword } = req.query;
+
+    if (!keyword || keyword.trim() === "") {
+      return res.status(400).json({ error: "Keyword is required for search" });
+    }
+
+    const chats = await prisma.chat.findMany({
+      where: {
+        OR: [
+          { name: { contains: keyword, mode: "insensitive" } },
+          { messages: { some: { content: { contains: keyword, mode: "insensitive" } } } },
+        ],
+        users: { some: { userId } },
+      },
+      include: {
+        users: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+            totalPoints: true,
+            thisWeekPoints: true,
+            profileUrl: true,
+            role: true,
+            joinedAt: true,
+          },
+        },
+        messages: {
+          select: {
+            id: true,
+            content: true,
+            imageUrl: true,
+            createdAt: true,
+            senderId: true,
+          },
+          where: { content: { contains: keyword, mode: "insensitive" } },
+        },
+      },
+    });
+
+    res.json(chats);
+  } catch (error) {
+    console.error("Search chats error:", error);
+    res.status(500).json({ error: "Failed to search chats" });
+  }
+};

@@ -1,4 +1,3 @@
-
 const express = require('express');
 const router = express.Router();
 const chatController = require('../controllers/chatController');
@@ -61,5 +60,8 @@ router.put(
   multer({ storage: multer.memoryStorage() }).single('image'),  chatController.updateGroupChat
 );
 
-module.exports = router; 
+// Add route for searching chats
+router.get('/chats/search', checkAuth, chatController.searchChats);
+
+module.exports = router;
 
