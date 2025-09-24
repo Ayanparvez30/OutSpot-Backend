@@ -364,13 +364,17 @@ exports.muteChat = async (req, res) => {
     const userId = req.authData.id;
     const { chatId } = req.params; // Retrieve chatId from req.params
 
-    await prisma.notification.updateMany({
+    await prisma.userOnChat.update({
       where: {
-        userId: userId,
-        type: 'CHAT_MESSAGE', // Assuming the type for chat notifications
-        'data.chatId': chatId // Match the specific chatId
+        userId_chatId: {
+          userId: parseInt(userId, 10),
+          chatId: parseInt(chatId, 10),
+        },
       },
-      data: { isMuted: true }
+      data: {
+        isMuted: true,
+        mutedAt: new Date(),
+      },
     });
 
     res.json({ message: "Chat notifications muted" });
@@ -385,13 +389,17 @@ exports.unmuteChat = async (req, res) => {
     const userId = req.authData.id;
     const { chatId } = req.params; // Retrieve chatId from req.params
 
-    await prisma.notification.updateMany({
+    await prisma.userOnChat.update({
       where: {
-        userId: userId,
-        type: 'CHAT_MESSAGE', // Assuming the type for chat notifications
-        'data.chatId': chatId // Match the specific chatId
+        userId_chatId: {
+          userId: parseInt(userId, 10),
+          chatId: parseInt(chatId, 10),
+        },
       },
-      data: { isMuted: false }
+      data: {
+        isMuted: false,
+        mutedAt: null,
+      },
     });
 
     res.json({ message: "Chat notifications unmuted" });
