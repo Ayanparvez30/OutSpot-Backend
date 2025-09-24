@@ -359,4 +359,46 @@ exports.getChallengeNotificationsUnread = async (req, res) => {
   }
 };
 
+exports.muteChat = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const { chatId } = req.body; // Assuming chatId is sent in the request body
+
+    await prisma.notification.updateMany({
+      where: {
+        userId: userId,
+        type: 'CHAT_MESSAGE', // Assuming the type for chat notifications
+        'data.chatId': chatId // Match the specific chatId
+      },
+      data: { isMuted: true }
+    });
+
+    res.json({ message: "Chat notifications muted" });
+  } catch (err) {
+    console.error("Mute chat error:", err);
+    res.status(500).json({ error: "Failed to mute chat notifications" });
+  }
+};
+
+exports.unmuteChat = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const { chatId } = req.body; // Assuming chatId is sent in the request body
+
+    await prisma.notification.updateMany({
+      where: {
+        userId: userId,
+        type: 'CHAT_MESSAGE', // Assuming the type for chat notifications
+        'data.chatId': chatId // Match the specific chatId
+      },
+      data: { isMuted: false }
+    });
+
+    res.json({ message: "Chat notifications unmuted" });
+  } catch (err) {
+    console.error("Unmute chat error:", err);
+    res.status(500).json({ error: "Failed to unmute chat notifications" });
+  }
+};
+
 //test

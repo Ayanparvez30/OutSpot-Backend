@@ -280,6 +280,9 @@ model UserOnChat {
   joinedAt DateTime @default(now())
   lastSeenMessageId Int?
 
+  isMuted  Boolean  @default(false)
+  mutedAt  DateTime?
+
   @@unique([userId, chatId])
   @@index([chatId, role]) // handy for permission checks like “who are admins in this chat?”
 }

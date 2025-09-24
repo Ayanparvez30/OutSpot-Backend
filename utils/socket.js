@@ -83,6 +83,13 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
       // Check if the user is offline (not connected to the socket)
       const isUserOnline = ioInstance.sockets.adapter.rooms.has(`user:${user.id}`);
 
+      // Check if the chat is muted for the user
+      const isMuted = userOnChat.isMuted;
+      if (isMuted) {
+        console.log(`Skipping notification for muted chat ${chatId} for user ${user.id}`);
+        continue;
+      }
+
       if (!isUserOnline && user.fcmToken) {
         const notificationPayload = {
           token: user.fcmToken,
