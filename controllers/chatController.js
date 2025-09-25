@@ -1449,17 +1449,26 @@ exports.searchChats = async (req, res) => {
       return res.status(400).json({ error: "Keyword is required for search" });
     }
 
-    const chats = await prisma.chat.findMany({
+    // Get chats belonging to the user
+    const userChats = await prisma.chat.findMany({
       where: {
-        messages: { some: { content: { contains: keyword, mode: "insensitive" } } },
         users: { some: { userId } },
       },
-      select: {
-        id: true,
-      },
+      select: { id: true },
     });
 
-    res.json(chats);
+    const chatIds = userChats.map(chat => chat.id);
+
+    // Search message contents within user's chats
+    const matchingChats = await prisma.chat.findMany({
+      where: {
+        id: { in: chatIds },
+        messages: { some: { content: { contains: keyword, mode: "insensitive" } } },
+      },
+      select: { id: true },
+    });
+
+    res.json(matchingChats);
   } catch (error) {
     console.error("Search chats error:", error);
     res.status(500).json({ error: "Failed to search chats" });
