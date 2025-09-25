@@ -4,16 +4,14 @@ const prisma = new PrismaClient();
 const { OpenAI } = require('openai');
 const uploadToS3 = require('../utils/s3Upload');
 
-// ❌ পুরোনোটা URL=>description করত; আর করবেন না
+
 function mapGlasses(glassesKey) {
   if (!glassesKey || glassesKey === 'none') return null;
 
-  // ✅ যদি URL হয়, ঠিক যেটা এসেছে সেটা-ই রাখুন (STRICT VISUAL REF)
   if (typeof glassesKey === 'string' && glassesKey.startsWith('http')) {
     return glassesKey;
   }
 
-  // ✅ শুধুই predefined key হলে description ম্যাপ করুন
   const GLASSES_MAP = {
     none: null,
     'wayfarer-black': 'matte black wayfarer eyeglasses, medium-thick frame',
@@ -21,7 +19,7 @@ function mapGlasses(glassesKey) {
     'aviator-silver': 'thin silver aviator eyeglasses',
     'rectangle-black': 'rectangular full-rim black eyeglasses, slim frame',
   };
-  return GLASSES_MAP[glassesKey] || glassesKey; // বাকিটা raw টেক্সট
+  return GLASSES_MAP[glassesKey] || glassesKey; 
 }
 
 function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }) {
@@ -39,7 +37,7 @@ function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit }) {
   const o = outfit || {};
   const noGlasses = !o.glasses;
 
-  // Glasses line: URL হলে একদম সেই ছবির মতো করতে বলুন
+  
   const glassesLine = noGlasses
     ? `- Glasses: none (REMOVE any eyewear from the face reference; no frames, lenses, reflections or shadows).`
     : (typeof o.glasses === 'string' && o.glasses.startsWith('http')
@@ -114,11 +112,10 @@ async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 exports.renderCurrentMinime = async (userId, opts = {}) => {
-  // ইউজার + বডি শেপ লাগবে
+
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user?.bodyShapeUrl) throw new Error('Missing body shape');
 
-  // (1) টার্গেট বা কারেন্ট ড্রাফট বের করি
   let mm = null;
   if (opts.targetMinimeId) {
     mm = await prisma.minime.findUnique({ where: { id: opts.targetMinimeId } });
@@ -129,7 +126,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
       orderBy: { createdAt: 'desc' },
     });
 
-    // ড্রাফট না থাকলে লাস্ট saved থেকে সিড করি (selfieUrl সহ)
+
     if (!mm) {
       const saved = await prisma.minime.findFirst({
         where: { userId, isSaved: true },
@@ -147,7 +144,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
               lipstick: saved.lipstick,
               jewelry: saved.jewelry,
               bag: saved.bag,
-              // ✅ face ref carry-over
+
               selfieUrl: saved.selfieUrl ?? null,
               isSaved: false,
               isDraft: true,
@@ -157,15 +154,15 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     }
   }
 
-  // (2) কোন সোর্স থেকে face likeness নেবো? → selfieUrl সর্বোচ্চ প্রাধান্য
+
   const faceReference =
-    mm.selfieUrl                           // ✅ selfie বা premade URL (STRICT face ref)
-    || mm.avatarUrl                        // optional fallback
-    || user.bodyShapeUrl;                  // last fallback (শুধু যাতে জেনারেট হয়)
+    mm.selfieUrl                       
+    || mm.avatarUrl                      
+    || user.bodyShapeUrl;                 
 
   const isFeminine = user.bodyType === 'feminine';
 
-  // (3) Outfit normalize
+
   const outfitForModel = normalizeOutfit({
     shirt: mm.shirt,
     pant: mm.pant,
@@ -176,7 +173,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     bag: mm.bag,
   });
 
-  // (4) Prompt build — faceReference কে STRICT ঘোষণা
+
   const prompt = buildMinimePrompt({
     bodyShapeUrl: user.bodyShapeUrl,
     faceUrl: faceReference,
@@ -184,7 +181,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     outfit: outfitForModel,
   });
 
-  // (5) Image generate
+
   const imageResponse = await openai.images.generate({
     model: 'gpt-image-1',
     prompt,
@@ -192,7 +189,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     background: 'transparent',
   });
 
-  // (6) Upload + persist
+
   const uploadedImageUrl = await uploadOpenAIImageResult(
     imageResponse,
     `minime-${userId}-${Date.now()}`
@@ -201,10 +198,10 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
   const updated = await prisma.minime.update({
     where: { id: mm.id },
     data: {
-      avatarUrl: uploadedImageUrl, // final render
+      avatarUrl: uploadedImageUrl, 
       isDraft: true,
       isSaved: false,
-      // ❌ selfieUrl কখনো ওভাররাইট করবেন না—এটাই face reference থাকবে
+   
     },
   });
 
