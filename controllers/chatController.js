@@ -1442,7 +1442,7 @@ exports.getMyGroupChats = async (req, res) => {
 // Search chats by keyword (in name or message content)
 exports.searchChats = async (req, res) => {
   try {
-    const userId = req.authData.id;
+    const currentUserId = req.authData.id;
     const { keyword } = req.query;
 
     if (!keyword || keyword.trim() === "") {
@@ -1452,7 +1452,7 @@ exports.searchChats = async (req, res) => {
     // Get chats belonging to the user
     const userChats = await prisma.chat.findMany({
       where: {
-        users: { some: { userId } },
+        users: { some: { userId: currentUserId } },
       },
       select: { id: true },
     });
