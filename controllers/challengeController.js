@@ -670,17 +670,63 @@ exports.getSubmissions = async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch submissions' });
   }
 };
+// controllers/challengeController.js
 
 exports.getMySubmission = async (req, res) => {
-  const userId = req.authData.id;
-  const { challengeId } = req.params;
+  try {
+    const userId = req.authData.id;
+    const challengeId = parseInt(req.params.challengeId, 10);
+    if (!Number.isFinite(challengeId)) {
+      return res.status(400).json({ error: 'Invalid challengeId' });
+    }
 
-  const submissions = await prisma.submission.findMany({
-    where: { userId, challengeId: parseInt(challengeId, 10) },
-    orderBy: { createdAt: 'asc' },
-  });
-  if (!submissions.length) return res.status(404).json({ message: 'No submissions found' });
+    // challenge meta
+    const challenge = await prisma.challenge.findUnique({
+      where: { id: challengeId },
+      select: { id: true, frequency: true, requiredPhotos: true },
+    });
+    if (!challenge) return res.status(404).json({ error: 'Challenge not found' });
 
-  res.json(submissions);
+    const zone = currentZone(req);
+
+    // ---- Window resolve ----
+    // default: এখনকার উইন্ডো (DAILY=আজ, WEEKLY=এই সপ্তাহ Sun→Sat)
+    // optional override: ?week=YYYY-MM-DD (ওই তারিখ যে উইকে পড়ে, সেই উইক নেবে)
+    const overrideWeek = req.query.week ? new Date(req.query.week) : null;
+
+    let window;
+    if (challenge.frequency === 'DAILY') {
+      // daily: আজকেই ধরো (overrideWeek থাকলেও daily-তে দরকার নেই)
+      const now = new Date();
+      window = { startUTC: startOfDayInZone(now, zone), endUTC: endOfDayInZone(now, zone) };
+    } else {
+      // weekly: override থাকলে ওই তারিখের সপ্তাহ, না হলে কারেন্ট সপ্তাহ
+      const base = overrideWeek && !isNaN(overrideWeek) ? overrideWeek : new Date();
+      window = getWeekStartEndInZone(base, zone);
+    }
+
+    const submissions = await prisma.submission.findMany({
+      where: {
+        userId,
+        challengeId: challenge.id,
+        createdAt: { gte: window.startUTC, lte: window.endUTC },
+      },
+      orderBy: { createdAt: 'asc' },
+    });
+
+    return res.json({
+      items: submissions,
+      count: submissions.length,
+      frequency: challenge.frequency,
+      requiredCount: challenge.requiredPhotos || 1,
+      window: {
+        startUTC: window.startUTC,
+        endUTC: window.endUTC,
+        zone,
+      },
+    });
+  } catch (err) {
+    console.error('getMySubmission error:', err);
+    return res.status(500).json({ error: 'Failed to fetch my submissions' });
+  }
 };
-
