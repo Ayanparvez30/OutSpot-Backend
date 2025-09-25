@@ -71,6 +71,48 @@ exports.getChallengeCards = async (req, res) => {
   const daily = await getAssignedChallenge(prisma, userId, 'DAILY', zone, now);
   const weekly = await getAssignedChallenge(prisma, userId, 'WEEKLY', zone, now);
 
+    // Create notifications for assigned challenges if not already present
+    async function maybeNotify(assign, freq) {
+      if (!assign || !assign.challenge) return;
+      const challenge = assign.challenge;
+      // Check if notification already exists for this user/challenge/frequency today/week
+      const type = freq === 'DAILY' ? 'DAILY_CHALLENGE' : 'WEEKLY_CHALLENGE';
+      const today = new Date();
+      let start, end;
+      if (freq === 'DAILY') {
+        start = startOfDayInZone(today, zone);
+        end = endOfDayInZone(today, zone);
+      } else {
+        const week = getWeekStartEndInZone(today, zone);
+        start = week.startUTC;
+        end = week.endUTC;
+      }
+      const existing = await prisma.notification.findFirst({
+        where: {
+          userId,
+          type,
+          title: challenge.title,
+          createdAt: { gte: start, lte: end },
+        },
+      });
+      if (!existing) {
+        await prisma.notification.create({
+          data: {
+            userId,
+            type,
+            title: challenge.title,
+            description: challenge.description,
+            // Optionally add challengeId in a data/json field if needed
+          },
+        });
+      }
+    }
+
+    await Promise.all([
+      maybeNotify(daily, 'DAILY'),
+      maybeNotify(weekly, 'WEEKLY'),
+    ]);
+
   async function buildCard(assign, freq) {
     if (!assign || !assign.challenge) return null;
     const { challenge, windowKey } = assign;
@@ -123,6 +165,37 @@ async function getFull(req, res, frequency) {
   if (!assign || !assign.challenge) return res.status(404).json({ error: 'No challenge available' });
 
   const { challenge, windowKey } = assign;
+
+    // Create notification for assigned challenge if not already present
+    const type = frequency === 'DAILY' ? 'DAILY_CHALLENGE' : 'WEEKLY_CHALLENGE';
+    let start, end;
+    if (frequency === 'DAILY') {
+      start = startOfDayInZone(now, zone);
+      end = endOfDayInZone(now, zone);
+    } else {
+      const week = getWeekStartEndInZone(now, zone);
+      start = week.startUTC;
+      end = week.endUTC;
+    }
+    const existing = await prisma.notification.findFirst({
+      where: {
+        userId,
+        type,
+        title: challenge.title,
+        createdAt: { gte: start, lte: end },
+      },
+    });
+    if (!existing) {
+      await prisma.notification.create({
+        data: {
+          userId,
+          type,
+          title: challenge.title,
+          description: challenge.description,
+          // Optionally add challengeId in a data/json field if needed
+        },
+      });
+    }
 
   const window = (frequency === 'DAILY')
     ? { startUTC: startOfDayInZone(now, zone), endUTC: endOfDayInZone(now, zone) }
