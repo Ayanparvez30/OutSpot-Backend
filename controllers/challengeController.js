@@ -105,6 +105,15 @@ exports.getChallengeCards = async (req, res) => {
             // Optionally add challengeId in a data/json field if needed
           },
         });
+        // Create notification and send push
+        const { notifyUser } = require('../utils/notificationService');
+        await notifyUser(
+          userId,
+          type,
+          challenge.title,
+          challenge.description,
+          { challengeId: challenge.id }
+        );
       }
     }
 
@@ -195,6 +204,15 @@ async function getFull(req, res, frequency) {
           // Optionally add challengeId in a data/json field if needed
         },
       });
+      // Create notification and send push
+      const { notifyUser } = require('../utils/notificationService');
+      await notifyUser(
+        userId,
+        type,
+        challenge.title,
+        challenge.description,
+        { challengeId: challenge.id }
+      );
     }
 
   const window = (frequency === 'DAILY')
