@@ -630,8 +630,12 @@ exports.getMessagesPaginated = async (req, res) => {
       take: parseInt(limit, 10),
     });
 
-    const shaped = messages.map(m => ({
-      ...m,
+    const formatted = messages.map(m => ({
+      id: m.id,
+      content: m.content,
+      imageUrl: m.imageUrl,
+      createdAt: m.createdAt,
+      chatId: m.chatId,
       sender: {
         id: m.sender.id,
         username: m.sender.username,
@@ -644,7 +648,7 @@ exports.getMessagesPaginated = async (req, res) => {
         .map(u => u.userId),
     }));
 
-    res.json(shaped);
+    res.json(formatted);
   } catch (e) {
     console.error('Error fetching paginated messages:', e);
     res.status(500).json({ message: 'Server error' });
