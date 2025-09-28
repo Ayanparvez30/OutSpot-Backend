@@ -80,19 +80,6 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
       // Skip the sender
       if (user.id === senderId) continue;
 
-      // Check if the user is actively viewing the chat (present in chat_<chatId> room)
-      const chatRoom = ioInstance.sockets.adapter.rooms.get(`chat_${chatId}`);
-      let isUserInChatRoom = false;
-      if (chatRoom && chatRoom.size > 0) {
-        for (const socketId of chatRoom) {
-          const socket = ioInstance.sockets.sockets.get(socketId);
-          if (socket && socket.data && socket.data.userId === user.id) {
-            isUserInChatRoom = true;
-            break;
-          }
-        }
-      }
-
       // Check if user is connected to any socket (user:<userId> room)
       const userRoom = ioInstance.sockets.adapter.rooms.get(`user:${user.id}`);
       let isUserOnline = false;
@@ -106,8 +93,8 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
         }
       }
 
-      // Only send push notification if user is NOT actively viewing the chat AND not online at all
-      if (isUserInChatRoom || isUserOnline) continue;
+      // Only send push notification if user is NOT connected to socket at all (completely offline)
+      if (isUserOnline) continue;
 
       // Check if the chat is muted for the user
       const isMuted = userOnChat.isMuted;
