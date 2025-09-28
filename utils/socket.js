@@ -161,8 +161,21 @@ function initSocket(server) {
         socket.join(`friendOf:${fid}`); // optional
       });
 
-      // Note: Users will join specific chat rooms when they explicitly open/view a chat
-      // This ensures push notifications work correctly for users not actively viewing a chat
+      // 🚀 Auto-join all user's chats for better UX
+      try {
+        const userChats = await prisma.chat.findMany({
+          where: { users: { some: { userId } } },
+          select: { id: true },
+        });
+        
+        userChats.forEach(chat => {
+          socket.join(`chat_${chat.id}`);
+        });
+        
+        console.log(`🔵 User ${userId} auto-joined ${userChats.length} chats`);
+      } catch (err) {
+        console.error('❌ Error auto-joining chats:', err);
+      }
 
       socket.emit('socket:ready', { userId });
     }
@@ -222,12 +235,7 @@ function initSocket(server) {
     // --------------- CHAT EVENTS (as you had) ---------------
     socket.on('joinChat', (chatId) => {
       socket.join(`chat_${chatId}`);
-      console.log(`🔵 User ${socket.data.userId} joined chat_${chatId}`);
-    });
-
-    socket.on('leaveChat', (chatId) => {
-      socket.leave(`chat_${chatId}`);
-      console.log(`🔴 User ${socket.data.userId} left chat_${chatId}`);
+      console.log(`🔵 User joined chat_${chatId}`);
     });
 
     socket.on('sendMessage', async (data) => {
