@@ -80,8 +80,9 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
       // Skip the sender
       if (user.id === senderId) continue;
 
-      // Check if the user is offline (not connected to the socket)
-      const isUserOnline = ioInstance.sockets.adapter.rooms.has(`user:${user.id}`);
+  // Check if the user is offline (not connected to the socket)
+  const room = ioInstance.sockets.adapter.rooms.get(`user:${user.id}`);
+  const isUserOnline = room && room.size > 0;
 
       // Check if the chat is muted for the user
       const isMuted = userOnChat.isMuted;
