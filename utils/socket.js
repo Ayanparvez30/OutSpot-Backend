@@ -62,11 +62,15 @@ async function getLatestMessageId(chatId) {
 
 // Helper function to check if a user is currently connected to any socket
 function isUserOnline(userId) {
-  if (!ioInstance) return false;
-  
+  if (!ioInstance) {
+    console.error('Socket.IO instance not initialized');
+    return false;
+  }
+
   // Check if user has any active socket connections
   const userRoom = ioInstance.sockets.adapter.rooms.get(`user:${userId}`);
   if (!userRoom || userRoom.size === 0) {
+    console.log(`User ${userId} is not connected to any socket`);
     return false;
   }
 
@@ -74,10 +78,12 @@ function isUserOnline(userId) {
   for (const socketId of userRoom) {
     const socket = ioInstance.sockets.sockets.get(socketId);
     if (socket && socket.data && socket.data.userId === userId) {
+      console.log(`User ${userId} is online with socket ID ${socketId}`);
       return true;
     }
   }
-  
+
+  console.log(`User ${userId} has no valid socket connections`);
   return false;
 }
 
@@ -94,22 +100,17 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
       return;
     }
 
-    // Iterate through users in the chat
     for (const userOnChat of chat.users) {
       const user = userOnChat.user;
 
-      // Skip the sender
       if (user.id === senderId) continue;
 
-      // Check if user is currently online (connected to any socket)
       const userIsOnline = isUserOnline(user.id);
-      
       if (userIsOnline) {
         console.log(`Skipping notification for online user ${user.id} in chat ${chatId}`);
         continue;
       }
 
-      // Check if the chat is muted for the user
       const isMuted = userOnChat.isMuted;
       if (isMuted) {
         console.log(`Skipping notification for muted chat ${chatId} for user ${user.id}`);
