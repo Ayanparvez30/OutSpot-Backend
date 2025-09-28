@@ -73,43 +73,16 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
       return;
     }
 
-    // Iterate through users in the chat
     for (const userOnChat of chat.users) {
       const user = userOnChat.user;
 
-      // Skip the sender
       if (user.id === senderId) continue;
 
-      // Check if the user is actively viewing the chat (present in chat_<chatId> room)
-      const chatRoom = ioInstance.sockets.adapter.rooms.get(`chat_${chatId}`);
-      let isUserInChatRoom = false;
-      if (chatRoom && chatRoom.size > 0) {
-        for (const socketId of chatRoom) {
-          const socket = ioInstance.sockets.sockets.get(socketId);
-          if (socket && socket.data && socket.data.userId === user.id) {
-            isUserInChatRoom = true;
-            break;
-          }
-        }
+      // Check if user is online
+      if (isUserOnline(user.id)) {
+        console.log(`Skipping notification for online user ${user.id} in chat ${chatId}`);
+        continue;
       }
-
-      // Check if user is connected to any socket (user:<userId> room)
-      const userRoom = ioInstance.sockets.adapter.rooms.get(`user:${user.id}`);
-      let isUserOnline = false;
-      if (userRoom && userRoom.size > 0) {
-        for (const socketId of userRoom) {
-          const socket = ioInstance.sockets.sockets.get(socketId);
-          if (socket && socket.data && socket.data.userId === user.id) {
-            isUserOnline = true;
-            break;
-          }
-        }
-      }
-
-      // Send push notification ONLY if user is NOT actively viewing this specific chat
-      // This covers: 1) Completely offline users, 2) Online users viewing other parts of the app
-      // Skip if user is actively viewing this chat
-      if (isUserInChatRoom) continue;
 
       // Check if the chat is muted for the user
       const isMuted = userOnChat.isMuted;
@@ -133,10 +106,12 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
 
         try {
           await admin.messaging().send(notificationPayload);
-          console.log(`Push notification sent to user ${user.id}`);
+          console.log(`Push notification sent to offline user ${user.id}`);
         } catch (error) {
           console.error(`Failed to send push notification to user ${user.id}:`, error);
         }
+      } else {
+        console.log(`User ${user.id} is offline but has no FCM token`);
       }
     }
   } catch (error) {
