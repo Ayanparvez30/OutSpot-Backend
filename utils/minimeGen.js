@@ -1,15 +1,19 @@
-
+// utils/minimeGen.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { OpenAI } = require('openai');
 const uploadToS3 = require('../utils/s3Upload');
 
+// ---------- helpers ----------
+function isHttpUrl(u) {
+  return typeof u === 'string' && /^https?:\/\//i.test(u);
+}
 
 function mapGlasses(glassesKey) {
   if (!glassesKey || glassesKey === 'none') return null;
 
   if (typeof glassesKey === 'string' && glassesKey.startsWith('http')) {
-    return glassesKey;
+    return glassesKey; // strict visual ref image
   }
 
   const GLASSES_MAP = {
@@ -19,7 +23,7 @@ function mapGlasses(glassesKey) {
     'aviator-silver': 'thin silver aviator eyeglasses',
     'rectangle-black': 'rectangular full-rim black eyeglasses, slim frame',
   };
-  return GLASSES_MAP[glassesKey] || glassesKey; 
+  return GLASSES_MAP[glassesKey] || glassesKey;
 }
 
 function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }) {
@@ -33,11 +37,45 @@ function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }
     bag,
   };
 }
+
+// split accessories so "chain" ≠ earrings
+function accessoriesLines(o, isFeminine) {
+  if (!isFeminine) return '';
+  const j = (o.jewelry || '').toLowerCase();
+
+  let neck = 'none';
+  let ears = 'none';
+  let wrist = 'none';
+  const bag = o.bag || 'none';
+  const lips = o.lipstick || 'natural';
+
+  if (j.includes('chain') || j.includes('necklace')) {
+    neck = 'thin gold chain necklace (subtle), no pendant';
+    ears = 'none';
+  } else if (j.includes('earring')) {
+    ears = 'small studs';
+  } else if (j.includes('watch')) {
+    wrist = 'minimal watch';
+  } else if (j.includes('bracelet')) {
+    wrist = 'simple bracelet';
+  } else if (j && j !== 'none') {
+    // free text fallback interpreted as necklace
+    neck = j;
+  }
+
+  return `
+# ACCESSORIES
+- Lipstick: ${lips}
+- Necklace: ${neck}
+- Earrings: ${ears}
+- Wrist: ${wrist}
+- Bag: ${bag}`.trim();
+}
+
 function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit }) {
   const o = outfit || {};
   const noGlasses = !o.glasses;
 
-  
   const glassesLine = noGlasses
     ? `- Glasses: none (REMOVE any eyewear from the face reference; no frames, lenses, reflections or shadows).`
     : (typeof o.glasses === 'string' && o.glasses.startsWith('http')
@@ -52,9 +90,9 @@ Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 
 # HARD CONSTRAINTS
 - STRICT body shape reference: ${bodyShapeUrl}
-- STRICT facial likeness: copy EXACTLY from this image → ${faceUrl}
+- STRICT facial likeness (HARD LOCK): copy EXACTLY from this image → ${faceUrl}
   (match skin tone, hairstyle, eye shape, eyebrows, nose, lips, jawline; 
-   do not "approximate", reproduce the same face features.)
+   do not beautify, age, or alter expression. If any conflict arises, the face reference WINS.)
 - Camera: straight-on, full-body. Subject fully contained in frame.
 - Keep ~10–12% empty space above the head and below the shoe soles.
 - Both feet visible, standing on a flat plane. No cropping anywhere.
@@ -67,10 +105,7 @@ Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 - Shoes: ${o.shoes || 'casual sneakers'}
 ${glassesLine}
 
-${isFeminine ? `# ACCESSORIES
-- Lipstick: ${o.lipstick || 'natural'}
-- Jewelry: ${o.jewelry || 'none'}
-- Bag: ${o.bag || 'none'}` : ''}
+${isFeminine ? accessoriesLines(o, isFeminine) : ''}
 
 # COMPOSITION & STYLE
 - Neutral pose, arms relaxed by sides, single character only.
@@ -89,7 +124,7 @@ Return a single, centered full-body render.
 `.trim();
 }
 
-
+// ---------- image upload ----------
 async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
   const item = imageResponse?.data?.[0];
   if (!item) throw new Error('OpenAI image response empty');
@@ -110,13 +145,16 @@ async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
   throw new Error('No url or b64_json in OpenAI image response');
 }
 
+// ---------- main ----------
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-exports.renderCurrentMinime = async (userId, opts = {}) => {
 
+exports.renderCurrentMinime = async (userId, opts = {}) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user?.bodyShapeUrl) throw new Error('Missing body shape');
 
   let mm = null;
+
+  // pick the working draft (or create from last saved)
   if (opts.targetMinimeId) {
     mm = await prisma.minime.findUnique({ where: { id: opts.targetMinimeId } });
     if (!mm || mm.userId !== userId) throw new Error('Invalid targetMinimeId for this user');
@@ -125,7 +163,6 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
       where: { userId, isDraft: true, isSaved: false },
       orderBy: { createdAt: 'desc' },
     });
-
 
     if (!mm) {
       const saved = await prisma.minime.findFirst({
@@ -144,8 +181,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
               lipstick: saved.lipstick,
               jewelry: saved.jewelry,
               bag: saved.bag,
-
-              selfieUrl: saved.selfieUrl ?? null,
+              selfieUrl: saved.selfieUrl ?? null, // carry face ref if any
               isSaved: false,
               isDraft: true,
             }
@@ -154,14 +190,13 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     }
   }
 
-
-  const faceReference =
-    mm.selfieUrl                       
-    || mm.avatarUrl                      
-    || user.bodyShapeUrl;                 
+  // --- HARD face reference: only selfie/premade allowed
+  const faceReference = mm.selfieUrl || mm.avatarUrl;
+  if (!isHttpUrl(faceReference)) {
+    throw new Error('Missing/invalid face reference; upload a selfie or select a premade first');
+  }
 
   const isFeminine = user.bodyType === 'feminine';
-
 
   const outfitForModel = normalizeOutfit({
     shirt: mm.shirt,
@@ -173,7 +208,6 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     bag: mm.bag,
   });
 
-
   const prompt = buildMinimePrompt({
     bodyShapeUrl: user.bodyShapeUrl,
     faceUrl: faceReference,
@@ -181,14 +215,12 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     outfit: outfitForModel,
   });
 
-
   const imageResponse = await openai.images.generate({
     model: 'gpt-image-1',
     prompt,
     size: '1024x1536',
     background: 'transparent',
   });
-
 
   const uploadedImageUrl = await uploadOpenAIImageResult(
     imageResponse,
@@ -198,10 +230,9 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
   const updated = await prisma.minime.update({
     where: { id: mm.id },
     data: {
-      avatarUrl: uploadedImageUrl, 
+      avatarUrl: uploadedImageUrl,
       isDraft: true,
       isSaved: false,
-   
     },
   });
 
