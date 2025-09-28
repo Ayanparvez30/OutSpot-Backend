@@ -119,6 +119,31 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
   }
 }
 
+// Ensure isUserOnline is defined before sendPushNotificationToOfflineUsers
+function isUserOnline(userId) {
+  if (!ioInstance) {
+    console.error('Socket.IO instance not initialized');
+    return false;
+  }
+
+  const userRoom = ioInstance.sockets.adapter.rooms.get(`user:${userId}`);
+  if (!userRoom || userRoom.size === 0) {
+    console.log(`User ${userId} is not connected to any socket`);
+    return false;
+  }
+
+  for (const socketId of userRoom) {
+    const socket = ioInstance.sockets.sockets.get(socketId);
+    if (socket && socket.data && socket.data.userId === userId) {
+      console.log(`User ${userId} is online with socket ID ${socketId}`);
+      return true;
+    }
+  }
+
+  console.log(`User ${userId} has no valid socket connections`);
+  return false;
+}
+
 function initSocket(server) {
   const io = new Server(server, { cors: { origin: '*' } });
 
