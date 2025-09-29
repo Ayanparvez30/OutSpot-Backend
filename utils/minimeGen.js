@@ -1,4 +1,4 @@
-// utils/minimeGen.js
+
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { OpenAI } = require('openai');
@@ -11,11 +11,7 @@ function isHttpUrl(u) {
 
 function mapGlasses(glassesKey) {
   if (!glassesKey || glassesKey === 'none') return null;
-
-  if (typeof glassesKey === 'string' && glassesKey.startsWith('http')) {
-    return glassesKey; // strict visual ref image
-  }
-
+  if (typeof glassesKey === 'string' && glassesKey.startsWith('http')) return glassesKey;
   const GLASSES_MAP = {
     none: null,
     'wayfarer-black': 'matte black wayfarer eyeglasses, medium-thick frame',
@@ -38,7 +34,7 @@ function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }
   };
 }
 
-// split accessories so "chain" ≠ earrings
+// Split accessories so "chain" ≠ earrings; also BAN pendants by default
 function accessoriesLines(o, isFeminine) {
   if (!isFeminine) return '';
   const j = (o.jewelry || '').toLowerCase();
@@ -50,7 +46,7 @@ function accessoriesLines(o, isFeminine) {
   const lips = o.lipstick || 'natural';
 
   if (j.includes('chain') || j.includes('necklace')) {
-    neck = 'thin gold chain necklace (subtle), no pendant';
+    neck = 'plain thin chain necklace (no pendant, no charm, minimalist)';
     ears = 'none';
   } else if (j.includes('earring')) {
     ears = 'small studs';
@@ -59,8 +55,7 @@ function accessoriesLines(o, isFeminine) {
   } else if (j.includes('bracelet')) {
     wrist = 'simple bracelet';
   } else if (j && j !== 'none') {
-    // free text fallback interpreted as necklace
-    neck = j;
+    neck = `${j} (no pendant, minimalist)`;
   }
 
   return `
@@ -116,6 +111,7 @@ ${isFeminine ? accessoriesLines(o, isFeminine) : ''}
 # NEGATIVE INSTRUCTIONS
 - Do NOT crop hair or shoes.
 - Do NOT turn the body away; keep front-facing.
+- Do NOT add pendants or charms to necklaces unless explicitly specified.
 ${noGlasses
   ? `- Do NOT include any kind of eyewear or eyewear artifacts.`
   : `- Do NOT ignore the glasses reference. If the reference color is yellow/red/etc., do NOT render black/gray frames.`}
@@ -148,13 +144,15 @@ async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
 // ---------- main ----------
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+/**
+ * opts.faceUrl (optional) — force-use this face ref (e.g., premade URL)
+ */
 exports.renderCurrentMinime = async (userId, opts = {}) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user?.bodyShapeUrl) throw new Error('Missing body shape');
+  if (!isHttpUrl(user?.bodyShapeUrl)) throw new Error('Missing/invalid body shape url');
 
-  let mm = null;
+  let mm;
 
-  // pick the working draft (or create from last saved)
   if (opts.targetMinimeId) {
     mm = await prisma.minime.findUnique({ where: { id: opts.targetMinimeId } });
     if (!mm || mm.userId !== userId) throw new Error('Invalid targetMinimeId for this user');
@@ -190,8 +188,8 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     }
   }
 
-  // --- HARD face reference: only selfie/premade allowed
-  const faceReference = mm.selfieUrl || mm.avatarUrl;
+  // --- HARD face reference: ONLY selfie or explicit opts
+  const faceReference = opts.faceUrl || mm.selfieUrl;
   if (!isHttpUrl(faceReference)) {
     throw new Error('Missing/invalid face reference; upload a selfie or select a premade first');
   }
@@ -230,7 +228,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
   const updated = await prisma.minime.update({
     where: { id: mm.id },
     data: {
-      avatarUrl: uploadedImageUrl,
+      avatarUrl: uploadedImageUrl, // output only
       isDraft: true,
       isSaved: false,
     },
