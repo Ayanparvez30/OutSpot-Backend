@@ -614,7 +614,7 @@ exports.getMessagesPaginated = async (req, res) => {
             minime: {
               select: { avatarUrl: true },
               where: { isSaved: true },
-              orderBy: { updatedAt: 'desc' },
+              orderBy: { updatedAt: 'asc' },
               take: 1,
             },
           },
