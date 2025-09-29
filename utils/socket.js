@@ -235,8 +235,8 @@ function initSocket(server) {
     // --------------- CHAT EVENTS (as you had) ---------------
     socket.on('joinChat', (data) => {
       const chatId = data?.chatId;
-      if (chatId === undefined || chatId === null || (typeof chatId !== 'string' && typeof chatId !== 'number')) {
-        console.error(`❌ Invalid chatId received: ${JSON.stringify(data)}`);
+      if (typeof chatId !== 'string' && typeof chatId !== 'number') {
+        console.error(`❌ Invalid chatId received: ${JSON.stringify(data)}`);s
         return;
       }
       socket.join(`chat_${chatId}`);
