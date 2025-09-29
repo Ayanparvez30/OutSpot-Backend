@@ -625,7 +625,7 @@ exports.getMessagesPaginated = async (req, res) => {
           },
         },
       },
-      orderBy: { createdAt: 'asc' },
+      orderBy: { createdAt: 'desc' },
       skip,
       take: parseInt(limit, 10),
     });
