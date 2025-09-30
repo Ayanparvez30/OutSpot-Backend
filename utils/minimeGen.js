@@ -54,12 +54,13 @@ Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 # HARD CONSTRAINTS
 - STRICT body shape reference: ${bodyShapeUrl}
 - STRICT facial likeness from: ${faceUrl}
+- Skin tone: COPY EXACTLY from the face reference image;
 - Camera: straight-on, full-body. Subject fully contained in frame.
 - Keep ~10–12% empty space above the head and below the shoe soles.
 - Both feet visible, standing on a flat plane. No cropping anywhere.
 - Background: plain white (or transparent if API parameter is given).
 - Lighting: soft, even, no harsh shadows.
-
+- Hair: copy the same style and texture from the face reference (no straightening, no length change).
 # OUTFIT (match EXACTLY; http(s) = strict visual refs)
 - Shirt/top: ${o.shirt || 'basic solid color t-shirt'}
 - Pants/bottom: ${o.pant || 'straight jeans'}
@@ -77,8 +78,10 @@ ${isFeminine ? accessoriesLines(o, isFeminine) : ''}
 - Do NOT crop hair or shoes.
 - Do NOT turn the body away; keep front-facing.
 - Do NOT change accessory colors; use the specified color or the image reference color exactly.
- Do NOT add pendants/lockets/charms to necklaces unless explicitly specified.
+- Do NOT add pendants/lockets/charms to necklaces unless explicitly specified.
 - Do NOT add earrings unless the jewelry explicitly contains "earring".
+- Do NOT lighten the skin or change undertone relative to the face reference.
+
 ${noGlasses
   ? `- Do NOT include any kind of eyewear or eyewear artifacts.`
   : `- Do NOT ignore the glasses reference. If the reference color is yellow/red/etc., do NOT render black/gray frames.`}
@@ -204,17 +207,21 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
 
 
   const isFeminine = user.bodyType === 'feminine';
-  const faceReference = mm.selfieUrl || mm.avatarUrl || user.bodyShapeUrl;
+ const faceReference = (opts.faceUrl) || mm.selfieUrl;
+if (!faceReference) {
+  throw new Error('Missing/invalid face reference; upload a selfie or select a premade first');
+}
 
-  const outfitForModel = normalizeOutfit({
-    shirt: mm.shirt,
-    pant: mm.pant,
-    shoes: mm.shoes,
-    glasses: mm.glasses,
-    lipstick: mm.lipstick,
-    jewelry: mm.jewelry,
-    bag: mm.bag,
-  });
+ const outfitForModel = normalizeOutfit({
+  shirt:    opts.shirt    ?? mm.shirt,
+  pant:     opts.pant     ?? mm.pant,
+  shoes:    opts.shoes    ?? mm.shoes,
+  glasses:  opts.glasses  ?? mm.glasses,
+  lipstick: opts.lipstick ?? mm.lipstick,
+  jewelry:  opts.jewelry  ?? mm.jewelry,
+  bag:      opts.bag      ?? mm.bag,
+});
+
 
   const prompt = buildMinimePrompt({
     bodyShapeUrl: user.bodyShapeUrl,
