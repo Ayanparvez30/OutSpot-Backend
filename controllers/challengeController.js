@@ -75,7 +75,6 @@ exports.getChallengeCards = async (req, res) => {
     async function maybeNotify(assign, freq) {
       if (!assign || !assign.challenge) return;
       const challenge = assign.challenge;
-      // Check if notification already exists for this user/challenge/frequency today/week
       const type = freq === 'DAILY' ? 'DAILY_CHALLENGE' : 'WEEKLY_CHALLENGE';
       const today = new Date();
       let start, end;
@@ -87,6 +86,8 @@ exports.getChallengeCards = async (req, res) => {
         start = week.startUTC;
         end = week.endUTC;
       }
+
+      // Add unique constraint check for notifications
       const existing = await prisma.notification.findFirst({
         where: {
           userId,
@@ -95,25 +96,29 @@ exports.getChallengeCards = async (req, res) => {
           createdAt: { gte: start, lte: end },
         },
       });
+
       if (!existing) {
-        await prisma.notification.create({
-          data: {
+        try {
+          await prisma.notification.create({
+            data: {
+              userId,
+              type,
+              title: challenge.title,
+              description: challenge.description,
+            },
+          });
+
+          // Send push notification
+          await notifyUser(
             userId,
             type,
-            title: challenge.title,
-            description: challenge.description,
-            // Optionally add challengeId in a data/json field if needed
-          },
-        });
-        // Create notification and send push
-        const { notifyUser } = require('../utils/notificationService');
-        await notifyUser(
-          userId,
-          type,
-          challenge.title,
-          challenge.description,
-          { challengeId: challenge.id }
-        );
+            challenge.title,
+            challenge.description,
+            { challengeId: challenge.id }
+          );
+        } catch (error) {
+          console.error('Notification creation failed:', error);
+        }
       }
     }
 
