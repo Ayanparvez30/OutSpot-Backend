@@ -1,6 +1,6 @@
 // utils/challenges.js
 const { DateTime } = require('luxon');
-const { notifyUser } = require('../utils/notificationService');
+const { notifyUser } = require('../utils/notificationService'); // Import notification service
 
 function resolveZone(userZone) {
   return userZone || process.env.APP_TIMEZONE || 'America/New_York';
@@ -54,15 +54,33 @@ function seededPick(array, seedStr) {
   const idx = Math.floor(rand() * array.length);
   return array[idx];
 }
-async function getAssignedChallenge(prisma, userId, frequency, zone, now = new Date()) {
-  const list = await prisma.challenge.findMany({ where: { frequency }, orderBy: { id: 'asc' } });
-  if (!list.length) return { challenge: null, windowKey: null };
-  const windowKey = frequency === 'DAILY' ? dateKeyInZone(now, zone) : weekKeyInZone(now, zone);
-  const seed = `${frequency}:${windowKey}:USER:${userId}`;
-  const challenge = seededPick(list, seed);
+async function maybeNotify(prisma, userId, assign, freq, zone) {
+  if (!assign || !assign.challenge) return;
+  const challenge = assign.challenge;
+  const type = freq === 'DAILY' ? 'DAILY_CHALLENGE' : 'WEEKLY_CHALLENGE';
+  const today = new Date();
+  let start, end;
+  if (freq === 'DAILY') {
+    start = startOfDayInZone(today, zone);
+    end = endOfDayInZone(today, zone);
+  } else {
+    const week = getWeekStartEndInZone(today, zone);
+    start = week.startUTC;
+    end = week.endUTC;
+  }
 
-  if (challenge) {
-    const type = frequency === 'DAILY' ? 'DAILY_CHALLENGE' : 'WEEKLY_CHALLENGE';
+  // Add unique constraint check for notifications
+  const existing = await prisma.notification.findFirst({
+    where: {
+      userId,
+      type,
+      title: challenge.title,
+      createdAt: { gte: start, lte: end },
+    },
+  });
+
+  if (!existing) {
+    // Send push notification
     await notifyUser(
       userId,
       type,
@@ -71,6 +89,16 @@ async function getAssignedChallenge(prisma, userId, frequency, zone, now = new D
       { challengeId: challenge.id }
     );
   }
+}
+async function getAssignedChallenge(prisma, userId, frequency, zone, now = new Date()) {
+  const list = await prisma.challenge.findMany({ where: { frequency }, orderBy: { id: 'asc' } });
+  if (!list.length) return { challenge: null, windowKey: null };
+  const windowKey = frequency === 'DAILY' ? dateKeyInZone(now, zone) : weekKeyInZone(now, zone);
+  const seed = `${frequency}:${windowKey}:USER:${userId}`;
+  const challenge = seededPick(list, seed);
+
+  // Create notifications for assigned challenges if not already present
+  await maybeNotify(prisma, userId, { challenge }, frequency, zone);
 
   return { challenge, windowKey };
 }
