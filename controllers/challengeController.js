@@ -199,26 +199,7 @@ async function getFull(req, res, frequency) {
         createdAt: { gte: start, lte: end },
       },
     });
-    if (!existing) {
-      await prisma.notification.create({
-        data: {
-          userId,
-          type,
-          title: challenge.title,
-          description: challenge.description,
-          // Optionally add challengeId in a data/json field if needed
-        },
-      });
-      // Create notification and send push
-      const { notifyUser } = require('../utils/notificationService');
-      await notifyUser(
-        userId,
-        type,
-        challenge.title,
-        challenge.description,
-        { challengeId: challenge.id }
-      );
-    }
+
 
   const window = (frequency === 'DAILY')
     ? { startUTC: startOfDayInZone(now, zone), endUTC: endOfDayInZone(now, zone) }
