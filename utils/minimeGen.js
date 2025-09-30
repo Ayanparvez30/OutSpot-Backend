@@ -4,6 +4,59 @@ const prisma = new PrismaClient();
 const { OpenAI } = require('openai');
 const uploadToS3 = require('../utils/s3Upload');
 
+// --- add near the helpers ---
+function norm(s) { return String(s || '').replace(/[-_]+/g, ' ').trim().toLowerCase(); }
+
+function parsePremadeMeta(u) {
+  const out = { skinTone: null, hair: {}, facialHair: null };
+  if (!u) return out;
+
+  // 1) query param override (fh/beard/moustache/skinTone)
+  try {
+    const url = new URL(u);
+    const fh = url.searchParams.get('fh') || url.searchParams.get('beard');
+    const st = url.searchParams.get('skinTone');
+    const stache = url.searchParams.get('moustache') || url.searchParams.get('stache');
+    if (st) out.skinTone = norm(st);
+    if (fh || stache) {
+      out.facialHair = [
+        stache && stache !== 'none' ? norm(stache) + ' moustache' : null,
+        fh && fh !== 'none' ? norm(fh) : null,
+      ].filter(Boolean).join(', ');
+    }
+  } catch (_) {}
+
+  // 2) filename tokens
+  const name = String(u).split('/').pop().toLowerCase().replace(/\.(png|jpg|jpeg)$/, '');
+  const tokens = name.split('_'); // e.g. ["male","01","fairskintone","medium","brown","hair"]
+
+  // skinTone: "*skintone" / "*tone"
+  for (const t of tokens) {
+    if (t.endsWith('skintone')) { out.skinTone = norm(t.replace('skintone','')); break; }
+    if (t.endsWith('tone'))     { out.skinTone = norm(t.replace('tone',''));     break; }
+  }
+
+  // hair: "... <style> <color> hair"
+  const hairIdx = tokens.lastIndexOf('hair');
+  if (hairIdx > 0) {
+    const before = tokens.slice(Math.max(0, hairIdx - 2), hairIdx); // take last 1-2 tokens
+    if (before.length === 2) {
+      out.hair.style = norm(before[0]);   // e.g. "medium"
+      out.hair.color = norm(before[1]);   // e.g. "brown"
+    } else if (before.length === 1) {
+      out.hair.color = norm(before[0]);
+    }
+  }
+
+  // facial hair (optional filename like "...with-trimmed-moustache", "...with-light-stubble")
+  const withIdx = tokens.indexOf('with');
+  if (withIdx >= 0 && !out.facialHair) {
+    const tail = tokens.slice(withIdx + 1).join(' ');
+    out.facialHair = norm(tail); // "trimmed moustache" / "light stubble" / "full beard"
+  }
+
+  return out;
+}
 
 function mapGlasses(glassesKey) {
   if (!glassesKey || glassesKey === 'none') return null;
@@ -34,10 +87,9 @@ function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }
     bag,
   };
 }
-function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit,facialHair }) {
+function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit, facialHair, skinToneHint, hairHint }) {
   const o = outfit || {};
   const noGlasses = !o.glasses;
-
 
   const glassesLine = noGlasses
     ? `- Glasses: none (REMOVE any eyewear from the face reference; no frames, lenses, reflections or shadows).`
@@ -48,22 +100,25 @@ function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit,facialHai
            Do NOT switch to black/gray frames if the image has color.`
         : `- Glasses: ${o.glasses} (must be clearly visible, correctly aligned with the eyes).`);
 
+  const facialHairLines = (!facialHair || facialHair === 'none')
+    ? `- Facial hair: none; keep CLEAN-SHAVEN with no moustache and no stubble.`
+    : `- Facial hair: ${facialHair}; ADD as specified even if the face reference is clean-shaven; keep neat and match hair color.`;
+
   return `
 Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 
 # HARD CONSTRAINTS
 - STRICT body shape reference: ${bodyShapeUrl}
 - STRICT facial likeness from: ${faceUrl}
-- Skin tone: COPY EXACTLY from the face reference image;
-- Facial hair: ${facialHair || 'none'}; keep CLEAN-SHAVEN with no moustache and no stubble.
-  If the face reference shows no facial hair, render a smooth jawline and upper lip.
-
+- Skin tone: COPY EXACTLY from the face reference image.${skinToneHint ? ` Target undertone → ${skinToneHint}.` : ''}
+${facialHairLines}
 - Camera: straight-on, full-body. Subject fully contained in frame.
 - Keep ~10–12% empty space above the head and below the shoe soles.
 - Both feet visible, standing on a flat plane. No cropping anywhere.
 - Background: plain white (or transparent if API parameter is given).
 - Lighting: soft, even, no harsh shadows.
-- Hair: copy the same style and texture from the face reference (no straightening, no length change).
+- Hair: copy the same style and texture from the face reference${hairHint?.style ? `; keep style ~ ${hairHint.style}` : ''}${hairHint?.color ? `; color ~ ${hairHint.color}` : ''}.
+
 # OUTFIT (match EXACTLY; http(s) = strict visual refs)
 - Shirt/top: ${o.shirt || 'basic solid color t-shirt'}
 - Pants/bottom: ${o.pant || 'straight jeans'}
@@ -84,15 +139,14 @@ ${isFeminine ? accessoriesLines(o, isFeminine) : ''}
 - Do NOT add pendants/lockets/charms to necklaces unless explicitly specified.
 - Do NOT add earrings unless the jewelry explicitly contains "earring".
 - Do NOT lighten the skin or change undertone relative to the face reference.
-- Do NOT add any beard, moustache, goatee or stubble unless explicitly specified.
-
-${noGlasses
-  ? `- Do NOT include any kind of eyewear or eyewear artifacts.`
-  : `- Do NOT ignore the glasses reference. If the reference color is yellow/red/etc., do NOT render black/gray frames.`}
+${(!facialHair || facialHair === 'none')
+  ? `- Do NOT add any beard, moustache, goatee or stubble.`
+  : `- Do NOT ignore the facial hair instruction; render it clearly and correctly.`}
 
 Return a single, centered full-body render.
 `.trim();
 }
+
 
 function colorHintFromString(s) {
   const l = String(s).toLowerCase();
@@ -169,68 +223,59 @@ async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
 }
 
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
-
 exports.renderCurrentMinime = async (userId, opts = {}) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user?.bodyShapeUrl) throw new Error('Missing body shape');
-const facialHair = opts.facialHair ?? 'none'; // default lock: clean-shaven
 
- 
-  let mm = null;
+  let mm;
   if (opts.targetMinimeId) {
     mm = await prisma.minime.findUnique({ where: { id: opts.targetMinimeId } });
-    if (!mm || mm.userId !== userId) {
-      throw new Error('Invalid targetMinimeId for this user');
-    }
+    if (!mm || mm.userId !== userId) throw new Error('Invalid targetMinimeId for this user');
   } else {
-
     mm = await prisma.minime.findFirst({
       where: { userId, isDraft: true, isSaved: false },
       orderBy: { createdAt: 'desc' },
-    });
-
-    if (!mm) {
-      const saved = await prisma.minime.findFirst({
-        where: { userId, isSaved: true },
-        orderBy: { createdAt: 'desc' },
-      });
-      const base = saved ? {
-        shirt: saved.shirt,
-        pant: saved.pant,
-        shoes: saved.shoes,
-        glasses: saved.glasses,
-        lipstick: saved.lipstick,
-        jewelry: saved.jewelry,
-        bag: saved.bag,
-        selfieUrl: saved.selfieUrl ?? null,
-      } : {};
-      mm = await prisma.minime.create({
-        data: { userId, ...base, isSaved: false, isDraft: true },
-      });
-    }
+    }) || await prisma.minime.create({ data: { userId, isSaved: false, isDraft: true }});
   }
 
-
   const isFeminine = user.bodyType === 'feminine';
-const faceReference = mm.selfieUrl || mm.avatarUrl || user.bodyShapeUrl;
+
+  // ✅ এখন ফ্রন্টএন্ড থেকে আসা premade URL-ই faceRef হিসেবে ধরা হবে
+  const faceReference = (opts.faceUrl && isHttpUrl(opts.faceUrl)) ? opts.faceUrl : mm.selfieUrl;
+  if (!isHttpUrl(faceReference)) {
+    throw new Error('Missing/invalid face reference; upload a selfie or select a premade first');
+  }
+
+  // parse meta from the premade URL/filename
+  const meta = parsePremadeMeta(faceReference);
+
+  // resolve hints (priority: explicit opts > url meta > defaults)
+  const facialHair = isFeminine ? 'none'
+    : (opts.facialHair && String(opts.facialHair).trim())
+      || meta.facialHair
+      || 'none';
+
+  const skinToneHint = opts.skinTone || meta.skinTone; // optional
+  const hairHint = meta.hair;                           // optional
 
   const outfitForModel = normalizeOutfit({
-    shirt: mm.shirt,
-    pant: mm.pant,
-    shoes: mm.shoes,
-    glasses: mm.glasses,
-    lipstick: mm.lipstick,
-    jewelry: mm.jewelry,
-    bag: mm.bag,
+    shirt:    opts.shirt    ?? mm.shirt,
+    pant:     opts.pant     ?? mm.pant,
+    shoes:    opts.shoes    ?? mm.shoes,
+    glasses:  opts.glasses  ?? mm.glasses,
+    lipstick: opts.lipstick ?? mm.lipstick,
+    jewelry:  opts.jewelry  ?? mm.jewelry,
+    bag:      opts.bag      ?? mm.bag,
   });
-
 
   const prompt = buildMinimePrompt({
     bodyShapeUrl: user.bodyShapeUrl,
     faceUrl: faceReference,
     isFeminine,
     outfit: outfitForModel,
-    facialHair
+    facialHair,
+    skinToneHint,
+    hairHint,
   });
 
   const imageResponse = await openai.images.generate({
