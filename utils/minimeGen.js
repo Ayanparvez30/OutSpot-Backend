@@ -112,9 +112,7 @@ Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 
 # HARD CONSTRAINTS
 - STRICT body shape reference: ${bodyShapeUrl}
-- STRICT facial likeness (HARD LOCK): copy EXACTLY from this image → ${faceUrl}
-  (match skin tone, hairstyle, hair texture, eye shape, eyebrows, nose, lips, jawline;
-   do not beautify, age, or alter expression. If any conflict arises, the face reference WINS.)
+- STRICT facial likeness from: ${faceUrl}
 - Skin tone: match the face reference EXACTLY; do not lighten or darken.
 - Hair: copy the same style and texture from the face reference (no straightening, no length change).
 - Camera: straight-on, full-body. Subject fully contained in frame.
@@ -178,13 +176,17 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 exports.renderCurrentMinime = async (userId, opts = {}) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!isHttpUrl(user?.bodyShapeUrl)) throw new Error('Missing/invalid body shape url');
+  if (!user?.bodyShapeUrl) throw new Error('Missing body shape');
 
-  let mm;
+ 
+  let mm = null;
   if (opts.targetMinimeId) {
     mm = await prisma.minime.findUnique({ where: { id: opts.targetMinimeId } });
-    if (!mm || mm.userId !== userId) throw new Error('Invalid targetMinimeId for this user');
+    if (!mm || mm.userId !== userId) {
+      throw new Error('Invalid targetMinimeId for this user');
+    }
   } else {
+
     mm = await prisma.minime.findFirst({
       where: { userId, isDraft: true, isSaved: false },
       orderBy: { createdAt: 'desc' },
@@ -195,31 +197,26 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
         where: { userId, isSaved: true },
         orderBy: { createdAt: 'desc' },
       });
-      const base = saved
-        ? {
-            shirt: saved.shirt,
-            pant: saved.pant,
-            shoes: saved.shoes,
-            glasses: saved.glasses,
-            lipstick: saved.lipstick,
-            jewelry: saved.jewelry,
-            bag: saved.bag,
-            selfieUrl: saved.selfieUrl ?? null,
-          }
-        : {};
+      const base = saved ? {
+        shirt: saved.shirt,
+        pant: saved.pant,
+        shoes: saved.shoes,
+        glasses: saved.glasses,
+        lipstick: saved.lipstick,
+        jewelry: saved.jewelry,
+        bag: saved.bag,
+        selfieUrl: saved.selfieUrl ?? null,
+      } : {};
       mm = await prisma.minime.create({
         data: { userId, ...base, isSaved: false, isDraft: true },
       });
     }
   }
 
-  const isFeminine = user.bodyType === 'feminine';
 
-  // ✔ Face must come from selfie/premade (or forced via opts.faceUrl)
-  const faceReference = opts.faceUrl || mm.selfieUrl;
-  if (!isHttpUrl(faceReference)) {
-    throw new Error('Missing/invalid face reference; upload a selfie or select a premade first');
-  }
+  const isFeminine = user.bodyType === 'feminine';
+  const faceReference = mm.selfieUrl || mm.avatarUrl || user.bodyShapeUrl;
+
 
   const outfitForModel = normalizeOutfit({
     shirt: mm.shirt,
