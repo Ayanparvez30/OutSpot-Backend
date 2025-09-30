@@ -3,7 +3,9 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { OpenAI } = require('openai');
 const uploadToS3 = require('../utils/s3Upload');
-
+function isHttpUrl(u) {
+  return typeof u === 'string' && /^https?:\/\//i.test(u);
+}
 // --- add near the helpers ---
 function norm(s) { return String(s || '').replace(/[-_]+/g, ' ').trim().toLowerCase(); }
 
