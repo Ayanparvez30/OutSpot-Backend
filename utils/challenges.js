@@ -1,5 +1,6 @@
 // utils/challenges.js
 const { DateTime } = require('luxon');
+const { notifyUser } = require('../utils/notificationService');
 
 function resolveZone(userZone) {
   return userZone || process.env.APP_TIMEZONE || 'America/New_York';
@@ -59,6 +60,18 @@ async function getAssignedChallenge(prisma, userId, frequency, zone, now = new D
   const windowKey = frequency === 'DAILY' ? dateKeyInZone(now, zone) : weekKeyInZone(now, zone);
   const seed = `${frequency}:${windowKey}:USER:${userId}`;
   const challenge = seededPick(list, seed);
+
+  if (challenge) {
+    const type = frequency === 'DAILY' ? 'DAILY_CHALLENGE' : 'WEEKLY_CHALLENGE';
+    await notifyUser(
+      userId,
+      type,
+      challenge.title,
+      challenge.description,
+      { challengeId: challenge.id }
+    );
+  }
+
   return { challenge, windowKey };
 }
 function timeRemainingMs(frequency, zone, now = new Date()) {
