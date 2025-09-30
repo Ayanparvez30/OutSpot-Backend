@@ -98,29 +98,17 @@ exports.getChallengeCards = async (req, res) => {
       });
 
       if (!existing) {
-        try {
-          await prisma.notification.create({
-            data: {
-              userId,
-              type,
-              title: challenge.title,
-              description: challenge.description,
-            },
-          });
-
-          // Send push notification
-          await notifyUser(
-            userId,
-            type,
+        // Send push notification
+        await notifyUser(
+          userId,
+          type,
             challenge.title,
             challenge.description,
             { challengeId: challenge.id }
           );
-        } catch (error) {
-          console.error('Notification creation failed:', error);
         }
       }
-    }
+    
 
     await Promise.all([
       maybeNotify(daily, 'DAILY'),
