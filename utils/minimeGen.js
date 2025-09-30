@@ -34,7 +34,7 @@ function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }
     bag,
   };
 }
-function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit }) {
+function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit,facialHair }) {
   const o = outfit || {};
   const noGlasses = !o.glasses;
 
@@ -55,6 +55,9 @@ Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 - STRICT body shape reference: ${bodyShapeUrl}
 - STRICT facial likeness from: ${faceUrl}
 - Skin tone: COPY EXACTLY from the face reference image;
+- Facial hair: ${facialHair || 'none'}; keep CLEAN-SHAVEN with no moustache and no stubble.
+  If the face reference shows no facial hair, render a smooth jawline and upper lip.
+
 - Camera: straight-on, full-body. Subject fully contained in frame.
 - Keep ~10–12% empty space above the head and below the shoe soles.
 - Both feet visible, standing on a flat plane. No cropping anywhere.
@@ -81,6 +84,7 @@ ${isFeminine ? accessoriesLines(o, isFeminine) : ''}
 - Do NOT add pendants/lockets/charms to necklaces unless explicitly specified.
 - Do NOT add earrings unless the jewelry explicitly contains "earring".
 - Do NOT lighten the skin or change undertone relative to the face reference.
+- Do NOT add any beard, moustache, goatee or stubble unless explicitly specified.
 
 ${noGlasses
   ? `- Do NOT include any kind of eyewear or eyewear artifacts.`
@@ -169,6 +173,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 exports.renderCurrentMinime = async (userId, opts = {}) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user?.bodyShapeUrl) throw new Error('Missing body shape');
+const facialHair = opts.facialHair ?? 'none'; // default lock: clean-shaven
 
  
   let mm = null;
@@ -207,20 +212,17 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
 
 
   const isFeminine = user.bodyType === 'feminine';
- const faceReference = (opts.faceUrl) || mm.selfieUrl;
-if (!faceReference) {
-  throw new Error('Missing/invalid face reference; upload a selfie or select a premade first');
-}
+const faceReference = mm.selfieUrl || mm.avatarUrl || user.bodyShapeUrl;
 
- const outfitForModel = normalizeOutfit({
-  shirt:    opts.shirt    ?? mm.shirt,
-  pant:     opts.pant     ?? mm.pant,
-  shoes:    opts.shoes    ?? mm.shoes,
-  glasses:  opts.glasses  ?? mm.glasses,
-  lipstick: opts.lipstick ?? mm.lipstick,
-  jewelry:  opts.jewelry  ?? mm.jewelry,
-  bag:      opts.bag      ?? mm.bag,
-});
+  const outfitForModel = normalizeOutfit({
+    shirt: mm.shirt,
+    pant: mm.pant,
+    shoes: mm.shoes,
+    glasses: mm.glasses,
+    lipstick: mm.lipstick,
+    jewelry: mm.jewelry,
+    bag: mm.bag,
+  });
 
 
   const prompt = buildMinimePrompt({
@@ -228,6 +230,7 @@ if (!faceReference) {
     faceUrl: faceReference,
     isFeminine,
     outfit: outfitForModel,
+    facialHair
   });
 
   const imageResponse = await openai.images.generate({
