@@ -1239,6 +1239,28 @@ exports.getUserProfile = async (req, res) => {
       thisWeekPoints = await getWeeklyPointsForUser(targetUserId);
     }
 
+    // Fetch the most recent joined or created community
+    const mostRecentCommunity = await prisma.communityMember.findFirst({
+      where: { userId: targetUserId },
+      include: {
+        community: true,
+      },
+      orderBy: { joinedAt: "desc" },
+    });
+
+    const mostRecent = mostRecentCommunity
+      ? {
+          id: mostRecentCommunity.community.id,
+          name: mostRecentCommunity.community.name,
+          imageUrl: mostRecentCommunity.community.imageUrl || null,
+          membersCount: await prisma.communityMember.count({
+            where: { communityId: mostRecentCommunity.community.id },
+          }),
+          type: mostRecentCommunity.community.creatorId === targetUserId ? "created" : "joined",
+          at: mostRecentCommunity.joinedAt,
+        }
+      : null;
+
     const profileData = {
       id: user.id,
       username: user.username,
@@ -1251,6 +1273,7 @@ exports.getUserProfile = async (req, res) => {
       bio: isSelf || isFriend ? user.bio : null,
       totalPoints: isSelf || isFriend ? user.totalPoints : null,
       stories,
+      mostRecent,
     };
 
     return res.status(200).json({
