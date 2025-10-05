@@ -355,6 +355,34 @@ function initSocket(server) {
         updatedAt: Date.now(),
       });
     });
+    //added last, maybe not needed or must be needed
+
+    socket.on('markMessageAsRead', async ({ chatId, userId, lastSeenMessageId }) => {
+      if (!chatId || !userId || !lastSeenMessageId) {
+        console.log('❌ Missing fields in markMessageAsRead');
+        return;
+      }
+
+      try {
+        // Update the lastSeenMessageId for the user in the chat
+        await prisma.userOnChat.updateMany({
+          where: { userId, chatId },
+          data: { lastSeenMessageId },
+        });
+
+        console.log(`✅ User ${userId} marked messages up to ${lastSeenMessageId} as read in chat ${chatId}`);
+
+        // Notify other users in the chat
+        socket.to(`chat_${chatId}`).emit('messageRead', {
+          chatId,
+          userId,
+          lastSeenMessageId,
+        });
+      } catch (error) {
+        console.error('❌ Error in markMessageAsRead:', error);
+        socket.emit('markMessageAsReadError', { error: 'Failed to mark messages as read' });
+      }
+    });
 
     socket.on('disconnect', () => {
       console.log('❌ Socket disconnected:', socket.id);
