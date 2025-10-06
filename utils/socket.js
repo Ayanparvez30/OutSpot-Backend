@@ -384,33 +384,6 @@ function initSocket(server) {
       }
     });
 
-
-        socket.on('getReadMessageIds', async (data) => {
-      const userId = data.userId;
-      if (!userId) {
-        console.log('❌ Missing userId in getReadMessageIds');
-        return;
-      }
-
-      try {
-        // Fetch all read message IDs for the user
-        const readMessages = await prisma.message.findMany({
-          where: {
-            readBy: {
-              has: userId, // Assuming `readBy` is an array of user IDs
-            },
-          },
-          select: { id: true },
-        });
-
-        const messageIds = readMessages.map((msg) => msg.id);
-        socket.emit('readMessageIdsResponse', messageIds);
-        console.log(`✅ Sent readMessageIdsResponse for userId=${userId}`);
-      } catch (error) {
-        console.error('❌ Error in getReadMessageIds:', error);
-      }
-    });
-
     socket.on('disconnect', () => {
       console.log('❌ Socket disconnected:', socket.id);
     });
