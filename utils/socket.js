@@ -92,15 +92,24 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
       }
 
       if (user.fcmToken) {
-        const notificationTitle = chat.isGroup
-          ? chat.name // Use group name if it's a group chat
-          : `${senderFirstName} ${senderLastName}`; // Use sender's name otherwise
+        let notificationTitle;
+        let notificationBody;
+
+        if (chat.isGroup) {
+          // Group notification
+          notificationTitle = chat.name; // Group name
+          notificationBody = `${senderFirstName} ${senderLastName}: ${messageContent}`; // Sender's name and message
+        } else {
+          // Private notification
+          notificationTitle = `${senderFirstName} ${senderLastName}`; // Sender's name
+          notificationBody = messageContent; // Message content only
+        }
 
         const notificationPayload = {
           token: user.fcmToken,
           notification: {
             title: notificationTitle,
-            body: `${senderFirstName} ${senderLastName}: ${messageContent}`, // Include sender's name in the body
+            body: notificationBody,
           },
           data: {
             chatId: String(chatId),
