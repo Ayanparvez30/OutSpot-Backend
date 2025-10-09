@@ -972,7 +972,7 @@ exports.getSentFriendRequests = async (req, res) => {
   }
 };
 
-// Friend profile (weekly points from ledger)
+
 exports.getFriendProfile = async (req, res) => {
   const currentUserId = req.authData.id;
   const friendId = parseInt(req.params.friendId, 10);

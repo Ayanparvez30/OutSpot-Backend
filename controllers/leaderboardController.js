@@ -11,6 +11,25 @@ function getStartOfWeek() {
   monday.setHours(0, 0, 0, 0);
   return monday;
 }
+// from a given weekStart (Mon 00:00 local), compute weekEnd and a nice label
+function getWeekEndAndLabel(weekStart) {
+  const weekEnd = new Date(weekStart);
+  weekEnd.setDate(weekEnd.getDate() + 7); // next Monday 00:00
+  const fmt = (d) => d.toISOString().slice(0, 10);
+  const label = `${fmt(weekStart)} → ${fmt(weekEnd)}`;
+  return { weekEnd, label };
+}
+
+// helper: format remaining time like "4d 11h"
+function getTimeRemainingString(weekEnd) {
+  const now = new Date();
+  const diffMs = weekEnd.getTime() - now.getTime();
+  if (diffMs <= 0) return '0d 0h';
+  const diffHrs = Math.floor(diffMs / (1000 * 60 * 60));
+  const days = Math.floor(diffHrs / 24);
+  const hours = diffHrs % 24;
+  return `${days}d ${hours}h`;
+}
 
 function getPrizeForRank(rank) {
   if (rank === 1) return '🥇 1st Prize';
@@ -25,17 +44,17 @@ const firstAvatar = (minimeArr) =>
   Array.isArray(minimeArr) && minimeArr.length > 0
     ? (minimeArr[0]?.avatarUrl || null)
     : null;
-
-/** Sum(finalPoints) for a set of users this week -> Map<userId, points> */
-async function getWeeklyTotalsForUsers(userIds, weekStart) {
+/** Sum(finalPoints) for a set of users within [weekStart, weekEnd) -> Map<userId, points> */
+async function getWeeklyTotalsForUsers(userIds, weekStart, weekEnd) {
   if (!userIds.length) return new Map();
+
+  const where = weekEnd
+    ? { userId: { in: userIds }, createdAt: { gte: weekStart, lt: weekEnd } }
+    : { userId: { in: userIds }, createdAt: { gte: weekStart } };
 
   const rows = await prisma.pointsLedger.groupBy({
     by: ['userId'],
-    where: {
-      userId: { in: userIds },
-      createdAt: { gte: weekStart },
-    },
+    where,
     _sum: { finalPoints: true },
   });
 
@@ -47,11 +66,12 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
   try {
     const userId = req.authData.id;
     const weekStart = getStartOfWeek();
+    const { weekEnd, label } = getWeekEndAndLabel(weekStart); // ✅ add
 
-    // 1) Get top 50 userIds by weekly sum(finalPoints)
+    // 1) top 50 within [weekStart, weekEnd)
     const grouped = await prisma.pointsLedger.groupBy({
       by: ['userId'],
-      where: { createdAt: { gte: weekStart } },
+      where: { createdAt: { gte: weekStart, lt: weekEnd } }, // ✅ use weekEnd
       _sum: { finalPoints: true },
       orderBy: { _sum: { finalPoints: 'desc' } },
       take: 50,
@@ -59,7 +79,7 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
 
     const topUserIds = grouped.map(g => g.userId);
 
-    // 2) Pull user profiles (for avatars/usernames)
+    // 2) users
     const users = topUserIds.length
       ? await prisma.user.findMany({
           where: { id: { in: topUserIds } },
@@ -75,10 +95,9 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
           },
         })
       : [];
-
     const userMap = new Map(users.map(u => [u.id, u]));
 
-    // 3) Shape leaderboard in correct rank order
+    // 3) shape
     const leaderboard = grouped
       .map((g, idx) => {
         const u = userMap.get(g.userId);
@@ -87,7 +106,7 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
         return {
           userId: g.userId,
           username: u?.username || `user_${g.userId}`,
-          avatarUrl: firstAvatar(u?.minime) || null,   // ✅ ensure avatar always returned
+          avatarUrl: firstAvatar(u?.minime) || null,
           points,
           rank,
           prize: getPrizeForRank(rank),
@@ -95,10 +114,15 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
       })
       .filter(e => e.points > 0);
 
-    // 4) My info if I’m in the top 50
     const myInfo = leaderboard.find(e => e.userId === userId) || null;
 
     return res.json({
+      window: {
+        weekStart: weekStart.toISOString(),
+        weekEnd: weekEnd.toISOString(),
+        label,
+        remaining: getTimeRemainingString(weekEnd), // ✅ countdown like "4d 11h"
+      },
       leaderboard,
       myRank: myInfo?.rank || null,
       myInfo,
@@ -109,13 +133,6 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
-
-
-/* ------------------------ Community Leaderboard ------------------------ */
-/**
- * Weekly leaderboard for members of a specific community.
- * Uses pointsLedger.finalPoints; includes only users with > 0 this week.
- */
 exports.getWeeklyCommunityLeaderboard = async (req, res) => {
   try {
     const requesterId = req.authData.id;
@@ -124,21 +141,31 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
       return res.status(400).json({ error: 'Invalid communityId' });
     }
     const weekStart = getStartOfWeek();
+    const { weekEnd, label } = getWeekEndAndLabel(weekStart); // ✅
 
-    // 1) Community members (userIds)
     const members = await prisma.communityMember.findMany({
       where: { communityId },
       select: { userId: true },
     });
     const memberIds = members.map(m => m.userId);
     if (memberIds.length === 0) {
-      return res.json({ leaderboard: [], myRank: null, myInfo: null, prize: null });
+      return res.json({
+        window: {
+          weekStart: weekStart.toISOString(),
+          weekEnd: weekEnd.toISOString(),
+          label,
+          remaining: getTimeRemainingString(weekEnd),
+        },
+        leaderboard: [],
+        myRank: null,
+        myInfo: null,
+        prize: null,
+      });
     }
 
-    // 2) Sum(finalPoints) per member (only within this community)
     const grouped = await prisma.pointsLedger.groupBy({
       by: ['userId'],
-      where: { createdAt: { gte: weekStart }, userId: { in: memberIds } },
+      where: { createdAt: { gte: weekStart, lt: weekEnd }, userId: { in: memberIds } }, // ✅
       _sum: { finalPoints: true },
       orderBy: { _sum: { finalPoints: 'desc' } },
     });
@@ -158,12 +185,11 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
     });
     const userMap = new Map(users.map(u => [u.id, u]));
 
-    // 3) Build, rank, slice (top 50)
     const raw = grouped
-      .map((g) => ({
+      .map(g => ({
         userId: g.userId,
         username: userMap.get(g.userId)?.username || `user_${g.userId}`,
-        avatarUrl: firstAvatar(userMap.get(g.userId)?.minime),
+        avatarUrl: firstAvatar(userMap.get(g.userId)?.minime) || null,
         points: g._sum.finalPoints || 0,
       }))
       .filter(u => u.points > 0)
@@ -178,6 +204,12 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
     const myInfo = leaderboard.find(e => e.userId === requesterId) || null;
 
     return res.json({
+      window: {
+        weekStart: weekStart.toISOString(),
+        weekEnd: weekEnd.toISOString(),
+        label,
+        remaining: getTimeRemainingString(weekEnd),
+      },
       leaderboard,
       myRank: myInfo?.rank || null,
       myInfo,
@@ -188,41 +220,42 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
-// controllers/leaderboardController.js
-
 exports.getWeeklyCommunityRanks = async (req, res) => {
   try {
-    const weekStart   = getStartOfWeek();
-    const requesterId = req.authData.id; // ✅ whose communities are “mine”
+    const weekStart = getStartOfWeek();
+    const { weekEnd, label } = getWeekEndAndLabel(weekStart); // ✅
+    const requesterId = req.authData.id;
 
-    // 1) All communities + members (+ creator/owner)
     const communities = await prisma.community.findMany({
       select: {
         id: true,
         name: true,
         imageUrl: true,
-        creatorId: true,               // ⬅️ make sure your schema has this (or rename to ownerId/createdById)
+        creatorId: true,
         members: { select: { userId: true } },
       },
     });
 
     if (communities.length === 0) {
       return res.json({
+        window: {
+          weekStart: weekStart.toISOString(),
+          weekEnd: weekEnd.toISOString(),
+          label,
+          remaining: getTimeRemainingString(weekEnd),
+        },
         leaderboard: [],
         myTopCreatedCommunity: null,
         myCreatedCommunities: [],
       });
     }
 
-    // 2) Unique userIds across all communities
     const allUserIds = Array.from(
       new Set(communities.flatMap(c => c.members.map(m => m.userId)))
     );
 
-    // 3) Weekly totals for all users
-    const totalsMap = await getWeeklyTotalsForUsers(allUserIds, weekStart);
+    const totalsMap = await getWeeklyTotalsForUsers(allUserIds, weekStart, weekEnd); // ✅ pass weekEnd
 
-    // 4) Sum per community + member count (+ carry creatorId)
     const rows = communities.map(c => {
       const points = c.members.reduce(
         (sum, m) => sum + (totalsMap.get(m.userId) || 0),
@@ -232,13 +265,12 @@ exports.getWeeklyCommunityRanks = async (req, res) => {
         communityId: c.id,
         name: c.name,
         imageUrl: c.imageUrl || null,
-        creatorId: c.creatorId || null,   // ✅ keep who created it
+        creatorId: c.creatorId || null,
         points,
         membersCount: c.members.length,
       };
     });
 
-    // 5) Rank across ALL communities (even 0 points)
     const rankedAll = [...rows]
       .sort((a, b) => b.points - a.points)
       .map((r, idx) => ({
@@ -247,23 +279,22 @@ exports.getWeeklyCommunityRanks = async (req, res) => {
         prize: getPrizeForRank(idx + 1),
       }));
 
-    // 6) Public leaderboard = only > 0 points (backward compatible)
     const leaderboard = rankedAll.filter(r => r.points > 0);
-
-    // 7) Among MY created communities, pick the best (lowest rank number)
-    const myCreatedCommunities = rankedAll
-      .filter(r => r.creatorId === requesterId);
-
-    // best = item with smallest rank (rankedAll already desc-sorted,
-    // but we explicitly reduce to be clear)
+    const myCreatedCommunities = rankedAll.filter(r => r.creatorId === requesterId);
     const myTopCreatedCommunity = myCreatedCommunities.length
       ? myCreatedCommunities.reduce((best, cur) => (cur.rank < best.rank ? cur : best))
       : null;
 
     return res.json({
-      leaderboard,                // unchanged (top scorers only)
-      myTopCreatedCommunity,      // ✅ best among user's created communities (can be 0 points)
-      myCreatedCommunities,       // ✅ all user's created communities with rank/points
+      window: {
+        weekStart: weekStart.toISOString(),
+        weekEnd: weekEnd.toISOString(),
+        label,
+        remaining: getTimeRemainingString(weekEnd),
+      },
+      leaderboard,
+      myTopCreatedCommunity,
+      myCreatedCommunities,
     });
   } catch (error) {
     console.error('Error in getWeeklyCommunityRanks:', error);
