@@ -1094,7 +1094,7 @@ exports.getFriendProfile = async (req, res) => {
     const rawOthers = [];
     for (const row of friendLinks) {
       const other = row.requester.id === friendId ? row.receiver : row.requester;
-      if (other.id !== friendId && other.id !== currentUserId) {
+      if (other.id !== friendId){
         rawOthers.push(other);
       }
     }
