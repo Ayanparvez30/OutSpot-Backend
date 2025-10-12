@@ -502,40 +502,41 @@ async function getAchievementStatus(req, res) {
     res.status(500).json({ error: 'Could not get level info' });
   }
 }
-// controllers/userController.js
+
+// ------------ ACCOUNT DELETE ------------
 async function deleteAccount(req, res) {
   const userId = req.authData.id;
 
   try {
-    // 0) DB থেকে firebaseUid আনো
+    // 0) firebaseUid আনো
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { firebaseUid: true }
     });
     const firebaseUid = user?.firebaseUid || null;
 
-    // 1) Firebase Auth: ইউজার ডিলিট
+    // 1) Firebase Auth
     if (firebaseUid) {
       try {
         await admin.auth().deleteUser(firebaseUid);
       } catch (e) {
-        // ইউজার না থাকলে এগিয়ে যাও, অন্য err উঠলে থ্রো
         if (e.code !== 'auth/user-not-found') throw e;
       }
     }
 
-    // 2) Firebase DB cleanup (যেটা ব্যবহার করো—দুটোই সেফলি ট্রাই করবে)
+    // 2) Firebase DB (Firestore/RTDB) – থাকলে ডিলিট করো, না থাকলে স্কিপ
     try {
-      // Firestore: users/{uid} ডক ডিলিট
       await admin.firestore().collection('users').doc(firebaseUid).delete();
-    } catch (_) { }
-
+    } catch (_) {}
     try {
-   
       await admin.database().ref(`users/${firebaseUid}`).remove();
-    } catch (_) { 
+    } catch (_) {}
+
+    // 3) Prisma DB
     await prisma.$transaction(async (tx) => {
-  
+      // দরকার হলে dependent টেবিল আগে:
+      // await tx.minime.deleteMany({ where: { userId } });
+      // await tx.story.deleteMany({ where: { userId } });
       await tx.user.delete({ where: { id: userId } });
     });
 
@@ -545,9 +546,6 @@ async function deleteAccount(req, res) {
     return res.status(500).json({ error: 'Failed to delete account' });
   }
 }
-
-
-
 module.exports = {
   // MiniMe + profile
   saveProfile,
