@@ -7,7 +7,7 @@ const { verifyFirebaseIdToken } = require('../utils/firebaseVerify');
 const response = require('../functions/response');
 require('dotenv').config();
 const nodemailer = require('nodemailer');
-const admin = require('../firebaseAdmin');
+
 // ✅ use ledger-aware points adder
 const { addPointsWithMultiplier } = require('../utils/points');
 
