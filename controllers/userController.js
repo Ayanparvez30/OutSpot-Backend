@@ -503,12 +503,30 @@ async function getAchievementStatus(req, res) {
   }
 }
 
-// DELETE ACCOUNT
 async function deleteAccount(req, res) {
   const userId = req.authData.id;
 
   try {
-    await prisma.user.delete({ where: { id: userId } });
+   
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { firebaseUid: true }
+    });
+
+    if (user?.firebaseUid) {
+      try {
+        await admin.auth().deleteUser(user.firebaseUid);
+      } catch (e) {
+   
+        if (e.code !== 'auth/user-not-found') throw e;
+      }
+    }
+
+    await prisma.$transaction(async (tx) => {
+   
+      await tx.user.delete({ where: { id: userId } });
+    });
+
     return res.json({ message: 'Account deleted successfully' });
   } catch (error) {
     console.error('Delete account error:', error);
@@ -516,9 +534,6 @@ async function deleteAccount(req, res) {
   }
 }
 
-/* -------------------------------------------------------------------------- */
-/*                                   EXPORTS                                   */
-/* -------------------------------------------------------------------------- */
 
 module.exports = {
   // MiniMe + profile
