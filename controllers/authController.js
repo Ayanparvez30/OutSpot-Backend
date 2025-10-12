@@ -466,19 +466,19 @@ if (firebaseIdToken) {
     const firebaseUid = decoded.uid;
     const phoneFromToken = decoded.phone_number;
 
-    // একই ভ্যারিয়েবল স্কোপে থাকাই ভালো
+
     const authToken = randomKey(40);
     const hashedPassword = hashPassword(password);
 
     const result = await prisma.$transaction(async (tx) => {
-      // ✅ upsert-safe — আগে ফোন দিয়ে নাও, তারপর create/update
+
       const { user: createdOrUpdated, isNew } = await upsertUserWithFirebasePhone({
         prisma, tx,
         username, email, hashedPassword, authToken,
         inviter, firebaseUid, phoneFromToken, fullPhone
       });
 
-      // Referral reward (শুধু নতুন বা প্রথমবার verify-এ)
+    
       if (inviter && inviter.id !== createdOrUpdated.id) {
         const already = await tx.referral.findFirst({ where: { inviteeId: createdOrUpdated.id } });
         if (!already) {

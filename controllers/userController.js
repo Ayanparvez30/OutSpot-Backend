@@ -1,4 +1,4 @@
-// controllers/userController.js
+
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -384,19 +384,16 @@ async function getUserPoints(req, res) {
     });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // সপ্তাহের শুরু (সোমবার-ভিত্তিক)
     const now = new Date();
     const day = now.getDay(); // Sun=0
     const diff = now.getDate() - day + (day === 0 ? -6 : 1);
     const weekStart = new Date(now.setDate(diff));
     weekStart.setHours(0, 0, 0, 0);
 
-    // ✅ Ledger থেকে যোগফল নাও — awarded finalPoints
     const ledgerRows = await prisma.pointsLedger.findMany({
       where: { userId: targetUserId, createdAt: { gte: weekStart } },
       select: { finalPoints: true }
-      // চাইলে reasons ফিল্টার করতে পারো:
-      // where: { userId: targetUserId, createdAt: { gte: weekStart }, reason: { in: ['CHALLENGE_COMPLETION','MAP_VISIT','REFERRAL_BONUS'] } }
+     
     });
 
     const thisWeekPoints = ledgerRows.reduce((sum, r) => sum + (r.finalPoints || 0), 0);
@@ -412,7 +409,7 @@ async function getUserPoints(req, res) {
     res.status(500).json({ error: 'Failed to fetch points' });
   }
 }
-// controllers/userController.js
+
 async function submitForPoints(req, res) {
   const userId = req.authData.id;
   const { placeName, latitude, longitude } = req.body;
@@ -423,7 +420,7 @@ async function submitForPoints(req, res) {
     const mediaUrl = await uploadToS3(req.file, 'points');
     const basePoints = 5;
 
-    // 1) আগে locationPoint সেভ করি
+
     const lp = await prisma.locationPoint.create({
       data: {
         userId,
@@ -508,7 +505,7 @@ async function deleteAccount(req, res) {
   const userId = req.authData.id;
 
   try {
-    // 0) firebaseUid আনো
+
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { firebaseUid: true }
@@ -524,7 +521,6 @@ async function deleteAccount(req, res) {
       }
     }
 
-    // 2) Firebase DB (Firestore/RTDB) – থাকলে ডিলিট করো, না থাকলে স্কিপ
     try {
       await admin.firestore().collection('users').doc(firebaseUid).delete();
     } catch (_) {}
@@ -534,9 +530,7 @@ async function deleteAccount(req, res) {
 
     // 3) Prisma DB
     await prisma.$transaction(async (tx) => {
-      // দরকার হলে dependent টেবিল আগে:
-      // await tx.minime.deleteMany({ where: { userId } });
-      // await tx.story.deleteMany({ where: { userId } });
+  
       await tx.user.delete({ where: { id: userId } });
     });
 
@@ -547,7 +541,7 @@ async function deleteAccount(req, res) {
   }
 }
 module.exports = {
-  // MiniMe + profile
+
   saveProfile,
   uploadAvatarWithMulter,
   generateMinime,
