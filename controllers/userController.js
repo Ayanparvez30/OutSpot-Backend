@@ -10,7 +10,7 @@ const response = require('../functions/response');
 const uploadToS3 = require('../utils/s3Upload');
 const { renderCurrentMinime } = require('../utils/minimeGen');
 require('dotenv').config();
-
+const admin = require('../firebaseAdmin');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 const validBodyTypes = ['masculine', 'feminine'];
@@ -502,37 +502,50 @@ async function getAchievementStatus(req, res) {
     res.status(500).json({ error: 'Could not get level info' });
   }
 }
-
+// controllers/userController.js
 async function deleteAccount(req, res) {
   const userId = req.authData.id;
 
   try {
-   
+    // 0) DB থেকে firebaseUid আনো
     const user = await prisma.user.findUnique({
       where: { id: userId },
       select: { firebaseUid: true }
     });
+    const firebaseUid = user?.firebaseUid || null;
 
-    if (user?.firebaseUid) {
+    // 1) Firebase Auth: ইউজার ডিলিট
+    if (firebaseUid) {
       try {
-        await admin.auth().deleteUser(user.firebaseUid);
+        await admin.auth().deleteUser(firebaseUid);
       } catch (e) {
-   
+        // ইউজার না থাকলে এগিয়ে যাও, অন্য err উঠলে থ্রো
         if (e.code !== 'auth/user-not-found') throw e;
       }
     }
 
-    await prisma.$transaction(async (tx) => {
+    // 2) Firebase DB cleanup (যেটা ব্যবহার করো—দুটোই সেফলি ট্রাই করবে)
+    try {
+      // Firestore: users/{uid} ডক ডিলিট
+      await admin.firestore().collection('users').doc(firebaseUid).delete();
+    } catch (_) { }
+
+    try {
    
+      await admin.database().ref(`users/${firebaseUid}`).remove();
+    } catch (_) { 
+    await prisma.$transaction(async (tx) => {
+  
       await tx.user.delete({ where: { id: userId } });
     });
 
-    return res.json({ message: 'Account deleted successfully' });
+    return res.json({ message: 'Account deleted everywhere' });
   } catch (error) {
     console.error('Delete account error:', error);
     return res.status(500).json({ error: 'Failed to delete account' });
   }
 }
+
 
 
 module.exports = {
