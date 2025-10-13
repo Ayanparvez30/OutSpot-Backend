@@ -1,4 +1,4 @@
-// controllers/userController.js
+
 
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
@@ -10,7 +10,7 @@ const response = require('../functions/response');
 const uploadToS3 = require('../utils/s3Upload');
 const { renderCurrentMinime } = require('../utils/minimeGen');
 require('dotenv').config();
-
+const admin = require('../firebaseAdmin');
 const fetch = (...args) => import('node-fetch').then(({ default: fetch }) => fetch(...args));
 
 const validBodyTypes = ['masculine', 'feminine'];
@@ -384,19 +384,16 @@ async function getUserPoints(req, res) {
     });
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // সপ্তাহের শুরু (সোমবার-ভিত্তিক)
     const now = new Date();
     const day = now.getDay(); // Sun=0
     const diff = now.getDate() - day + (day === 0 ? -6 : 1);
     const weekStart = new Date(now.setDate(diff));
     weekStart.setHours(0, 0, 0, 0);
 
-    // ✅ Ledger থেকে যোগফল নাও — awarded finalPoints
     const ledgerRows = await prisma.pointsLedger.findMany({
       where: { userId: targetUserId, createdAt: { gte: weekStart } },
       select: { finalPoints: true }
-      // চাইলে reasons ফিল্টার করতে পারো:
-      // where: { userId: targetUserId, createdAt: { gte: weekStart }, reason: { in: ['CHALLENGE_COMPLETION','MAP_VISIT','REFERRAL_BONUS'] } }
+     
     });
 
     const thisWeekPoints = ledgerRows.reduce((sum, r) => sum + (r.finalPoints || 0), 0);
@@ -412,7 +409,7 @@ async function getUserPoints(req, res) {
     res.status(500).json({ error: 'Failed to fetch points' });
   }
 }
-// controllers/userController.js
+
 async function submitForPoints(req, res) {
   const userId = req.authData.id;
   const { placeName, latitude, longitude } = req.body;
@@ -423,7 +420,7 @@ async function submitForPoints(req, res) {
     const mediaUrl = await uploadToS3(req.file, 'points');
     const basePoints = 5;
 
-    // 1) আগে locationPoint সেভ করি
+
     const lp = await prisma.locationPoint.create({
       data: {
         userId,
@@ -503,25 +500,48 @@ async function getAchievementStatus(req, res) {
   }
 }
 
-// DELETE ACCOUNT
+// ------------ ACCOUNT DELETE ------------
 async function deleteAccount(req, res) {
   const userId = req.authData.id;
 
   try {
-    await prisma.user.delete({ where: { id: userId } });
-    return res.json({ message: 'Account deleted successfully' });
+
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { firebaseUid: true }
+    });
+    const firebaseUid = user?.firebaseUid || null;
+
+    // 1) Firebase Auth
+    if (firebaseUid) {
+      try {
+        await admin.auth().deleteUser(firebaseUid);
+      } catch (e) {
+        if (e.code !== 'auth/user-not-found') throw e;
+      }
+    }
+
+    try {
+      await admin.firestore().collection('users').doc(firebaseUid).delete();
+    } catch (_) {}
+    try {
+      await admin.database().ref(`users/${firebaseUid}`).remove();
+    } catch (_) {}
+
+    // 3) Prisma DB
+    await prisma.$transaction(async (tx) => {
+  
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    return res.json({ message: 'Account deleted everywhere' });
   } catch (error) {
     console.error('Delete account error:', error);
     return res.status(500).json({ error: 'Failed to delete account' });
   }
 }
-
-/* -------------------------------------------------------------------------- */
-/*                                   EXPORTS                                   */
-/* -------------------------------------------------------------------------- */
-
 module.exports = {
-  // MiniMe + profile
+
   saveProfile,
   uploadAvatarWithMulter,
   generateMinime,
