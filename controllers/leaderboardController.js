@@ -62,27 +62,26 @@ async function getWeeklyTotalsForUsers(userIds, weekStart, weekEnd) {
   for (const r of rows) map.set(r.userId, r._sum.finalPoints || 0);
   return map;
 }
-
 exports.getWeeklyGlobalLeaderboard = async (req, res) => {
   try {
     const userId = req.authData.id;
     const weekStart = getStartOfWeek();
+    const { weekEnd, label } = getWeekEndAndLabel(weekStart);
 
-    // (A) Top-50 within this week
-    const groupedTop = await prisma.pointsLedger.groupBy({
+    // 1) এই সপ্তাহে সবার পয়েন্ট (take বাদ)
+    const grouped = await prisma.pointsLedger.groupBy({
       by: ['userId'],
-      where: { createdAt: { gte: weekStart } },
+      where: { createdAt: { gte: weekStart, lt: weekEnd } },
       _sum: { finalPoints: true },
       orderBy: { _sum: { finalPoints: 'desc' } },
-      take: 50,
+      // take: 50,  <-- ❌ বাদ দিলাম যাতে পুরো ডাটাবেজ আসে
     });
 
-    const topUserIds = groupedTop.map(g => g.userId);
-
-    // pull basic user info for top users
-    const users = topUserIds.length
+    // 2) সব ইউজারের প্রোফাইল (username + avatar)
+    const allUserIds = grouped.map(g => g.userId);
+    const users = allUserIds.length
       ? await prisma.user.findMany({
-          where: { id: { in: topUserIds } },
+          where: { id: { in: allUserIds } },
           select: {
             id: true,
             username: true,
@@ -97,7 +96,8 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
       : [];
     const userMap = new Map(users.map(u => [u.id, u]));
 
-    const leaderboard = groupedTop
+    // 3) ফুল লিডারবোর্ড (১,২,৩… সবার র‍্যাঙ্ক)
+    const leaderboard = grouped
       .map((g, idx) => {
         const u = userMap.get(g.userId);
         const points = Number(g._sum.finalPoints || 0);
@@ -108,60 +108,24 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
           avatarUrl: firstAvatar(u?.minime) || null,
           points,
           rank,
-          prize: getPrizeForRank(rank),
+          prize: getPrizeForRank(rank), // >50 হলে null হবে, ঠিকই
         };
       })
-      .filter(e => e.points > 0);
+      .filter(e => e.points > 0); // 0 পয়েন্ট বাদ
 
-    // (B) Full DB rank for this week (ORM-only, no raw SQL)
-    const allTotals = await prisma.pointsLedger.groupBy({
-      by: ['userId'],
-      where: { createdAt: { gte: weekStart } },
-      _sum: { finalPoints: true },
-      orderBy: { _sum: { finalPoints: 'desc' } },
-    });
-
-    const myIndex = allTotals.findIndex(r => String(r.userId) === String(userId));
-    const myRow   = myIndex >= 0 ? allTotals[myIndex] : null;
-    const myRank  = myRow ? (myIndex + 1) : null;
-    const myPts   = myRow ? Number(myRow._sum.finalPoints || 0) : 0;
-
-    // ensure myInfo even if I'm outside top-50
-    let myInfo = leaderboard.find(e => e.userId === userId) || null;
-    if (!myInfo) {
-      const u = await prisma.user.findUnique({
-        where: { id: userId },
-        select: {
-          id: true,
-          username: true,
-          minime: {
-            where: { isSaved: true },
-            orderBy: { updatedAt: 'desc' },
-            take: 1,
-            select: { avatarUrl: true },
-          },
-        },
-      });
-      myInfo = {
-        userId,
-        username: u?.username || `user_${userId}`,
-        avatarUrl: firstAvatar(u?.minime) || null,
-        points: myPts,
-        rank: myRank,
-        prize: myRank ? getPrizeForRank(myRank) : null,
-        outsideTop: true,
-      };
-    } else {
-      // sync to true global rank
-      if (myRank) {
-        myInfo.rank = myRank;
-        myInfo.prize = getPrizeForRank(myRank);
-      }
-    }
+    // 4) আমার ইনফো + গ্লোবাল র‍্যাঙ্ক
+    const myInfo = leaderboard.find(e => String(e.userId) === String(userId)) || null;
+    const myRank = myInfo?.rank || null;
 
     return res.json({
-      leaderboard,   // top-50
-      myRank,        // full DB rank for the week
+      window: {
+        weekStart: weekStart.toISOString(),
+        weekEnd: weekEnd.toISOString(),
+        label,
+        remaining: getTimeRemainingString(weekEnd),
+      },
+      leaderboard,   // 🔥 এখন সবার রেকর্ড আছে (১,২,৩…)
+      myRank,        // আমার গ্লোবাল র‍্যাঙ্ক
       myInfo,
       prize: myInfo?.prize || null,
     });
@@ -170,6 +134,7 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
 
 exports.getWeeklyCommunityLeaderboard = async (req, res) => {
   try {
