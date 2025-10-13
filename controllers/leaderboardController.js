@@ -62,16 +62,18 @@ async function getWeeklyTotalsForUsers(userIds, weekStart, weekEnd) {
   for (const r of rows) map.set(r.userId, r._sum.finalPoints || 0);
   return map;
 }
+
+
 exports.getWeeklyGlobalLeaderboard = async (req, res) => {
   try {
     const userId = req.authData.id;
     const weekStart = getStartOfWeek();
-    const { weekEnd, label } = getWeekEndAndLabel(weekStart); // ✅ add
+    const { weekEnd, label } = getWeekEndAndLabel(weekStart);
 
-    // 1) top 50 within [weekStart, weekEnd)
+    // 1) Top 50 (এই উইন্ডোর ভেতর)
     const grouped = await prisma.pointsLedger.groupBy({
       by: ['userId'],
-      where: { createdAt: { gte: weekStart, lt: weekEnd } }, // ✅ use weekEnd
+      where: { createdAt: { gte: weekStart, lt: weekEnd } },
       _sum: { finalPoints: true },
       orderBy: { _sum: { finalPoints: 'desc' } },
       take: 50,
@@ -79,7 +81,7 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
 
     const topUserIds = grouped.map(g => g.userId);
 
-    // 2) users
+    // 2) টপ ইউজার প্রোফাইল
     const users = topUserIds.length
       ? await prisma.user.findMany({
           where: { id: { in: topUserIds } },
@@ -97,11 +99,11 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
       : [];
     const userMap = new Map(users.map(u => [u.id, u]));
 
-    // 3) shape
+    // 3) টপ-৫০ লিস্ট
     const leaderboard = grouped
       .map((g, idx) => {
         const u = userMap.get(g.userId);
-        const points = g._sum.finalPoints || 0;
+        const points = Number(g._sum.finalPoints || 0);
         const rank = idx + 1;
         return {
           userId: g.userId,
@@ -114,18 +116,67 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
       })
       .filter(e => e.points > 0);
 
-    const myInfo = leaderboard.find(e => e.userId === userId) || null;
+    // 4) পুরো ডাটাবেজে আমার র‍্যাঙ্ক (উইন্ডো ফাংশন)
+    const rows = await prisma.$queryRaw`
+      SELECT userId,
+             SUM(finalPoints) AS points,
+             RANK() OVER (ORDER BY SUM(finalPoints) DESC) AS rnk
+      FROM pointsLedger
+      WHERE createdAt >= ${weekStart} AND createdAt < ${weekEnd}
+      GROUP BY userId
+    `;
+
+    const meRow = Array.isArray(rows)
+      ? rows.find(r => String(r.userId) === String(userId))
+      : undefined;
+
+    let myInfo = leaderboard.find(e => e.userId === userId) || null;
+
+    if (!myInfo) {
+      // টপ-৫০ এ না থাকলে—তবু myInfo পূরণ করে দিচ্ছি
+      const u = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+          id: true,
+          username: true,
+          minime: {
+            where: { isSaved: true },
+            orderBy: { updatedAt: 'desc' },
+            take: 1,
+            select: { avatarUrl: true },
+          },
+        },
+      });
+
+      myInfo = {
+        userId,
+        username: u?.username || `user_${userId}`,
+        avatarUrl: firstAvatar(u?.minime) || null,
+        points: meRow ? Number(meRow.points || 0) : 0,
+        rank: meRow ? Number(meRow.rnk) : null,           // 🔥 গ্লোবাল র‍্যাঙ্ক
+        prize: meRow ? getPrizeForRank(Number(meRow.rnk)) : null,
+        outsideTop: true,                                  // UI হিন্ট (ঐচ্ছিক)
+      };
+    } else {
+      // টপ-৫০ এ আছি—গ্লোবাল র‍্যাঙ্ক sync করি
+      if (meRow) {
+        myInfo.rank = Number(meRow.rnk);
+        myInfo.prize = getPrizeForRank(myInfo.rank);
+      }
+    }
+
+    const myRank = meRow ? Number(meRow.rnk) : null;
 
     return res.json({
       window: {
         weekStart: weekStart.toISOString(),
         weekEnd: weekEnd.toISOString(),
         label,
-        remaining: getTimeRemainingString(weekEnd), // ✅ countdown like "4d 11h"
+        remaining: getTimeRemainingString(weekEnd),
       },
-      leaderboard,
-      myRank: myInfo?.rank || null,
-      myInfo,
+      leaderboard,          // টপ-৫০
+      myRank,               // 🔥 পুরো ডাটাবেজে আমার র‍্যাঙ্ক
+      myInfo,               // 🔥 টপ-৫০ এ না থাকলেও পূর্ণ অবজেক্ট
       prize: myInfo?.prize || null,
     });
   } catch (error) {
@@ -133,6 +184,7 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
 exports.getWeeklyCommunityLeaderboard = async (req, res) => {
   try {
     const requesterId = req.authData.id;
@@ -223,9 +275,10 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
 exports.getWeeklyCommunityRanks = async (req, res) => {
   try {
     const weekStart = getStartOfWeek();
-    const { weekEnd, label } = getWeekEndAndLabel(weekStart); // ✅
+    const { weekEnd, label } = getWeekEndAndLabel(weekStart);
     const requesterId = req.authData.id;
 
+    // সব কমিউনিটি + মেম্বার + ক্রিয়েটর
     const communities = await prisma.community.findMany({
       select: {
         id: true,
@@ -250,12 +303,15 @@ exports.getWeeklyCommunityRanks = async (req, res) => {
       });
     }
 
+    // সবার ইউজার আইডি
     const allUserIds = Array.from(
       new Set(communities.flatMap(c => c.members.map(m => m.userId)))
     );
 
-    const totalsMap = await getWeeklyTotalsForUsers(allUserIds, weekStart, weekEnd); // ✅ pass weekEnd
+    // সাপ্তাহিক টোটাল (এই উইন্ডোতে)
+    const totalsMap = await getWeeklyTotalsForUsers(allUserIds, weekStart, weekEnd);
 
+    // কমিউনিটি স্কোর
     const rows = communities.map(c => {
       const points = c.members.reduce(
         (sum, m) => sum + (totalsMap.get(m.userId) || 0),
@@ -271,6 +327,7 @@ exports.getWeeklyCommunityRanks = async (req, res) => {
       };
     });
 
+    // র‍্যাঙ্কিং
     const rankedAll = [...rows]
       .sort((a, b) => b.points - a.points)
       .map((r, idx) => ({
@@ -279,8 +336,13 @@ exports.getWeeklyCommunityRanks = async (req, res) => {
         prize: getPrizeForRank(idx + 1),
       }));
 
+    // পাবলিক লিডারবোর্ড: >0 পয়েন্ট
     const leaderboard = rankedAll.filter(r => r.points > 0);
+
+    // আমার তৈরি কমিউনিটিস
     const myCreatedCommunities = rankedAll.filter(r => r.creatorId === requesterId);
+
+    // সেরা (লোয়ার র‍্যাঙ্ক নাম্বার)
     const myTopCreatedCommunity = myCreatedCommunities.length
       ? myCreatedCommunities.reduce((best, cur) => (cur.rank < best.rank ? cur : best))
       : null;
