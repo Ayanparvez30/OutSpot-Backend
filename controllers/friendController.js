@@ -1168,6 +1168,7 @@ exports.getUserProfile = async (req, res) => {
   try {
     const isSelf = currentUserId === targetUserId;
 
+    // Check friendship status between current user and target user
     const friendship = await prisma.friendship.findFirst({
       where: {
         status: "ACCEPTED",
@@ -1179,6 +1180,7 @@ exports.getUserProfile = async (req, res) => {
     });
     const isFriend = !!friendship;
 
+    // Fetch user basic profile
     const user = await prisma.user.findUnique({
       where: { id: targetUserId },
       select: {
@@ -1200,6 +1202,7 @@ exports.getUserProfile = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
+    // Fetch profile-visible stories
     const stories = await prisma.story.findMany({
       where: {
         userId: targetUserId,
@@ -1222,29 +1225,83 @@ exports.getUserProfile = async (req, res) => {
       orderBy: { createdAt: "desc" },
     });
 
-    const friendCount = await prisma.friendship.count({
+    // Fetch accepted friendships of target user
+    const friendships = await prisma.friendship.findMany({
       where: {
         status: "ACCEPTED",
         OR: [{ requesterId: targetUserId }, { receiverId: targetUserId }],
       },
+      include: {
+        requester: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            totalPoints: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: "desc" },
+            },
+          },
+        },
+        receiver: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            totalPoints: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: "desc" },
+            },
+          },
+        },
+      },
     });
 
+    // Extract friend list
+    const friendsRaw = friendships.map((fr) =>
+      fr.requesterId === targetUserId ? fr.receiver : fr.requester
+    );
+    const friendIds = friendsRaw.map((f) => f.id);
+    const friendCount = friendIds.length;
+
+    // Fetch weekly points efficiently (like getFriendList)
+    let friends = [];
+    if (isSelf || isFriend) {
+      const weekPointsMap = await getWeeklyPointsForUsers(friendIds);
+      friends = friendsRaw.map((friend) => ({
+        id: friend.id,
+        username: friend.username,
+        firstName: friend.firstName,
+        lastName: friend.lastName,
+        avatarUrl: friend.minime?.[0]?.avatarUrl || null,
+        totalPoints: friend.totalPoints || 0,
+        thisWeekPoints: weekPointsMap.get(friend.id) || 0,
+        profileUrl: `/api/users/${friend.id}/profile`,
+      }));
+    }
+
+    // Fetch communities
     const communities = await prisma.communityMember.findMany({
       where: { userId: targetUserId },
       include: { community: true },
     });
 
+    // Weekly points for target user
     let thisWeekPoints = null;
     if (isSelf || isFriend) {
       thisWeekPoints = await getWeeklyPointsForUser(targetUserId);
     }
 
-    // Fetch the most recent joined or created community
+    // Fetch most recent joined or created community
     const mostRecentCommunity = await prisma.communityMember.findFirst({
       where: { userId: targetUserId },
-      include: {
-        community: true,
-      },
+      include: { community: true },
       orderBy: { joinedAt: "desc" },
     });
 
@@ -1256,11 +1313,15 @@ exports.getUserProfile = async (req, res) => {
           membersCount: await prisma.communityMember.count({
             where: { communityId: mostRecentCommunity.community.id },
           }),
-          type: mostRecentCommunity.community.creatorId === targetUserId ? "created" : "joined",
+          type:
+            mostRecentCommunity.community.creatorId === targetUserId
+              ? "created"
+              : "joined",
           at: mostRecentCommunity.joinedAt,
         }
       : null;
 
+    // Final structured profile data
     const profileData = {
       id: user.id,
       username: user.username,
@@ -1268,6 +1329,7 @@ exports.getUserProfile = async (req, res) => {
       lastName: isSelf || isFriend ? user.lastName : null,
       minime: user.minime,
       friendCount,
+      friends: isSelf || isFriend ? friends : [],
       communities: isSelf || isFriend ? communities.map((c) => c.community) : [],
       thisWeekPoints: isSelf || isFriend ? thisWeekPoints : null,
       bio: isSelf || isFriend ? user.bio : null,
@@ -1286,3 +1348,4 @@ exports.getUserProfile = async (req, res) => {
     return res.status(500).json({ error: "Failed to fetch profile" });
   }
 };
+
