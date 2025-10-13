@@ -20,6 +20,69 @@ function isOnboardingIncomplete(user) {
 
   return missingProfile;
 }
+// --- helper: upsert-safe create/update for Firebase phone users ---
+async function upsertUserWithFirebasePhone({
+  prisma, tx = null,
+  username, email, hashedPassword, authToken,
+  inviter, firebaseUid, phoneFromToken, fullPhone
+}) {
+  const db = tx || prisma;
+  const phoneCandidate = phoneFromToken || fullPhone;
+  if (!phoneCandidate) {
+    const e = new Error('No phone_number in Firebase token or payload');
+    e.code = 'auth/missing-phone';
+    throw e;
+  }
+
+  // আগে দেখে নাও — এই ফোনে কেউ আছে?
+  const existing = await db.user.findUnique({ where: { phone: phoneCandidate } });
+
+  // case 1: নেই → create
+  if (!existing) {
+    const created = await db.user.create({
+      data: {
+        email: email || null,
+        phone: phoneCandidate,
+        username,
+        password: hashedPassword,
+        isVerified: true,
+        otp: null,
+        otpExpiresAt: null,
+        authorization: authToken,
+        firebaseUid,
+        referredById: inviter ? inviter.id : null,
+      }
+    });
+    return { user: created, isNew: true };
+  }
+
+  // case 2: আছে এবং verified → কনফ্লিক্ট দেখাও
+  if (existing.isVerified) {
+    const e = new Error('Phone number already registered and verified');
+    e.code = 'conflict/phone-verified';
+    throw e;
+  }
+
+  // case 3: আছে কিন্তু unverified → একই রেকর্ড verify করে দাও
+  const updated = await db.user.update({
+    where: { id: existing.id },
+    data: {
+      email: email || existing.email || null,
+      username: username || existing.username,
+      password: hashedPassword,
+      isVerified: true,
+      otp: null,
+      otpExpiresAt: null,
+      authorization: authToken,
+      firebaseUid,
+      ...(inviter && inviter.id !== existing.id && !existing.referredById
+        ? { referredById: inviter.id }
+        : {}),
+    }
+  });
+
+  return { user: updated, isNew: false };
+}
 
 // --- helper: refer when user becomes verified or at creation ---
 // NOTE: no nested transaction here; caller may pass a tx client.
@@ -396,64 +459,81 @@ exports.signup = async (req, res) => {
         }
       }
     }
+// 4) Fresh create — Firebase (verified now, reward immediately)
+if (firebaseIdToken) {
+  try {
+    const decoded = await verifyFirebaseIdToken(firebaseIdToken);
+    const firebaseUid = decoded.uid;
+    const phoneFromToken = decoded.phone_number;
 
-    // 4) Fresh create — Firebase (verified now, reward immediately)
-    if (firebaseIdToken) {
-      try {
-        const decoded = await verifyFirebaseIdToken(firebaseIdToken);
-        const firebaseUid = decoded.uid;
-        const phoneFromToken = decoded.phone_number;
 
-        if (!phoneFromToken && !fullPhone) {
-          return response.response_with_code(res, 400, 'No phone_number in Firebase token. Provide phone or use Firebase phone auth properly.');
-        }
+    const authToken = randomKey(40);
+    const hashedPassword = hashPassword(password);
 
-        const user = await prisma.$transaction(async (tx) => {
-          const created = await tx.user.create({
+    const result = await prisma.$transaction(async (tx) => {
+
+      const { user: createdOrUpdated, isNew } = await upsertUserWithFirebasePhone({
+        prisma, tx,
+        username, email, hashedPassword, authToken,
+        inviter, firebaseUid, phoneFromToken, fullPhone
+      });
+
+    
+      if (inviter && inviter.id !== createdOrUpdated.id) {
+        const already = await tx.referral.findFirst({ where: { inviteeId: createdOrUpdated.id } });
+        if (!already) {
+          await tx.referral.create({
             data: {
-              email: email || null,
-              phone: phoneFromToken || fullPhone || null,
-              username,
-              password: hashedPassword,
-              isVerified: true,
-              otp: null,
-              otpExpiresAt: null,
-              authorization: authToken,
-              firebaseUid,
-              referredById: inviter ? inviter.id : null,
+              inviterId: inviter.id,
+              inviteeId: createdOrUpdated.id,
+              status: 'REWARDED',
+              rewardedAt: new Date()
             }
           });
-
-          if (inviter && inviter.id !== created.id) {
-            const already = await tx.referral.findFirst({ where: { inviteeId: created.id } });
-            if (!already) {
-              await tx.referral.create({
-                data: { inviterId: inviter.id, inviteeId: created.id, status: 'REWARDED', rewardedAt: new Date() }
-              });
-              // ✅ ledger-aware reward
-              await addPointsWithMultiplier(inviter.id, REFERRAL_REWARD_POINTS, 'REFERRAL_REWARD', created.id, tx);
-            }
-          }
-          return created;
-        });
-
-        return response.true_status(res, {
-          isNewUser: true,
-          token: user.authorization,
-          user: {
-            id: user.id,
-            email: user.email || null,
-            phone: user.phone || null,
-            username: user.username,
-            isVerified: true
-          }
-        }, 'Signup successful via Firebase phone auth.');
-      } catch (err) {
-        console.error('Firebase verify failed:', err);
-        return response.response_with_code(res, 401, 'Invalid Firebase ID token');
+          await addPointsWithMultiplier(
+            inviter.id,
+            REFERRAL_REWARD_POINTS,
+            'REFERRAL_REWARD',
+            createdOrUpdated.id,
+            tx
+          );
+        }
       }
-    }
 
+      return { createdOrUpdated, isNew };
+    });
+
+    return response.true_status(res, {
+      isNewUser: result.isNew,
+      token: result.createdOrUpdated.authorization,
+      user: {
+        id: result.createdOrUpdated.id,
+        email: result.createdOrUpdated.email || null,
+        phone: result.createdOrUpdated.phone || null,
+        username: result.createdOrUpdated.username,
+        isVerified: true
+      }
+    }, result.isNew
+      ? 'Signup successful via Firebase phone auth.'
+      : 'Phone user verified via Firebase phone auth.');
+  } catch (err) {
+    // সুন্দর error map
+    if (err.code === 'conflict/phone-verified') {
+      return response.response_with_code(res, 409, 'Phone number already registered and verified.');
+    }
+    if (err.code === 'auth/missing-phone') {
+      return response.response_with_code(res, 400, 'No phone_number in Firebase token. Use Firebase phone auth properly.');
+    }
+    if (err.code && String(err.code).startsWith('auth/')) {
+      console.error('Firebase verify failed:', err);
+      return response.response_with_code(res, 401, 'Invalid Firebase ID token');
+    }
+    console.error('Firebase signup upsert error:', err);
+    return response.response_with_code(res, 500, 'Internal server error');
+  }
+}
+
+    
     // 5) Fresh create — Email OTP (PENDING referral, reward on verify)
     if (email) {
       const otp = generateOTP();
@@ -1070,3 +1150,38 @@ exports.getMyReferral = async (req, res) => {
     message: 'Share this code/link with friends to earn points!'
   });
 };
+
+// async function deleteAccount(req, res) {
+//   const userId = req.authData.id;
+
+//   try {
+   
+//     const user = await prisma.user.findUnique({
+//       where: { id: userId },
+//       select: { firebaseUid: true }
+//     });
+
+//     if (user?.firebaseUid) {
+//       try {
+//         await admin.auth().deleteUser(user.firebaseUid);
+//       } catch (e) {
+   
+//         if (e.code !== 'auth/user-not-found') throw e;
+//       }
+//     }
+
+//     await prisma.$transaction(async (tx) => {
+   
+//       await tx.user.delete({ where: { id: userId } });
+//     });
+
+//     return res.json({ message: 'Account deleted successfully' });
+//   } catch (error) {
+//     console.error('Delete account error:', error);
+//     return res.status(500).json({ error: 'Failed to delete account' });
+//   }
+// }
+// module.exports = {
+ 
+//   deleteAccount,
+// };
