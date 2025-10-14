@@ -515,9 +515,7 @@ exports.removeStory = async (req, res) => {
   }
 };
 
-// ==================================================
-// getStories: feed (friends / same community / self) within TTL
-// ==================================================
+
 exports.getStories = async (req, res) => {
   const userId = req.authData.id;
 
@@ -605,6 +603,152 @@ exports.getStories = async (req, res) => {
   } catch (error) {
     console.error('getStories error:', error);
     res.status(500).json({ error: 'Failed to fetch stories' });
+  }
+};
+
+exports.getStoriesFeed = async (req, res) => {
+  const userId = req.authData.id;
+  const filterRaw = (req.query.filter || 'all').toString().toLowerCase();
+  const FILTER = ['all','friends','communities'].includes(filterRaw) ? filterRaw : 'all';
+
+
+  const STORY_TTL_MINUTES = Number(
+    process.env.STORY_TTL_MINUTES ||
+      (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
+  );
+  const windowAgo = new Date(Date.now() - STORY_TTL_MINUTES * 60 * 1000);
+
+  try {
+    // ---- আমার কমিউনিটি লিস্ট
+    const myMemberships = await prisma.communityMember.findMany({
+      where: { userId },
+      include: { community: { select: { id: true, name: true, imageUrl: true } } },
+    });
+    const myCommunityIds = myMemberships.map(m => m.communityId);
+    const hasCommunities = myCommunityIds.length > 0;
+
+    // ---- বন্ধুদের আইডি (both directions, ACCEPTED)
+    const friendLinks = await prisma.friendship.findMany({
+      where: {
+        status: 'ACCEPTED',
+        OR: [{ requesterId: userId }, { receiverId: userId }],
+      },
+      select: { requesterId: true, receiverId: true },
+    });
+    const friendIds = new Set(
+      friendLinks.map(l => (l.requesterId === userId ? l.receiverId : l.requesterId))
+    );
+
+    // ---- Blocked exclusion
+    const notBlocked = {
+      NOT: [
+        { user: { blockedBy: { some: { blockerId: userId } } } }, // I blocked them
+        { user: { blocks: { some: { blockedId: userId } } } },    // They blocked me
+      ],
+    };
+
+    // ---- OR conditions by filter
+    const orConds = [];
+
+    // নিজের স্টোরি সব ফিল্টারেই দেখাই
+    orConds.push({ userId });
+
+    if (FILTER === 'all' || FILTER === 'friends') {
+      // বন্ধুদের স্টোরি (profile visibility)
+      if (friendIds.size) {
+        orConds.push({
+          visibility: 'profile',
+          userId: { in: Array.from(friendIds) },
+        });
+      }
+    }
+
+    if ((FILTER === 'all' || FILTER === 'communities') && hasCommunities) {
+      // একই কমিউনিটিতে থাকা এবং পাবলিক প্রোফাইল ইউজারদের স্টোরি (বন্ধু হোক বা না হোক)
+      orConds.push({
+        visibility: 'profile',
+        user: {
+          isProfilePrivate: false,
+          communities: { some: { communityId: { in: myCommunityIds } } },
+        },
+      });
+    }
+
+    // যদি filter='communities' আর আমার কোনো কমিউনিটি না থাকে → শুধু নিজেরটাই
+    // (উপরে orConds এ userId আগেই আছে)
+
+    // ---- স্টোরি ফেচ
+    const stories = await prisma.story.findMany({
+      where: {
+        status: 'ACTIVE',
+        createdAt: { gte: windowAgo },
+        ...notBlocked,
+        OR: orConds,
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            isProfilePrivate: true,
+            minime: { select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
+            Location: { select: { latitude: true, longitude: true } },
+            // এই ইউজারের থেকে যেসব কমিউনিটি আমার সাথে ওভারল্যাপ করে, সেগুলা
+            communities: hasCommunities
+              ? {
+                  where: { communityId: { in: myCommunityIds } },
+                  include: { community: { select: { id: true, name: true, imageUrl: true } } },
+                }
+              : false,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // ---- পে-লোড ম্যাপ: avatar + communityNames
+    const payload = stories.map((s) => {
+      const u = s.user;
+      const avatarUrl =
+        Array.isArray(u.minime) && u.minime.length ? (u.minime[0]?.avatarUrl || null) : null;
+
+      const overlapCommunities = Array.isArray(u.communities)
+        ? u.communities.map(cm => ({
+            id: cm.community.id,
+            name: cm.community.name,
+            imageUrl: cm.community.imageUrl || null,
+          }))
+        : [];
+
+      return {
+        id: s.id,
+        mediaUrl: s.mediaUrl,
+        type: s.type,
+        visibility: s.visibility,
+        status: s.status,
+        createdAt: s.createdAt,
+        latitude: s.latitude,
+        longitude: s.longitude,
+        user: {
+          id: u.id,
+          username: u.username,
+          firstName: u.firstName,
+          lastName: u.lastName,
+          isProfilePrivate: u.isProfilePrivate,
+          avatarUrl,
+          Location: u.Location || null,
+        },
+        communityNames: overlapCommunities.map(c => c.name),
+        communities: overlapCommunities,                     
+      };
+    });
+
+    return res.json({ filter: FILTER, stories: payload });
+  } catch (error) {
+    console.error('getStoriesFeed error:', error);
+    return res.status(500).json({ error: 'Failed to fetch stories feed' });
   }
 };
 

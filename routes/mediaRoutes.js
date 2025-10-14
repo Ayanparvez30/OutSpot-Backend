@@ -29,4 +29,5 @@ router.delete('/stories/:storyId', checkAuth, mediaController.removeStory);
 router.get('/stories/vault', checkAuth, mediaController.getVaultStories);
 router.get('/stories/saved', checkAuth, mediaController.getSavedStories);  
 router.get('/stories/me', checkAuth, mediaController.getMyStories);
+router.get('/stories/feed', checkAuth, mediaController.getStoriesFeed);
 module.exports = router;
