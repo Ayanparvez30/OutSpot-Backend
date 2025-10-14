@@ -605,29 +605,38 @@ exports.getStories = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch stories' });
   }
 };
-
+// GET /api/stories/feed?filter=all|friends|communities&ttlMinutes=1440&includeSelf=true|false
 exports.getStoriesFeed = async (req, res) => {
   const userId = req.authData.id;
   const filterRaw = (req.query.filter || 'all').toString().toLowerCase();
   const FILTER = ['all','friends','communities'].includes(filterRaw) ? filterRaw : 'all';
 
+  // TTL (minutes)
+  const ttlParam = Number(req.query.ttlMinutes);
+  const STORY_TTL_MINUTES = Number.isFinite(ttlParam) && ttlParam > 0
+    ? ttlParam
+    : Number(process.env.STORY_TTL_MINUTES || (24 * 60));
 
-  const STORY_TTL_MINUTES = Number(
-    process.env.STORY_TTL_MINUTES ||
-      (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
-  );
+  // includeSelf override (default false)
+  const includeSelf = String(req.query.includeSelf || 'false').toLowerCase() === 'true';
+
   const windowAgo = new Date(Date.now() - STORY_TTL_MINUTES * 60 * 1000);
 
   try {
-    // ---- আমার কমিউনিটি লিস্ট
+    // আমার কমিউনিটিস
     const myMemberships = await prisma.communityMember.findMany({
       where: { userId },
       include: { community: { select: { id: true, name: true, imageUrl: true } } },
     });
-    const myCommunityIds = myMemberships.map(m => m.communityId);
+    const myCommunities = myMemberships.map(m => ({
+      id: m.communityId,
+      name: m.community.name,
+      imageUrl: m.community.imageUrl || null,
+    }));
+    const myCommunityIds = myCommunities.map(c => c.id);
     const hasCommunities = myCommunityIds.length > 0;
 
-    // ---- বন্ধুদের আইডি (both directions, ACCEPTED)
+    // বন্ধুদের আইডি
     const friendLinks = await prisma.friendship.findMany({
       where: {
         status: 'ACCEPTED',
@@ -639,7 +648,7 @@ exports.getStoriesFeed = async (req, res) => {
       friendLinks.map(l => (l.requesterId === userId ? l.receiverId : l.requesterId))
     );
 
-    // ---- Blocked exclusion
+    // Block exclusion
     const notBlocked = {
       NOT: [
         { user: { blockedBy: { some: { blockerId: userId } } } }, // I blocked them
@@ -647,14 +656,16 @@ exports.getStoriesFeed = async (req, res) => {
       ],
     };
 
-    // ---- OR conditions by filter
+    // OR conditions by filter
     const orConds = [];
 
-    // নিজের স্টোরি সব ফিল্টারেই দেখাই
-    orConds.push({ userId });
+    // ✅ নিজেরটা ডিফল্টে বাদ; includeSelf=true হলে দেই
+    if (includeSelf) {
+      orConds.push({ userId });
+    }
 
+    // friends
     if (FILTER === 'all' || FILTER === 'friends') {
-      // বন্ধুদের স্টোরি (profile visibility)
       if (friendIds.size) {
         orConds.push({
           visibility: 'profile',
@@ -663,10 +674,11 @@ exports.getStoriesFeed = async (req, res) => {
       }
     }
 
+    // communities (public profiles only, same communities)
     if ((FILTER === 'all' || FILTER === 'communities') && hasCommunities) {
-      // একই কমিউনিটিতে থাকা এবং পাবলিক প্রোফাইল ইউজারদের স্টোরি (বন্ধু হোক বা না হোক)
       orConds.push({
         visibility: 'profile',
+        userId: includeSelf ? undefined : { not: userId }, // নিজেরটা না চাইলে বাদ
         user: {
           isProfilePrivate: false,
           communities: { some: { communityId: { in: myCommunityIds } } },
@@ -674,10 +686,16 @@ exports.getStoriesFeed = async (req, res) => {
       });
     }
 
-    // যদি filter='communities' আর আমার কোনো কমিউনিটি না থাকে → শুধু নিজেরটাই
-    // (উপরে orConds এ userId আগেই আছে)
+    if (orConds.length === 0) {
+      return res.json({
+        filter: FILTER,
+        stories: [],
+        communitiesGrouped: [],
+        myCommunities,
+      });
+    }
 
-    // ---- স্টোরি ফেচ
+    // fetch
     const stories = await prisma.story.findMany({
       where: {
         status: 'ACTIVE',
@@ -695,7 +713,7 @@ exports.getStoriesFeed = async (req, res) => {
             isProfilePrivate: true,
             minime: { select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
             Location: { select: { latitude: true, longitude: true } },
-            // এই ইউজারের থেকে যেসব কমিউনিটি আমার সাথে ওভারল্যাপ করে, সেগুলা
+            // overlapping communities with me (for grouping)
             communities: hasCommunities
               ? {
                   where: { communityId: { in: myCommunityIds } },
@@ -708,8 +726,8 @@ exports.getStoriesFeed = async (req, res) => {
       orderBy: { createdAt: 'desc' },
     });
 
-    // ---- পে-লোড ম্যাপ: avatar + communityNames
-    const payload = stories.map((s) => {
+    // payload (flat)
+    const flat = stories.map((s) => {
       const u = s.user;
       const avatarUrl =
         Array.isArray(u.minime) && u.minime.length ? (u.minime[0]?.avatarUrl || null) : null;
@@ -741,11 +759,49 @@ exports.getStoriesFeed = async (req, res) => {
           Location: u.Location || null,
         },
         communityNames: overlapCommunities.map(c => c.name),
-        communities: overlapCommunities,                     
+        communities: overlapCommunities,
       };
     });
 
-    return res.json({ filter: FILTER, stories: payload });
+   
+    const groupMap = new Map(); 
+    for (const item of flat) {
+      for (const cm of item.communities) {
+        if (!groupMap.has(cm.id)) {
+          groupMap.set(cm.id, { community: cm, stories: [] });
+        }
+        groupMap.get(cm.id).stories.push(item);
+      }
+    }
+  
+    const communitiesGrouped = myCommunities
+      .filter(c => groupMap.has(c.id))
+      .map(c => ({
+        community: groupMap.get(c.id).community,
+        stories: groupMap.get(c.id).stories,
+      }))
+      // যদি এমন কমিউনিটি থাকে যা আমার কমিউনিটি তালিকায় নেই (edge), তাও যোগ করি
+      .concat(
+        Array.from(groupMap.values()).filter(g => !myCommunityIds.includes(g.community.id))
+      );
+
+    console.log('[StoriesFeed]', {
+      userId,
+      FILTER,
+      ttlMinutes: STORY_TTL_MINUTES,
+      includeSelf,
+      friendCount: friendIds.size,
+      myCommunityCount: myCommunityIds.length,
+      returnedFlat: flat.length,
+      groupedCount: communitiesGrouped.length,
+    });
+
+    return res.json({
+      filter: FILTER,
+      stories: flat,           
+      communitiesGrouped,     
+      myCommunities,              
+    });
   } catch (error) {
     console.error('getStoriesFeed error:', error);
     return res.status(500).json({ error: 'Failed to fetch stories feed' });
