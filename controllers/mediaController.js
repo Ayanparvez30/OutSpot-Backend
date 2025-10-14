@@ -605,36 +605,38 @@ exports.getStories = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch stories' });
   }
 };
-// GET /api/stories/feed?filter=all|friends|communities&ttlMinutes=1440&includeSelf=true|false
 exports.getStoriesFeed = async (req, res) => {
   const userId = req.authData.id;
   const filterRaw = (req.query.filter || 'all').toString().toLowerCase();
   const FILTER = ['all','friends','communities'].includes(filterRaw) ? filterRaw : 'all';
 
-  // TTL (minutes)
   const ttlParam = Number(req.query.ttlMinutes);
   const STORY_TTL_MINUTES = Number.isFinite(ttlParam) && ttlParam > 0
     ? ttlParam
     : Number(process.env.STORY_TTL_MINUTES || (24 * 60));
 
-  // includeSelf override (default false)
   const includeSelf = String(req.query.includeSelf || 'false').toLowerCase() === 'true';
-
   const windowAgo = new Date(Date.now() - STORY_TTL_MINUTES * 60 * 1000);
 
   try {
-    // আমার কমিউনিটিস
-    const myMemberships = await prisma.communityMember.findMany({
-      where: { userId },
-      include: { community: { select: { id: true, name: true, imageUrl: true } } },
-    });
-    const myCommunities = myMemberships.map(m => ({
-      id: m.communityId,
-      name: m.community.name,
-      imageUrl: m.community.imageUrl || null,
-    }));
-    const myCommunityIds = myCommunities.map(c => c.id);
-    const hasCommunities = myCommunityIds.length > 0;
+    // ⚠ friends ফিল্টারে কমিউনিটি ডেটা দরকার নেই
+    const needCommunityOverlap = FILTER !== 'friends';
+
+    // আমার কমিউনিটি (শুধু needCommunityOverlap হলে লোড)
+    let myCommunities = [];
+    let myCommunityIds = [];
+    if (needCommunityOverlap) {
+      const myMemberships = await prisma.communityMember.findMany({
+        where: { userId },
+        include: { community: { select: { id: true, name: true, imageUrl: true } } },
+      });
+      myCommunities = myMemberships.map(m => ({
+        id: m.communityId,
+        name: m.community.name,
+        imageUrl: m.community.imageUrl || null,
+      }));
+      myCommunityIds = myCommunities.map(c => c.id);
+    }
 
     // বন্ধুদের আইডি
     const friendLinks = await prisma.friendship.findMany({
@@ -648,23 +650,17 @@ exports.getStoriesFeed = async (req, res) => {
       friendLinks.map(l => (l.requesterId === userId ? l.receiverId : l.requesterId))
     );
 
-    // Block exclusion
     const notBlocked = {
       NOT: [
-        { user: { blockedBy: { some: { blockerId: userId } } } }, // I blocked them
-        { user: { blocks: { some: { blockedId: userId } } } },    // They blocked me
+        { user: { blockedBy: { some: { blockerId: userId } } } },
+        { user: { blocks: { some: { blockedId: userId } } } },
       ],
     };
 
-    // OR conditions by filter
     const orConds = [];
 
-    // ✅ নিজেরটা ডিফল্টে বাদ; includeSelf=true হলে দেই
-    if (includeSelf) {
-      orConds.push({ userId });
-    }
+    if (includeSelf) orConds.push({ userId });
 
-    // friends
     if (FILTER === 'all' || FILTER === 'friends') {
       if (friendIds.size) {
         orConds.push({
@@ -674,11 +670,10 @@ exports.getStoriesFeed = async (req, res) => {
       }
     }
 
-    // communities (public profiles only, same communities)
-    if ((FILTER === 'all' || FILTER === 'communities') && hasCommunities) {
+    if ((FILTER === 'all' || FILTER === 'communities') && needCommunityOverlap && myCommunityIds.length) {
       orConds.push({
         visibility: 'profile',
-        userId: includeSelf ? undefined : { not: userId }, // নিজেরটা না চাইলে বাদ
+        userId: includeSelf ? undefined : { not: userId },
         user: {
           isProfilePrivate: false,
           communities: { some: { communityId: { in: myCommunityIds } } },
@@ -691,11 +686,11 @@ exports.getStoriesFeed = async (req, res) => {
         filter: FILTER,
         stories: [],
         communitiesGrouped: [],
-        myCommunities,
+        myCommunities: [],
       });
     }
 
-    // fetch
+    // ✅ Prisma include: friends হলে user.communities লোড করবো না
     const stories = await prisma.story.findMany({
       where: {
         status: 'ACTIVE',
@@ -713,8 +708,8 @@ exports.getStoriesFeed = async (req, res) => {
             isProfilePrivate: true,
             minime: { select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
             Location: { select: { latitude: true, longitude: true } },
-            // overlapping communities with me (for grouping)
-            communities: hasCommunities
+            // 🔻 শুধু needCommunityOverlap হলে ওভারল্যাপিং কমিউনিটিস নেবো
+            communities: needCommunityOverlap && myCommunityIds.length
               ? {
                   where: { communityId: { in: myCommunityIds } },
                   include: { community: { select: { id: true, name: true, imageUrl: true } } },
@@ -726,19 +721,21 @@ exports.getStoriesFeed = async (req, res) => {
       orderBy: { createdAt: 'desc' },
     });
 
-    // payload (flat)
+    // flat payload
     const flat = stories.map((s) => {
       const u = s.user;
       const avatarUrl =
         Array.isArray(u.minime) && u.minime.length ? (u.minime[0]?.avatarUrl || null) : null;
 
-      const overlapCommunities = Array.isArray(u.communities)
-        ? u.communities.map(cm => ({
-            id: cm.community.id,
-            name: cm.community.name,
-            imageUrl: cm.community.imageUrl || null,
-          }))
-        : [];
+      // 🔻 friends ফিল্টারে কমিউনিটি-ফিল্ড খালি করে দিচ্ছি
+      let overlapCommunities = [];
+      if (needCommunityOverlap && Array.isArray(u.communities)) {
+        overlapCommunities = u.communities.map(cm => ({
+          id: cm.community.id,
+          name: cm.community.name,
+          imageUrl: cm.community.imageUrl || null,
+        }));
+      }
 
       return {
         id: s.id,
@@ -758,49 +755,35 @@ exports.getStoriesFeed = async (req, res) => {
           avatarUrl,
           Location: u.Location || null,
         },
-        communityNames: overlapCommunities.map(c => c.name),
-        communities: overlapCommunities,
+        communityNames: needCommunityOverlap ? overlapCommunities.map(c => c.name) : [],
+        communities: needCommunityOverlap ? overlapCommunities : [],
       };
     });
 
-   
-    const groupMap = new Map(); 
-    for (const item of flat) {
-      for (const cm of item.communities) {
-        if (!groupMap.has(cm.id)) {
-          groupMap.set(cm.id, { community: cm, stories: [] });
+    // 🔻 শুধু needCommunityOverlap হলে গ্রুপিং
+    let communitiesGrouped = [];
+    if (needCommunityOverlap) {
+      const groupMap = new Map();
+      for (const item of flat) {
+        for (const cm of item.communities) {
+          if (!groupMap.has(cm.id)) groupMap.set(cm.id, { community: cm, stories: [] });
+          groupMap.get(cm.id).stories.push(item);
         }
-        groupMap.get(cm.id).stories.push(item);
       }
+      const myIds = myCommunityIds;
+      communitiesGrouped = myCommunities
+        .filter(c => groupMap.has(c.id))
+        .map(c => ({ community: groupMap.get(c.id).community, stories: groupMap.get(c.id).stories }))
+        .concat(
+          Array.from(groupMap.values()).filter(g => !myIds.includes(g.community.id))
+        );
     }
-  
-    const communitiesGrouped = myCommunities
-      .filter(c => groupMap.has(c.id))
-      .map(c => ({
-        community: groupMap.get(c.id).community,
-        stories: groupMap.get(c.id).stories,
-      }))
-      // যদি এমন কমিউনিটি থাকে যা আমার কমিউনিটি তালিকায় নেই (edge), তাও যোগ করি
-      .concat(
-        Array.from(groupMap.values()).filter(g => !myCommunityIds.includes(g.community.id))
-      );
-
-    console.log('[StoriesFeed]', {
-      userId,
-      FILTER,
-      ttlMinutes: STORY_TTL_MINUTES,
-      includeSelf,
-      friendCount: friendIds.size,
-      myCommunityCount: myCommunityIds.length,
-      returnedFlat: flat.length,
-      groupedCount: communitiesGrouped.length,
-    });
 
     return res.json({
       filter: FILTER,
-      stories: flat,           
-      communitiesGrouped,     
-      myCommunities,              
+      stories: flat,
+      communitiesGrouped: needCommunityOverlap ? communitiesGrouped : [],
+      myCommunities: needCommunityOverlap ? myCommunities : [],
     });
   } catch (error) {
     console.error('getStoriesFeed error:', error);
@@ -808,9 +791,6 @@ exports.getStoriesFeed = async (req, res) => {
   }
 };
 
-// ==================================================
-// getMyStories: my ACTIVE stories within TTL
-// ==================================================
 exports.getMyStories = async (req, res) => {
   const userId = req.authData.id;
 
