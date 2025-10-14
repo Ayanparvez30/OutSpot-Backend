@@ -1,3 +1,31 @@
+// Get notificationRedDot value for authenticated user
+exports.getNotificationRedDot = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { notificationRedDot: true }
+    });
+    res.json({ success: true, notificationRedDot: user?.notificationRedDot ?? false });
+  } catch (err) {
+    console.error('Get notificationRedDot error:', err);
+    res.status(500).json({ success: false, message: 'Failed to get notification red dot.' });
+  }
+};
+// Reset notificationRedDot to false for authenticated user
+exports.resetNotificationRedDot = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    await prisma.user.update({
+      where: { id: userId },
+      data: { notificationRedDot: false }
+    });
+    res.json({ success: true, message: 'Notification red dot reset.' });
+  } catch (err) {
+    console.error('Reset notificationRedDot error:', err);
+    res.status(500).json({ success: false, message: 'Failed to reset notification red dot.' });
+  }
+};
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 

@@ -15,9 +15,16 @@ async function notifyUser(userId, type, title, description, data = {}) {
   try {
     const { actorId = null, ...restData } = data;
 
+
     // 1) Save to DB (store actorId if provided)
     const notification = await prisma.notification.create({
       data: { userId, type, title, description, actorId }
+    });
+
+    // 2) Set notificationRedDot to true for the user
+    await prisma.user.update({
+      where: { id: userId },
+      data: { notificationRedDot: true }
     });
 
     // 2) Load recipient for FCM token

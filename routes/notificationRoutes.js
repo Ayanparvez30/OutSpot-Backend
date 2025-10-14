@@ -1,3 +1,5 @@
+// Get notificationRedDot value
+router.get('/notifications/red-dot', checkAuth, notificationController.getNotificationRedDot);
 const express = require('express');
 const router = express.Router();
 const { checkAuth } = require('../middlewares/authMiddleware');
@@ -17,8 +19,12 @@ router.get('/notifications/friend-requests/unread', checkAuth, notificationContr
 router.get('/notifications/challenges', checkAuth, notificationController.getChallengeNotifications);
 router.get('/notifications/challenges/unread', checkAuth, notificationController.getChallengeNotificationsUnread);
 
+
 router.put('/notifications/read/:id', checkAuth, notificationController.markAsRead);
 router.delete('/notifications/clearAll', checkAuth, notificationController.clearAll);
+
+// New endpoint to reset notificationRedDot
+router.post('/notifications/reset-red-dot', checkAuth, notificationController.resetNotificationRedDot);
 
 // Add routes for mute/unmute chat functionality
 router.put('/notifications/mute/:chatId', checkAuth, notificationController.muteChat);
