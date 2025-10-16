@@ -1271,20 +1271,17 @@ exports.getUserProfile = async (req, res) => {
     const friendCount = friendIds.length;
 
     // Fetch weekly points efficiently (like getFriendList)
-    let friends = [];
-    if (isSelf || isFriend) {
-      const weekPointsMap = await getWeeklyPointsForUsers(friendIds);
-      friends = friendsRaw.map((friend) => ({
-        id: friend.id,
-        username: friend.username,
-        firstName: friend.firstName,
-        lastName: friend.lastName,
-        avatarUrl: friend.minime?.[0]?.avatarUrl || null,
-        totalPoints: friend.totalPoints || 0,
-        thisWeekPoints: weekPointsMap.get(friend.id) || 0,
-        profileUrl: `/api/users/${friend.id}/profile`,
-      }));
-    }
+    const weekPointsMap = await getWeeklyPointsForUsers(friendIds);
+    const friends = friendsRaw.map((friend) => ({
+      id: friend.id,
+      username: friend.username,
+      firstName: friend.firstName,
+      lastName: friend.lastName,
+      avatarUrl: friend.minime?.[0]?.avatarUrl || null,
+      totalPoints: friend.totalPoints || 0,
+      thisWeekPoints: weekPointsMap.get(friend.id) || 0,
+      profileUrl: `/api/users/${friend.id}/profile`,
+    }));
 
     // Fetch communities
     const communities = await prisma.communityMember.findMany({
@@ -1329,7 +1326,7 @@ exports.getUserProfile = async (req, res) => {
       lastName: isSelf || isFriend ? user.lastName : null,
       minime: user.minime,
       friendCount,
-      friends: isSelf || isFriend ? friends : [],
+  friends: friends,
       communities: isSelf || isFriend ? communities.map((c) => c.community) : [],
       thisWeekPoints: isSelf || isFriend ? thisWeekPoints : null,
       bio: isSelf || isFriend ? user.bio : null,
