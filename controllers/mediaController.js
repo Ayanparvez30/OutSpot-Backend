@@ -546,7 +546,7 @@ exports.saveToVault = async (req, res) => {
 
     return res.json({
       message: 'Saved to your vault',
-      story: myLocal,   // status: VAULT
+      story: myLocal,  
       savedStory,
     });
   } catch (error) {
