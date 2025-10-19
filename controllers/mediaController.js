@@ -154,94 +154,160 @@ exports.uploadMedia = async (req, res) => {
     return res.status(500).json({ error: 'Upload failed', details: err.message });
   }
 };
-
 // ==================================================
-// saveToProfile: save existing/URL story to profile (SAVED)
+// saveToProfile: save existing/URL story to profile (SAVED) — CLONE-BASED
 // ==================================================
 exports.saveToProfile = async (req, res) => {
   const authenticatedUserId = req.authData.id;
   let { storyId, imageUrl, type = 'IMAGE', visibility = 'profile', latitude, longitude } = req.body;
 
   try {
-    let story = null;
-
     if (!storyId && !imageUrl) {
       return res.status(400).json({ error: 'Provide either storyId or imageUrl' });
     }
 
-    // Path A: save by imageUrl (create/find my SAVED story)
+    // ----------------------------------------------
+    // Target status for this API
+    // ----------------------------------------------
+    const TARGET_STATUS = 'SAVED';
+
+    // ----------------------------------------------
+    // Path A: save by imageUrl → ensure a local CLONE (or reuse existing)
+    // ----------------------------------------------
     if (imageUrl) {
       type = normalizeType(type);
       const vis = normalizeVisibility(visibility);
 
-      story = await prisma.story.findFirst({
-        where: { userId: authenticatedUserId, mediaUrl: imageUrl, status: 'SAVED' },
+      // 1) Do I already have a local story with this mediaUrl and SAVED?
+      let myLocal = await prisma.story.findFirst({
+        where: {
+          userId: authenticatedUserId,
+          mediaUrl: imageUrl,
+          status: TARGET_STATUS,
+        },
       });
 
-      if (!story) {
-        story = await prisma.story.create({
+      // 2) If not, create my own local copy under me
+      if (!myLocal) {
+        myLocal = await prisma.story.create({
           data: {
             userId: authenticatedUserId,
             mediaUrl: imageUrl,
             type,
-            visibility: vis,
-            status: 'SAVED', // not shown in feed
+            visibility: vis,            // profile/private → তোমার প্রয়োজন অনুযায়ী
+            status: TARGET_STATUS,      // SAVED (profile grid-এ দেখানোর জন্য)
             latitude: latitude != null ? Number(latitude) : null,
             longitude: longitude != null ? Number(longitude) : null,
           },
         });
       }
-      storyId = story.id;
-    }
 
-    // Path B: save by storyId (permission check)
-    if (!story) {
-      story = await prisma.story.findUnique({
-        where: { id: Number(storyId) },
-        include: {
-          user: {
-            select: {
-              id: true,
-              username: true,
-              friendRequestsSent: true,
-              friendRequestsReceived: true,
-            },
+      // 3) Prevent duplicate SavedStory row (userId + storyId + status unique)
+      const existingSaved = await prisma.savedStory.findUnique({
+        where: {
+          userId_storyId_status: {
+            userId: authenticatedUserId,
+            storyId: myLocal.id,
+            status: TARGET_STATUS,
           },
         },
       });
-      if (!story) return res.status(404).json({ error: 'Story not found' });
-
-      const isOwner = story.userId === authenticatedUserId;
-      const isFriend =
-        story.user.friendRequestsSent?.some(
-          (r) => r.receiverId === authenticatedUserId && r.status === 'ACCEPTED'
-        ) ||
-        story.user.friendRequestsReceived?.some(
-          (r) => r.requesterId === authenticatedUserId && r.status === 'ACCEPTED'
-        );
-
-      if (!isOwner && !(isFriend && story.visibility === 'profile')) {
-        return res
-          .status(403)
-          .json({ error: 'You can only save your own stories or friends’ profile-visible stories' });
+      if (existingSaved) {
+        return res.status(400).json({ error: 'Already saved to profile' });
       }
+
+      const savedStory = await prisma.savedStory.create({
+        data: { userId: authenticatedUserId, storyId: myLocal.id, status: TARGET_STATUS },
+      });
+
+      return res.json({
+        message: 'Saved to your profile.',
+        story: myLocal,        // status: SAVED
+        savedStory,
+      });
     }
 
-    // Prevent duplicate save row
+    // ----------------------------------------------
+    // Path B: save by storyId → CLONE the original
+    // ----------------------------------------------
+    const original = await prisma.story.findUnique({
+      where: { id: Number(storyId) },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            friendRequestsSent: true,
+            friendRequestsReceived: true,
+          },
+        },
+      },
+    });
+    if (!original) return res.status(404).json({ error: 'Story not found' });
+
+    // Permission: owner OR friend & original.visibility === 'profile'
+    const isOwner = original.userId === authenticatedUserId;
+    const isFriend =
+      original.user.friendRequestsSent?.some(
+        (r) => r.receiverId === authenticatedUserId && r.status === 'ACCEPTED'
+      ) ||
+      original.user.friendRequestsReceived?.some(
+        (r) => r.requesterId === authenticatedUserId && r.status === 'ACCEPTED'
+      );
+
+    if (!isOwner && !(isFriend && original.visibility === 'profile')) {
+      return res
+        .status(403)
+        .json({ error: 'You can only save your own stories or friends’ profile-visible stories' });
+    }
+
+    // 1) Do I already have a local SAVED copy for this mediaUrl?
+    let myLocal = await prisma.story.findFirst({
+      where: {
+        userId: authenticatedUserId,
+        mediaUrl: original.mediaUrl,
+        status: TARGET_STATUS,
+      },
+    });
+
+    // 2) If not, clone under me
+    if (!myLocal) {
+      // Optional override: allow client to pass visibility/coords, else inherit sensible defaults
+      const vis = normalizeVisibility(visibility || original.visibility || 'profile');
+      myLocal = await prisma.story.create({
+        data: {
+          userId: authenticatedUserId,
+          mediaUrl: original.mediaUrl,
+          type: normalizeType(type || original.type),
+          visibility: vis,
+          status: TARGET_STATUS,
+          latitude:
+            latitude != null ? Number(latitude) : (original.latitude != null ? original.latitude : null),
+          longitude:
+            longitude != null ? Number(longitude) : (original.longitude != null ? original.longitude : null),
+        },
+      });
+    }
+
+    // 3) SavedStory link to my local clone
     const existingSaved = await prisma.savedStory.findUnique({
       where: {
-        userId_storyId_status: { userId: authenticatedUserId, storyId: story.id, status: 'SAVED' },
+        userId_storyId_status: {
+          userId: authenticatedUserId,
+          storyId: myLocal.id,
+          status: TARGET_STATUS,
+        },
       },
     });
     if (existingSaved) return res.status(400).json({ error: 'Already saved to profile' });
 
     const savedStory = await prisma.savedStory.create({
-      data: { userId: authenticatedUserId, storyId: story.id, status: 'SAVED' },
+      data: { userId: authenticatedUserId, storyId: myLocal.id, status: TARGET_STATUS },
     });
 
     return res.json({
       message: 'Saved to your profile.',
-      story, // status: SAVED
+      story: myLocal,  // status: SAVED
       savedStory,
     });
   } catch (error) {
@@ -250,9 +316,6 @@ exports.saveToProfile = async (req, res) => {
   }
 };
 
-// ==================================================
-// getSavedStories: view saved (SAVED) by self or (if public/friend) others
-// ==================================================
 exports.getSavedStories = async (req, res) => {
   const requesterId = req.authData.id;
   const { targetUserId } = req.query;
@@ -345,92 +408,145 @@ exports.getSavedStories = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch saved stories' });
   }
 };
-
 // ==================================================
-// saveToVault: save existing/URL story to vault (VAULT)
+// saveToVault: save existing/URL story to vault (VAULT) — CLONE-BASED
 // ==================================================
 exports.saveToVault = async (req, res) => {
   const userId = req.authData.id;
-  let { storyId, imageUrl, type = 'IMAGE', visibility = 'profile', latitude, longitude } = req.body;
+  let { storyId, imageUrl, type = 'IMAGE', visibility = 'private', latitude, longitude } = req.body;
 
   try {
-    let story = null;
-
     if (!storyId && !imageUrl) {
       return res.status(400).json({ error: 'Provide either storyId or imageUrl' });
     }
 
-    // Path A: vault by imageUrl → create/find my VAULT story
+    // ----------------------------------------------
+    // Target status for this API
+    // ----------------------------------------------
+    const TARGET_STATUS = 'VAULT';
+
+    // ----------------------------------------------
+    // Path A: vault by imageUrl → ensure a local CLONE (or reuse existing)
+    // ----------------------------------------------
     if (imageUrl) {
       type = normalizeType(type);
-      const vis = normalizeVisibility(visibility);
+      // Vault is typically private; force private even if client sends profile
+      const vis = 'private';
 
-      story = await prisma.story.findFirst({
-        where: { userId, mediaUrl: imageUrl, status: 'VAULT' },
+      // 1) Reuse my local VAULT copy if exists
+      let myLocal = await prisma.story.findFirst({
+        where: {
+          userId,
+          mediaUrl: imageUrl,
+          status: TARGET_STATUS,
+        },
       });
 
-      if (!story) {
-        story = await prisma.story.create({
+      // 2) If not, create my own local VAULT copy
+      if (!myLocal) {
+        myLocal = await prisma.story.create({
           data: {
             userId,
             mediaUrl: imageUrl,
             type,
-            visibility: vis,
-            status: 'VAULT', // not in feed
+            visibility: vis,          // keep vault private
+            status: TARGET_STATUS,    // VAULT
             latitude: latitude != null ? Number(latitude) : null,
             longitude: longitude != null ? Number(longitude) : null,
           },
         });
       }
-      storyId = story.id;
+
+      // 3) Prevent duplicate SavedStory row
+      const existingVaultStory = await prisma.savedStory.findUnique({
+        where: { userId_storyId_status: { userId, storyId: myLocal.id, status: TARGET_STATUS } },
+      });
+      if (existingVaultStory) return res.status(400).json({ error: 'Already saved to vault' });
+
+      const savedStory = await prisma.savedStory.create({
+        data: { userId, storyId: myLocal.id, status: TARGET_STATUS },
+      });
+
+      return res.json({
+        message: 'Saved to your vault',
+        story: myLocal,   // status: VAULT
+        savedStory,
+      });
     }
 
-    // Path B: vault by storyId (permission check)
-    if (!story) {
-      story = await prisma.story.findUnique({
-        where: { id: Number(storyId) },
-        include: {
-          user: {
-            select: {
-              id: true,
-              username: true,
-              friendRequestsSent: true,
-              friendRequestsReceived: true,
-            },
+    // ----------------------------------------------
+    // Path B: vault by storyId → CLONE the original
+    // ----------------------------------------------
+    const original = await prisma.story.findUnique({
+      where: { id: Number(storyId) },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            friendRequestsSent: true,
+            friendRequestsReceived: true,
           },
         },
-      });
-      if (!story) return res.status(404).json({ error: 'Story not found' });
+      },
+    });
+    if (!original) return res.status(404).json({ error: 'Story not found' });
 
-      const isOwner = story.userId === userId;
-      const isFriend =
-        story.user.friendRequestsSent?.some(
-          (r) => r.receiverId === userId && r.status === 'ACCEPTED'
-        ) ||
-        story.user.friendRequestsReceived?.some(
-          (r) => r.requesterId === userId && r.status === 'ACCEPTED'
-        );
+    // Permission: owner OR friend & original.visibility === 'profile'
+    const isOwner = original.userId === userId;
+    const isFriend =
+      original.user.friendRequestsSent?.some(
+        (r) => r.receiverId === userId && r.status === 'ACCEPTED'
+      ) ||
+      original.user.friendRequestsReceived?.some(
+        (r) => r.requesterId === userId && r.status === 'ACCEPTED'
+      );
 
-      if (!isOwner && !(isFriend && story.visibility === 'profile')) {
-        return res
-          .status(403)
-          .json({ error: 'You do not have permission to save this story to your vault' });
-      }
+    if (!isOwner && !(isFriend && original.visibility === 'profile')) {
+      return res
+        .status(403)
+        .json({ error: 'You do not have permission to save this story to your vault' });
     }
 
-    // Prevent duplicate vault save
+    // 1) Do I already have a local VAULT copy for this mediaUrl?
+    let myLocal = await prisma.story.findFirst({
+      where: {
+        userId,
+        mediaUrl: original.mediaUrl,
+        status: TARGET_STATUS,
+      },
+    });
+
+    // 2) If not, clone under me (force private visibility for vault)
+    if (!myLocal) {
+      myLocal = await prisma.story.create({
+        data: {
+          userId,
+          mediaUrl: original.mediaUrl,
+          type: normalizeType(type || original.type),
+          visibility: 'private',      // vault stays private
+          status: TARGET_STATUS,      // VAULT
+          latitude:
+            latitude != null ? Number(latitude) : (original.latitude != null ? original.latitude : null),
+          longitude:
+            longitude != null ? Number(longitude) : (original.longitude != null ? original.longitude : null),
+        },
+      });
+    }
+
+    // 3) Link SavedStory to my local VAULT copy
     const existingVaultStory = await prisma.savedStory.findUnique({
-      where: { userId_storyId_status: { userId, storyId: story.id, status: 'VAULT' } },
+      where: { userId_storyId_status: { userId, storyId: myLocal.id, status: TARGET_STATUS } },
     });
     if (existingVaultStory) return res.status(400).json({ error: 'Already saved to vault' });
 
     const savedStory = await prisma.savedStory.create({
-      data: { userId, storyId: story.id, status: 'VAULT' },
+      data: { userId, storyId: myLocal.id, status: TARGET_STATUS },
     });
 
     return res.json({
       message: 'Saved to your vault',
-      story, // status: VAULT
+      story: myLocal,  
       savedStory,
     });
   } catch (error) {
@@ -438,6 +554,7 @@ exports.saveToVault = async (req, res) => {
     return res.status(500).json({ error: 'Failed to save story to vault' });
   }
 };
+
 
 // ==================================================
 // getVaultStories: list my VAULT stories
@@ -490,10 +607,6 @@ exports.getVaultStories = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch vault stories' });
   }
 };
-
-// ==================================================
-// removeStory: delete my story (+ cascade saved rows)
-// ==================================================
 exports.removeStory = async (req, res) => {
   const userId = req.authData.id;
   const { storyId } = req.params;
@@ -504,17 +617,25 @@ exports.removeStory = async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    // Delete dependent SavedStory rows first to avoid FK issues
-    await prisma.savedStory.deleteMany({ where: { storyId: story.id } });
-    await prisma.story.delete({ where: { id: story.id } });
+    const refs = await prisma.savedStory.count({ where: { storyId: story.id } });
 
-    res.json({ message: 'Story removed successfully.' });
+    if (refs > 0) {
+      // ✅ keep it for savers; hide from feeds
+      await prisma.story.update({
+        where: { id: story.id },
+        data: { status: 'ARCHIVED', visibility: 'private' }
+      });
+      return res.json({ message: 'Story archived (others have saved it), removed from your feed.' });
+    }
+
+    // no refs → safe to hard-delete
+    await prisma.story.delete({ where: { id: story.id } });
+    return res.json({ message: 'Story removed successfully.' });
   } catch (error) {
     console.error('removeStory error:', error);
-    res.status(500).json({ error: 'Failed to remove story' });
+    return res.status(500).json({ error: 'Failed to remove story' });
   }
 };
-
 
 exports.getStories = async (req, res) => {
   const userId = req.authData.id;
