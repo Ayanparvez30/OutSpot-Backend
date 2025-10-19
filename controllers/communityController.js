@@ -29,7 +29,7 @@ const ensureCommunityChat = async (communityId) => {
   if (!chat) {
     chat = await prisma.chat.create({
       data: {
-        isGroup: true,
+        isGroup: false,
         isCommunity: true,
         communityId: id,
         name: community.name,
