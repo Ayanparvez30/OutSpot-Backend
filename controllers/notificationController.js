@@ -107,10 +107,14 @@ exports.markAsRead = async (req, res) => {
     const { id } = req.params;
     const userId = req.authData.id;
 
-    await prisma.notification.updateMany({
+    const result = await prisma.notification.updateMany({
       where: { id: parseInt(id), userId },
       data: { isRead: true }
     });
+
+    if (!result.count) {
+      return res.status(404).json({ error: "Notification not found" });
+    }
 
     res.json({ message: "Notification marked as read" });
   } catch (err) {
@@ -136,10 +140,14 @@ exports.markAsUnread = async (req, res) => {
     const { id } = req.params;
     const userId = req.authData.id;
 
-    await prisma.notification.updateMany({
+    const result = await prisma.notification.updateMany({
       where: { id: parseInt(id), userId },
       data: { isRead: false }
     });
+
+    if (!result.count) {
+      return res.status(404).json({ error: "Notification not found" });
+    }
 
     res.json({ message: "Notification marked as unread" });
   } catch (err) {
@@ -154,7 +162,11 @@ exports.deleteNotification = async (req, res) => {
     const { id } = req.params;
     const userId = req.authData.id;
 
-    await prisma.notification.deleteMany({ where: { id: parseInt(id), userId } });
+    const result = await prisma.notification.deleteMany({ where: { id: parseInt(id), userId } });
+
+    if (!result.count) {
+      return res.status(404).json({ error: "Notification not found" });
+    }
 
     res.json({ message: "Notification deleted" });
   } catch (err) {
