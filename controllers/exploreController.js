@@ -136,59 +136,82 @@ exports.getCategoryPlaces = async (req, res) => {
     res.status(500).json({ error: 'Failed to load places' });
   }
 };
-
 exports.recordVisit = async (req, res) => {
   try {
     const userId = req.authData.id;
     let { placeId, name, latitude, longitude, mediaUrl, categoryKey } = req.body;
 
-    latitude = parseFloat(latitude);
-    longitude = parseFloat(longitude);
-    if (!Number.isFinite(latitude) || !Number.isFinite(longitude)) {
+    const lat = parseFloat(latitude);
+    const lng = parseFloat(longitude);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ error: 'Bad latitude/longitude' });
     }
 
+    // keep your category logic; default to your model's default (5) if not set
     const cat = categoryKey ? getCategory(categoryKey) : null;
-    const points = cat?.points ?? 4;
+    const points = cat?.points ?? 5;
 
-   
     const twelveHrsAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+
+    // 1) High-confidence de-dupe by placeId (when provided)
+    if (placeId) {
+      const priorSamePlace = await prisma.locationPoint.findFirst({
+        where: { userId, placeId, createdAt: { gte: twelveHrsAgo } },
+        select: { id: true, createdAt: true }
+      });
+      if (priorSamePlace) {
+        return res.status(200).json({
+          awarded: false,
+          reason: 'duplicate-place-within-12h',
+          placeId,
+          since: priorSamePlace.createdAt
+        });
+      }
+    }
+
+    // 2) Fallback: radius-based de-dupe (<= 50 m) over last 12 h
     const recent = await prisma.locationPoint.findMany({
       where: { userId, createdAt: { gte: twelveHrsAgo } },
       select: { latitude: true, longitude: true }
     });
 
-    const already = recent.some(lp => {
+    const nearHit = recent.some(lp => {
       if (lp.latitude == null || lp.longitude == null) return false;
       return haversineMeters(
         { lat: lp.latitude, lng: lp.longitude },
-        { lat: latitude,  lng: longitude }
+        { lat, lng }
       ) <= 50;
     });
-    if (already) {
-      return res.status(201).json({ awarded: false, reason: 'recently-visited' });
+
+    if (nearHit) {
+      return res.status(200).json({
+        awarded: false,
+        reason: 'duplicate-nearby-within-12h',
+        radiusMeters: 50
+      });
     }
 
-    
+    // 3) Create + award
     const created = await prisma.locationPoint.create({
       data: {
         userId,
         mediaUrl: mediaUrl || '',
+        placeId: placeId || null,   // 👈 persist it now
         placeName: name || null,
-        latitude,
-        longitude,
+        latitude: lat,
+        longitude: lng,
         points
       }
     });
 
-    await addPointsWithMultiplier(
-      userId,
-      points,
-      'LOCATION_VISIT', 
-      created.id 
-    );
+    await addPointsWithMultiplier(userId, points, 'LOCATION_VISIT', created.id);
 
-    return res.json({ awarded: true, points, id: created.id });
+    return res.json({
+      awarded: true,
+      points,
+      id: created.id,
+      placeId: placeId || null
+    });
   } catch (e) {
     console.error('recordVisit error', e);
     return res.status(500).json({ error: 'Failed to record visit' });

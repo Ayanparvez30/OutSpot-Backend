@@ -179,19 +179,23 @@ model LocationHistory {
   longitude Float
   createdAt DateTime @default(now())
 }
-
+// schema.prisma — add to LocationPoint
 model LocationPoint {
-  id     Int  @id @default(autoincrement())
-  userId Int
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  mediaUrl  String
-  placeName String?
-  latitude  Float?
-  longitude Float?
-  points    Int     @default(5)
+  mediaUrl   String
+  placeId    String?         // 👈 NEW: precise de-dupe
+  placeName  String?
+  latitude   Float?
+  longitude  Float?
+  points     Int      @default(5)
 
-  createdAt DateTime @default(now())
+  createdAt  DateTime @default(now())
+
+  @@index([userId, createdAt])
+  @@index([userId, placeId, createdAt]) // 👈 fast same-place checks
 }
 
 model Notification {
