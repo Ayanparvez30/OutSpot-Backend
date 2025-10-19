@@ -180,14 +180,14 @@ exports.recordVisit = async (req, res) => {
       return haversineMeters(
         { lat: lp.latitude, lng: lp.longitude },
         { lat, lng }
-      ) <= 50;
+      ) <= 15;
     });
 
     if (nearHit) {
       return res.status(200).json({
         awarded: false,
         reason: 'duplicate-nearby-within-12h',
-        radiusMeters: 50
+        radiusMeters: 15
       });
     }
 
