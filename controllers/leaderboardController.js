@@ -64,24 +64,26 @@ async function getWeeklyTotalsForUsers(userIds, weekStart, weekEnd) {
 }
 exports.getWeeklyGlobalLeaderboard = async (req, res) => {
   try {
-    const userId = req.authData.id;
+    const requesterId = req.authData.id;
     const weekStart = getStartOfWeek();
     const { weekEnd, label } = getWeekEndAndLabel(weekStart);
 
-    // 1) এই সপ্তাহে সবার পয়েন্ট (take বাদ)
+    // 1) This week points grouped (only users who earned >0 appear here after filtering)
     const grouped = await prisma.pointsLedger.groupBy({
       by: ['userId'],
       where: { createdAt: { gte: weekStart, lt: weekEnd } },
       _sum: { finalPoints: true },
       orderBy: { _sum: { finalPoints: 'desc' } },
-      // take: 50,  <-- ❌ বাদ দিলাম যাতে পুরো ডাটাবেজ আসে
     });
 
-    // 2) সব ইউজারের প্রোফাইল (username + avatar)
-    const allUserIds = grouped.map(g => g.userId);
-    const users = allUserIds.length
+    // 2) Collect userIds we need profiles for (everyone on the board + requester)
+    const onBoardUserIds = grouped.map(g => g.userId);
+    const needUserIds = Array.from(new Set([...onBoardUserIds, requesterId]));
+
+    // 3) Pull minimal profile (username + latest saved avatar)
+    const users = needUserIds.length
       ? await prisma.user.findMany({
-          where: { id: { in: allUserIds } },
+          where: { id: { in: needUserIds } },
           select: {
             id: true,
             username: true,
@@ -96,26 +98,60 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
       : [];
     const userMap = new Map(users.map(u => [u.id, u]));
 
-    // 3) ফুল লিডারবোর্ড (১,২,৩… সবার র‍্যাঙ্ক)
-    const leaderboard = grouped
-      .map((g, idx) => {
-        const u = userMap.get(g.userId);
-        const points = Number(g._sum.finalPoints || 0);
-        const rank = idx + 1;
-        return {
-          userId: g.userId,
-          username: u?.username || `user_${g.userId}`,
-          avatarUrl: firstAvatar(u?.minime) || null,
-          points,
-          rank,
-          prize: getPrizeForRank(rank), // >50 হলে null হবে, ঠিকই
-        };
-      })
-      .filter(e => e.points > 0); // 0 পয়েন্ট বাদ
+    const firstAvatar = (minimeArr) =>
+      Array.isArray(minimeArr) && minimeArr.length > 0
+        ? (minimeArr[0]?.avatarUrl || null)
+        : null;
 
-    // 4) আমার ইনফো + গ্লোবাল র‍্যাঙ্ক
-    const myInfo = leaderboard.find(e => String(e.userId) === String(userId)) || null;
-    const myRank = myInfo?.rank || null;
+    // 4) Build full leaderboard for users with >0 points
+    const positiveRows = grouped
+      .map(g => ({
+        userId: g.userId,
+        username: userMap.get(g.userId)?.username || `user_${g.userId}`,
+        avatarUrl: firstAvatar(userMap.get(g.userId)?.minime) || null,
+        points: Number(g._sum.finalPoints || 0),
+      }))
+      .filter(r => r.points > 0)
+      .sort((a, b) => b.points - a.points);
+
+    const leaderboard = positiveRows.map((entry, idx) => ({
+      ...entry,
+      rank: idx + 1,
+      prize: getPrizeForRank(idx + 1),
+    }));
+
+    // 5) Ensure requester shows up even with 0 points
+    const requesterOnBoard = leaderboard.find(e => e.userId === requesterId);
+    let myInfo = requesterOnBoard || null;
+    let myRank = requesterOnBoard?.rank || null;
+
+    if (!myInfo) {
+      // compute requester weekly total (may be 0)
+      const mySum = await prisma.pointsLedger.aggregate({
+        _sum: { finalPoints: true },
+        where: { userId: requesterId, createdAt: { gte: weekStart, lt: weekEnd } },
+      });
+      const myPoints = Number(mySum._sum.finalPoints || 0);
+
+      const me = userMap.get(requesterId);
+      const meUsername = me?.username || `user_${requesterId}`;
+      const meAvatar = firstAvatar(me?.minime) || null;
+
+      // Place requester after all positive scorers (as "next rank") when points == 0
+      // If everyone has 0 (i.e., leaderboard empty), requester gets rank 1 with 0 points.
+      const tailRank = leaderboard.length + 1;
+      myInfo = {
+        userId: requesterId,
+        username: meUsername,
+        avatarUrl: meAvatar,
+        points: myPoints, // likely 0
+        rank: myPoints > 0 ? null : (leaderboard.length === 0 ? 1 : tailRank),
+        prize: null,
+      };
+      myRank = myInfo.rank;
+      // Note: we are not inserting requester into `leaderboard` to keep it “positive-only”.
+      // Client still gets `myInfo`/`myRank` for the sticky “My Position” UI.
+    }
 
     return res.json({
       window: {
@@ -124,9 +160,9 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
         label,
         remaining: getTimeRemainingString(weekEnd),
       },
-      leaderboard,   // 🔥 এখন সবার রেকর্ড আছে (১,২,৩…)
-      myRank,        // আমার গ্লোবাল র‍্যাঙ্ক
-      myInfo,
+      leaderboard,   // only >0 points to keep board clean
+      myRank,        // requester rank; 1 if no one scored and requester has 0
+      myInfo,        // requester card always present
       prize: myInfo?.prize || null,
     });
   } catch (error) {
@@ -134,6 +170,7 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
     res.status(500).json({ error: 'Internal server error' });
   }
 };
+
 
 
 exports.getWeeklyCommunityLeaderboard = async (req, res) => {
