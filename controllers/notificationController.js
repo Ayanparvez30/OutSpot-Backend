@@ -130,6 +130,39 @@ exports.clearAll = async (req, res) => {
   }
 };
 
+// Mark a single notification as unread
+exports.markAsUnread = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.authData.id;
+
+    await prisma.notification.updateMany({
+      where: { id: parseInt(id), userId },
+      data: { isRead: false }
+    });
+
+    res.json({ message: "Notification marked as unread" });
+  } catch (err) {
+    console.error("Mark unread error:", err);
+    res.status(500).json({ error: "Failed to mark notification as unread" });
+  }
+};
+
+// Delete a single notification by id
+exports.deleteNotification = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const userId = req.authData.id;
+
+    await prisma.notification.deleteMany({ where: { id: parseInt(id), userId } });
+
+    res.json({ message: "Notification deleted" });
+  } catch (err) {
+    console.error("Delete notification error:", err);
+    res.status(500).json({ error: "Failed to delete notification" });
+  }
+};
+
 exports.getUnreadNotifications = async (req, res) => {
   try {
     const userId = req.authData.id; // Changed from req.user.id to req.authData.id

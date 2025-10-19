@@ -20,7 +20,12 @@ router.get('/notifications/challenges/unread', checkAuth, notificationController
 
 
 router.put('/notifications/read/:id', checkAuth, notificationController.markAsRead);
+// Mark a notification as unread
+router.put('/notifications/unread/:id', checkAuth, notificationController.markAsUnread);
 router.delete('/notifications/clearAll', checkAuth, notificationController.clearAll);
+
+// Delete a single notification by id
+router.delete('/notifications/:id', checkAuth, notificationController.deleteNotification);
 
 // New endpoint to reset notificationRedDot
 router.post('/notifications/reset-red-dot', checkAuth, notificationController.resetNotificationRedDot);
