@@ -8,6 +8,10 @@ const haversineMeters = (a, b) => {
   const A = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
   return 2 * R * Math.asin(Math.sqrt(A));
 };
+// ---- de-dupe tuning (env overrideable) ----
+const NEARBY_WITH_PLACEID   = Number(process.env.EXPLORE_DUP_RADIUS_WITH_PLACEID || 0);   // 0 = skip proximity when placeId present
+const NEARBY_WITHOUT_PLACEID= Number(process.env.EXPLORE_DUP_RADIUS_METERS       || 15);  // fallback when no placeId
+const DUP_WINDOW_HOURS      = Number(process.env.EXPLORE_DUP_WINDOW_HOURS        || 12);  // 12h window
 
 const CATEGORIES = [
   { key: 'rooftop-bars',      title: 'Rooftop Bars',      icon: '🍹', keyword: 'rooftop bar',                         type: 'bar',             points: 4 },
@@ -147,56 +151,64 @@ exports.recordVisit = async (req, res) => {
       return res.status(400).json({ error: 'Bad latitude/longitude' });
     }
 
-    // keep your category logic; default to your model's default (5) if not set
+    // points per category (fallback to 5, matches your schema default)
     const cat = categoryKey ? getCategory(categoryKey) : null;
     const points = cat?.points ?? 5;
 
-    const twelveHrsAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    const since = new Date(Date.now() - DUP_WINDOW_HOURS * 60 * 60 * 1000);
 
-    // 1) High-confidence de-dupe by placeId (when provided)
+    /* ---------- 1) Precise de-dupe by placeId (best) ---------- */
     if (placeId) {
       const priorSamePlace = await prisma.locationPoint.findFirst({
-        where: { userId, placeId, createdAt: { gte: twelveHrsAgo } },
+        where: { userId, placeId, createdAt: { gte: since } },
         select: { id: true, createdAt: true }
       });
       if (priorSamePlace) {
         return res.status(200).json({
           awarded: false,
-          reason: 'duplicate-place-within-12h',
+          reason: 'duplicate-place-within-window',
           placeId,
+          windowHours: DUP_WINDOW_HOURS,
           since: priorSamePlace.createdAt
         });
       }
     }
 
-    // 2) Fallback: radius-based de-dupe (<= 50 m) over last 12 h
-    const recent = await prisma.locationPoint.findMany({
-      where: { userId, createdAt: { gte: twelveHrsAgo } },
-      select: { latitude: true, longitude: true }
-    });
+    /* ---------- 2) Proximity fallback (configurable) ---------- 
+       Only apply when placeId is missing (or you set a tiny nonzero radius). */
+    const fallbackRadius = placeId ? NEARBY_WITH_PLACEID : NEARBY_WITHOUT_PLACEID;
 
-    const nearHit = recent.some(lp => {
-      if (lp.latitude == null || lp.longitude == null) return false;
-      return haversineMeters(
-        { lat: lp.latitude, lng: lp.longitude },
-        { lat, lng }
-      ) <= 15;
-    });
-
-    if (nearHit) {
-      return res.status(200).json({
-        awarded: false,
-        reason: 'duplicate-nearby-within-12h',
-        radiusMeters: 15
+    if (fallbackRadius > 0) {
+      const recent = await prisma.locationPoint.findMany({
+        where: { userId, createdAt: { gte: since } },
+        select: { latitude: true, longitude: true, createdAt: true }
       });
+
+      let nearest = null;
+      for (const lp of recent) {
+        if (lp.latitude == null || lp.longitude == null) continue;
+        const d = haversineMeters({ lat: lp.latitude, lng: lp.longitude }, { lat, lng });
+        if (!nearest || d < nearest.distance) nearest = { ...lp, distance: d };
+      }
+
+      if (nearest && nearest.distance <= fallbackRadius) {
+        return res.status(200).json({
+          awarded: false,
+          reason: 'duplicate-nearby-within-window',
+          radiusMeters: fallbackRadius,
+          nearestMeters: Math.round(nearest.distance),
+          windowHours: DUP_WINDOW_HOURS,
+          lastCheckinAt: nearest.createdAt
+        });
+      }
     }
 
-    // 3) Create + award
+    /* ---------- 3) Create + award ---------- */
     const created = await prisma.locationPoint.create({
       data: {
         userId,
         mediaUrl: mediaUrl || '',
-        placeId: placeId || null,   // 👈 persist it now
+        placeId: placeId || null,     // persist precise place
         placeName: name || null,
         latitude: lat,
         longitude: lng,
@@ -217,6 +229,7 @@ exports.recordVisit = async (req, res) => {
     return res.status(500).json({ error: 'Failed to record visit' });
   }
 };
+
 
 exports.getPlaceDetail = async (req, res) => {
   try {
