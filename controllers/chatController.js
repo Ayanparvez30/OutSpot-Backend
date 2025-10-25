@@ -105,9 +105,13 @@ exports.createPrivateChat = async (req, res) => {
       }
 
       // ✅ Find existing private chat between exactly these two users
+      // Exclude community chats (isCommunity === true) so a community chat
+      // that happens to contain only these two users doesn't block creating
+      // a dedicated private chat.
       const existingChats = await prisma.chat.findMany({
         where: {
           isGroup: false,
+          isCommunity: false,
           AND: [
             { users: { some: { userId: currentUserId } } },
             { users: { some: { userId: targetUserId } } }
@@ -129,6 +133,9 @@ exports.createPrivateChat = async (req, res) => {
       if (exactMatch) {
         return res.json({ message: 'Private chat already exists', chatId: exactMatch.id });
       }
+
+      // NOTE: We intentionally do NOT short-circuit to an existing community chat here.
+      // Private chats should be created with their own chat IDs even if users share a community chat.
     }
 
     const chat = await prisma.chat.create({
