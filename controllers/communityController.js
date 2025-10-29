@@ -391,8 +391,7 @@ exports.getMyRecentCommunities = async (req, res) => {
     return res.status(500).json({ error: 'Failed to load recent community' });
   }
 };
-
-// -------------------- my communities (created/joined/both) --------------------
+// -------------------- my communities (created only) --------------------
 exports.getMyCommunities = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -400,26 +399,35 @@ exports.getMyCommunities = async (req, res) => {
     const q = (req.query.q || '').trim();
     const take = Math.min(parseInt(req.query.limit || '50', 10), 100);
     const skip = Math.max(parseInt(req.query.skip || '0', 10), 0);
-    const scope = String(req.query.scope || '').toLowerCase(); // created / joined / all
 
-    const nameFilter = q ? { name: { contains: q, mode: 'insensitive' } } : {};
+    const nameFilter = q
+      ? { name: { contains: q, mode: 'insensitive' } }
+      : {};
 
-    // --- Created ---
-    const createdAll = await prisma.community.findMany({
-      where: { creatorId: userId, ...nameFilter },
-      orderBy: { id: 'desc' },
-      include: {
-        _count: { select: { members: true } },
-        members: {
-          where: { userId },
-          select: { joinedAt: true },
-          take: 1,
-          orderBy: { joinedAt: 'desc' },
+    const where = { creatorId: userId, ...nameFilter };
+
+    // একসাথে total + paginated items আনছি
+    const [total, createdItems] = await prisma.$transaction([
+      prisma.community.count({ where }),
+      prisma.community.findMany({
+        where,
+        orderBy: { id: 'desc' },
+        take,
+        skip,
+        include: {
+          _count: { select: { members: true } },
+          // creator-ও member হতে পারে; joinedAt দরকার হলে রেখে দিলাম
+          members: {
+            where: { userId }, // current user-এর membership (থাকলে) দেখাবে
+            select: { joinedAt: true },
+            take: 1,
+            orderBy: { joinedAt: 'desc' },
+          },
         },
-      },
-    });
+      }),
+    ]);
 
-    const created = createdAll.slice(skip, skip + take).map((c) => ({
+    const items = createdItems.map((c) => ({
       id: c.id,
       name: c.name,
       imageUrl: c.imageUrl,
@@ -427,49 +435,12 @@ exports.getMyCommunities = async (req, res) => {
       joinedAt: c.members?.[0]?.joinedAt ?? null,
       type: 'created',
       isCreator: true,
-      isMember: true,
+      isMember: true, // তৈরি করার সময়ই আপনি member হয়েছিলেন (ডিফল্ট ফ্লো অনুযায়ী)
     }));
 
-    // --- Joined ---
-    const joinedAll = await prisma.communityMember.findMany({
-      where: {
-        userId,
-        community: {
-          creatorId: { not: userId },
-          ...nameFilter,
-        },
-      },
-      orderBy: { joinedAt: 'desc' },
-      include: {
-        community: { include: { _count: { select: { members: true } } } },
-      },
-    });
-
-    const joined = joinedAll.slice(skip, skip + take).map((m) => ({
-      id: m.community.id,
-      name: m.community.name,
-      imageUrl: m.community.imageUrl,
-      membersCount: m.community._count.members,
-      joinedAt: m.joinedAt,
-      type: 'joined',
-      isCreator: false,
-      isMember: true,
-    }));
-
-    // --- Scope logic ---
-    if (scope === 'created') {
-      return res.json({ items: created, total: createdAll.length, skip, take });
-    } else if (scope === 'joined') {
-      return res.json({ items: joined, total: joinedAll.length, skip, take });
-    } else {
-      // default: both
-      return res.json({
-        created: { items: created, total: createdAll.length, skip, take },
-        joined: { items: joined, total: joinedAll.length, skip, take },
-      });
-    }
+    return res.json({ items, total, skip, take });
   } catch (err) {
-    console.error('getMyCommunities error:', err);
+    console.error('getMyCommunities (created only) error:', err);
     return res.status(500).json({ error: 'Failed to load your communities' });
   }
 };
