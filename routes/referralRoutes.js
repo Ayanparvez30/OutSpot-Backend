@@ -11,7 +11,9 @@ const { checkAuth } = authMiddleware;
 router.get('/referrals/link', checkAuth, rc.getInviteLink);
 router.get('/referrals/summary', checkAuth, rc.getReferralSummary);
 
-// optional utility endpoint if needed
-router.post('/referrals/attach', checkAuth, rc.attachReferralIfAny);
+// // optional utility endpoint if needed
+// router.post('/referrals/attach', checkAuth, rc.attachReferralIfAny);
+router.post('/referrals/share', checkAuth, rc.rewardForSharing);
+
 
 module.exports = router;
