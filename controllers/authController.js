@@ -8,8 +8,7 @@ const { verifyFirebaseIdToken } = require('../utils/firebaseVerify');
 const response = require('../functions/response');
 require('dotenv').config();
 const nodemailer = require('nodemailer');
-const { addPointsWithMultiplier } = require('../utils/points');
-
+const { addPointsWithMultiplier, addPointsDirect } = require('../utils/points');
 const REFERRAL_REWARD_POINTS = Number(process.env.REFERRAL_REWARD_POINTS || 50);
 
 // ---------- helpers ----------
@@ -35,7 +34,7 @@ async function applyReferralOnVerified({ inviterId, inviteeId }, db = prisma) {
     where: { inviterId, inviteeId, status: 'PENDING' }
   });
   if (!ref) return;
-  await addPointsWithMultiplier(inviterId, REFERRAL_REWARD_POINTS, 'REFERRAL_REWARD', inviteeId, db);
+await addPointsDirect(inviterId, REFERRAL_REWARD_POINTS, 'REFERRAL_REWARD', inviteeId, db);
   await db.referral.update({
     where: { id: ref.id },
     data: { status: 'REWARDED', rewardedAt: new Date() },
@@ -973,37 +972,3 @@ exports.getMyReferral = async (req, res) => {
   });
 };
 
-// async function deleteAccount(req, res) {
-//   const userId = req.authData.id;
-
-//   try {
-   
-//     const user = await prisma.user.findUnique({
-//       where: { id: userId },
-//       select: { firebaseUid: true }
-//     });
-
-//     if (user?.firebaseUid) {
-//       try {
-//         await admin.auth().deleteUser(user.firebaseUid);
-//       } catch (e) {
-   
-//         if (e.code !== 'auth/user-not-found') throw e;
-//       }
-//     }
-
-//     await prisma.$transaction(async (tx) => {
-   
-//       await tx.user.delete({ where: { id: userId } });
-//     });
-
-//     return res.json({ message: 'Account deleted successfully' });
-//   } catch (error) {
-//     console.error('Delete account error:', error);
-//     return res.status(500).json({ error: 'Failed to delete account' });
-//   }
-// }
-// module.exports = {
- 
-//   deleteAccount,
-// };
