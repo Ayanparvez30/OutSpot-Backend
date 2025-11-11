@@ -3,7 +3,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const uploadToS3 = require('../utils/s3Upload');
 
-// ✅ weekly points (single source of truth from pointsLedger.finalPoints)
+
 const { getWeeklyPointsForUsers } = require('../utils/weeklyPoints');
 
 // -------------------- helpers --------------------
@@ -12,7 +12,6 @@ const firstAvatar = (minimeArr) =>
     ? (minimeArr[0]?.avatarUrl || null)
     : null;
 
-// -------------------- internal: ensure community chat exists & synced --------------------
 const ensureCommunityChat = async (communityId) => {
   const id = Number(communityId);
 
@@ -406,7 +405,7 @@ exports.getMyCommunities = async (req, res) => {
 
     const where = { creatorId: userId, ...nameFilter };
 
-    // একসাথে total + paginated items আনছি
+   
     const [total, createdItems] = await prisma.$transaction([
       prisma.community.count({ where }),
       prisma.community.findMany({
@@ -416,9 +415,9 @@ exports.getMyCommunities = async (req, res) => {
         skip,
         include: {
           _count: { select: { members: true } },
-          // creator-ও member হতে পারে; joinedAt দরকার হলে রেখে দিলাম
+
           members: {
-            where: { userId }, // current user-এর membership (থাকলে) দেখাবে
+            where: { userId },
             select: { joinedAt: true },
             take: 1,
             orderBy: { joinedAt: 'desc' },
@@ -435,7 +434,7 @@ exports.getMyCommunities = async (req, res) => {
       joinedAt: c.members?.[0]?.joinedAt ?? null,
       type: 'created',
       isCreator: true,
-      isMember: true, // তৈরি করার সময়ই আপনি member হয়েছিলেন (ডিফল্ট ফ্লো অনুযায়ী)
+      isMember: true, 
     }));
 
     return res.json({ items, total, skip, take });
