@@ -4,26 +4,40 @@ const prisma = new PrismaClient();
 const CREDIT = Number(process.env.REFERRAL_REWARD_POINTS || 50);
 const { addPointsDirect } = require('../utils/points'); 
 
+// referralController.js
+
 exports.rewardForSharing = async (req, res) => {
   try {
     const userId = req.authData.id;
 
+    const me = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true, referralCode: true, totalPoints: true },
+    });
 
-    const { finalPoints } = await addPointsDirect(userId, CREDIT, 'REFERRAL_SHARE', null, prisma);
+    if (!me) {
+      return res.status(404).json({ success: false, message: 'User not found' });
+    }
 
-  
-    const u = await prisma.user.findUnique({ where: { id: userId }, select: { totalPoints: true } });
+    // ❌ এখানে আর কোনো পয়েন্ট ক্রেডিট হবে না
+    // ✅ পয়েন্ট শুধু তখনই যখন কোনো নতুন user signup/verify complete করবে
 
     return res.json({
       success: true,
-      message: `+${finalPoints} points for sharing`,
-      data: { credited: finalPoints, totalPoints: u.totalPoints }
+      message: 'Invite link ready. You will earn points when your friend signs up using your link.',
+      data: {
+        totalPoints: me.totalPoints || 0,
+        referralCode: me.referralCode || null,
+      },
     });
   } catch (e) {
     console.error('rewardForSharing error:', e);
-    return res.status(500).json({ success: false, message: 'Failed to credit share reward' });
+    return res
+      .status(500)
+      .json({ success: false, message: 'Failed to prepare invite link' });
   }
 };
+
 
 
 exports.getInviteLink = async (req, res) => {

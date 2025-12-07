@@ -129,6 +129,11 @@ enum StoryStatus {
   SAVED
   VAULT
 }
+enum CarSaleStatus {
+  ACTIVE
+  SOLD
+  CANCELLED
+}
 
 model Story {
   id         Int             @id @default(autoincrement())
