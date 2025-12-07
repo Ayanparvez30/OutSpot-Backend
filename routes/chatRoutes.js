@@ -6,7 +6,7 @@ const { checkAuth } = require('../middlewares/authMiddleware');
 router.post('/chats/create', checkAuth, chatController.createPrivateChat);
 router.delete('/chats/delete/:chatId', checkAuth, chatController.deleteChat);
 router.delete('/chats/delete', checkAuth, chatController.deleteBulkChats);
-
+router.get('/chats/global-id', checkAuth, chatController.getGlobalChatId);
 router.get('/chats', checkAuth, chatController.getMyChats);
 router.get('/chats/unread', checkAuth, chatController.getUnreadChats);
 router.get('/chats/groupsOnly', checkAuth, chatController.getMyGroupChats);
@@ -63,7 +63,7 @@ router.put(
 // Add route for searching chats
 router.get('/chats/search', checkAuth, chatController.searchChats);
 
-router.get('/chats/global-id', checkAuth, chatController.getGlobalChatId);
+
 
 
 router.post('/chats/messages', checkAuth, chatController.sendTextMessage);
