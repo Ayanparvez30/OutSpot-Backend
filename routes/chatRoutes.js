@@ -63,5 +63,10 @@ router.put(
 // Add route for searching chats
 router.get('/chats/search', checkAuth, chatController.searchChats);
 
+router.get('/chats/global-id', checkAuth, chatController.getGlobalChatId);
+
+
+router.post('/chats/messages', checkAuth, chatController.sendTextMessage);
+
 module.exports = router;
 
