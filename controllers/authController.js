@@ -295,15 +295,31 @@ exports.signup = async (req, res) => {
             });
           }
 
-          if (inviter && inviter.id !== u.id) {
-            const already = await tx.referral.findFirst({ where: { inviteeId: u.id } });
-            if (!already) {
-              await tx.referral.create({
-                data: { inviterId: inviter.id, inviteeId: u.id, status: 'REWARDED', rewardedAt: new Date() }
-              });
-              await addPointsWithMultiplier(inviter.id, REFERRAL_REWARD_POINTS, 'REFERRAL_REWARD', u.id, tx);
-            }
-          }
+ 
+
+if (inviter && inviter.id !== u.id) {
+  const already = await tx.referral.findFirst({ where: { inviteeId: u.id } });
+  if (!already) {
+
+    await tx.referral.create({
+      data: {
+        inviterId: inviter.id,
+        inviteeId: u.id,
+        status: 'REWARDED',
+        rewardedAt: new Date(),
+      },
+    });
+
+    await addPointsDirect(
+      inviter.id,
+      REFERRAL_REWARD_POINTS,
+      'REFERRAL_REWARD',
+      u.id,
+      tx
+    );
+  }
+}
+
           return u;
         });
 
