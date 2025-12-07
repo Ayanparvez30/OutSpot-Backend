@@ -34,7 +34,157 @@ const firstAvatar = (minimeArr) =>
     ? (minimeArr[0]?.avatarUrl || null)
     : null;
 
-// -------------------- S3 uploader (v3) --------------------
+
+async function getOrCreateGlobalChat() {
+
+  let chat = await prisma.chat.findFirst({
+    where: {
+      isCommunity: true,
+      communityId: null,
+    },
+  });
+
+  if (!chat) {
+    chat = await prisma.chat.create({
+      data: {
+        name: 'Global Chat',
+        isGroup: true,
+        isCommunity: true,
+      },
+    });
+  }
+
+  return chat;
+}
+
+exports.getGlobalChatId = async (req, res) => {
+  const userId = req.authData.id;
+
+  try {
+
+    const chat = await getOrCreateGlobalChat();
+
+
+    let membership = await prisma.userOnChat.findFirst({
+      where: { userId, chatId: chat.id },
+    });
+
+
+    if (!membership) {
+      membership = await prisma.userOnChat.create({
+        data: {
+          userId,
+          chatId: chat.id,
+          role: 'MEMBER',
+          lastSeenMessageId: 0,
+        },
+      });
+    }
+
+    return res.json({
+      success: true,
+      chatId: chat.id,
+      name: chat.name || 'Global Chat',
+      isLocked: chat.isLocked,
+    });
+  } catch (error) {
+    console.error('getGlobalChatId error:', error);
+    return res.status(500).json({ success: false, message: 'Failed to load global chat' });
+  }
+};
+
+exports.sendTextMessage = async (req, res) => {
+  const userId = req.authData.id;
+  let { chatId, content } = req.body;
+
+  try {
+    chatId = parseInt(chatId, 10);
+    if (!chatId || !Number.isInteger(chatId)) {
+      return res.status(400).json({ message: 'Valid chatId is required' });
+    }
+
+    if (!content || !String(content).trim()) {
+      return res.status(400).json({ message: 'Message content is required' });
+    }
+    content = String(content).trim();
+
+
+    const chat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      include: {
+        users: { select: { userId: true } },
+      },
+    });
+
+    if (!chat) {
+      return res.status(404).json({ message: 'Chat not found' });
+    }
+
+    const isMember = chat.users.some((u) => u.userId === userId);
+    if (!isMember) {
+      return res.status(403).json({ message: 'You are not a member of this chat' });
+    }
+
+
+    const message = await prisma.message.create({
+      data: {
+        chatId,
+        senderId: userId,
+        content,
+        imageUrl: null,
+      },
+      include: {
+        sender: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            minime: {
+              select: { avatarUrl: true },
+              where: { isSaved: true },
+              orderBy: { updatedAt: 'desc' },
+              take: 1,
+            },
+          },
+        },
+      },
+    });
+
+   
+    const formatted = {
+      id: message.id,
+      content: message.content,
+      imageUrl: message.imageUrl,
+      createdAt: message.createdAt,
+      chatId: message.chatId,
+      sender: {
+        id: message.sender.id,
+        username: message.sender.username,
+        firstName: message.sender.firstName,
+        lastName: message.sender.lastName,
+        avatarUrl:
+          Array.isArray(message.sender.minime) && message.sender.minime.length
+            ? message.sender.minime[0].avatarUrl
+            : null,
+      },
+    };
+
+    // socket emit (optional)
+    try {
+      const io = require('../utils/socket').getIO();
+      io.to(`chat_${chatId}`).emit('newMessage', formatted);
+    } catch (socketErr) {
+      console.error('sendTextMessage socket error:', socketErr);
+    }
+
+    return res.json({ success: true, message: formatted });
+  } catch (error) {
+    console.error('sendTextMessage error:', error);
+    return res.status(500).json({ message: 'Failed to send message' });
+  }
+};
+
 async function uploadFileToS3(filePath, bucketName, fileName) {
   const fileStream = fs.createReadStream(filePath);
   const uploadParams = {
