@@ -34,22 +34,31 @@ const firstAvatar = (minimeArr) =>
     ? (minimeArr[0]?.avatarUrl || null)
     : null;
 
-
 async function getOrCreateGlobalChat() {
 
   let chat = await prisma.chat.findFirst({
     where: {
-      isCommunity: true,
+      name: 'Global Chat',
       communityId: null,
     },
   });
 
   if (!chat) {
+
     chat = await prisma.chat.create({
       data: {
         name: 'Global Chat',
-        isGroup: true,
-        isCommunity: true,
+        isGroup: false,
+        isCommunity: false,
+      },
+    });
+  } else if (chat.isGroup || chat.isCommunity) {
+
+    chat = await prisma.chat.update({
+      where: { id: chat.id },
+      data: {
+        isGroup: false,
+        isCommunity: false,
       },
     });
   }
