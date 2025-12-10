@@ -42,25 +42,30 @@ async function getOrCreateGlobalChat() {
   });
 
   if (!chat) {
+    // প্রথমবার তৈরি হলে — Global Chat কে আলাদা special chat হিসেবেই রাখছি
     chat = await prisma.chat.create({
       data: {
         name: 'Global Chat',
-        isGroup: true,          // ✅ group global
-        isCommunity: false,     // ✅ not community
+        isGroup: false,        // ✅ NOT a normal group
+        isCommunity: false,    // ✅ NOT a community chat
+        communityId: null,
       },
     });
   } else {
+    // আগের data যাই থাকুক, normalize করে নিই
     chat = await prisma.chat.update({
       where: { id: chat.id },
       data: {
-        isGroup: true,          // ✅ always group
-        isCommunity: false,     // ✅ never community
+        isGroup: false,        // ✅ force it to NOT be group
+        isCommunity: false,
+        communityId: null,
       },
     });
   }
 
   return chat;
 }
+
 
 exports.getGlobalChatId = async (req, res) => {
   const userId = req.authData.id;
@@ -123,12 +128,12 @@ exports.sendTextMessage = async (req, res) => {
       return res.status(404).json({ message: 'Chat not found' });
     }
 
-    // ✅ Check membership
+    // ✅ member কিনা check করি
     let isMember = chat.users.some((u) => u.userId === userId);
 
-    // ✅ Not member? যদি Global Chat হয়, auto-join করে দাও
+    // ✅ member না হলে: যদি Global Chat হয়, auto-join করাই
     if (!isMember) {
-      const globalChat = await getOrCreateGlobalChat();
+      const globalChat = await getOrCreateGlobalChat(); // সবসময় same row দেবে
 
       if (chatId === globalChat.id) {
         await prisma.userOnChat.create({
@@ -140,14 +145,14 @@ exports.sendTextMessage = async (req, res) => {
           },
         });
 
-        // লোকাল ভ্যারিয়েবলেও reflect করলাম (future logic safe রাখতে)
         isMember = true;
       } else {
+        // অন্য কোনো chat হলে শুধু block
         return res.status(403).json({ message: 'You are not a member of this chat' });
       }
     }
 
-    // ✅ এখন message create করা safe
+    // ✅ এখন safe ভাবে message create
     const message = await prisma.message.create({
       data: {
         chatId,
@@ -205,6 +210,7 @@ exports.sendTextMessage = async (req, res) => {
     return res.status(500).json({ message: 'Failed to send message' });
   }
 };
+
 
 
 async function uploadFileToS3(filePath, bucketName, fileName) {
