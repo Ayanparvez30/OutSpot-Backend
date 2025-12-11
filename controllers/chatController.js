@@ -617,14 +617,20 @@ exports.deleteBulkChats = async (req, res) => {
     return res.status(500).json({ message: 'Internal server error' });
   }
 };
-
 // Get my chats (includes participants + weekly points via ledger)
 exports.getMyChats = async (req, res) => {
   const currentUserId = req.authData.id;
 
   try {
+    // 👇 Global Chat row ta ber kore nilam
+    const globalChat = await getOrCreateGlobalChat();
+
     const chats = await prisma.chat.findMany({
-      where: { users: { some: { userId: currentUserId } } },
+      where: { 
+        users: { some: { userId: currentUserId } },
+        // 👇 Ei line diye Global Chat exclude
+        id: { not: globalChat.id },
+      },
       include: {
         users: {
           include: {
@@ -663,13 +669,12 @@ exports.getMyChats = async (req, res) => {
       orderBy: { updatedAt: 'desc' },
     });
 
-    // ✅ Batch weekly points for all unique users across all chats
+    // নিচের enriched part আগের মতোই থাকবে ⬇
     const allUserIds = Array.from(
       new Set(chats.flatMap(c => c.users.map(u => u.userId)))
     );
     const weekPointsMap = await getWeeklyPointsForUsers(allUserIds);
 
-    // ✅ Get accurate unread counts for all chats
     const chatIds = chats.map(c => c.id);
     const unreadCountsMap = await getBulkUnreadCounts(currentUserId, chatIds);
 
@@ -685,18 +690,13 @@ exports.getMyChats = async (req, res) => {
           totalPoints: u.totalPoints || 0,
           thisWeekPoints: weekPointsMap.get(u.id) || 0,
           profileUrl: `/api/users/${u.id}/profile`,
-          role: userOnChat.role,       // useful in UI
+          role: userOnChat.role,
           joinedAt: userOnChat.joinedAt
         };
       });
 
-      // ✅ Get accurate unread count
       const unreadCount = unreadCountsMap.get(chat.id) || 0;
-
-      // ✅ Get latest message for preview with proper readBy information
-      const latestMessage = chat.messages.length > 0 
-        ? chat.messages[0] // Already ordered desc, so first is latest
-        : null;
+      const latestMessage = chat.messages.length > 0 ? chat.messages[0] : null;
 
       return { 
         ...chat, 
@@ -708,7 +708,6 @@ exports.getMyChats = async (req, res) => {
           imageUrl: latestMessage.imageUrl,
           createdAt: latestMessage.createdAt,
           senderId: latestMessage.senderId,
-          // ✅ Add readBy array based on lastSeenMessageId
           readBy: chat.users
             .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
             .map(u => u.userId)
@@ -724,7 +723,6 @@ exports.getMyChats = async (req, res) => {
   }
 };
 
-// Get messages (with read receipts + sender avatar)
 exports.getMessages = async (req, res) => {
   const { chatId } = req.params;
 
@@ -1415,7 +1413,7 @@ exports.getUnreadChats = async (req, res) => {
 
   try {
     const chats = await prisma.chat.findMany({
-      where: { users: { some: { userId: currentUserId } } },
+      where: { users: { some: { userId: currentUserId } }       ,  id: { not: globalChat.id },  },
       include: {
         users: {
           include: {
