@@ -42,21 +42,19 @@ async function getOrCreateGlobalChat() {
   });
 
   if (!chat) {
-    // প্রথমবার তৈরি হলে — Global Chat কে আলাদা special chat হিসেবেই রাখছি
     chat = await prisma.chat.create({
       data: {
         name: 'Global Chat',
-        isGroup: false,        // ✅ NOT a normal group
-        isCommunity: false,    // ✅ NOT a community chat
+        isGroup: false,        // একে normal group ধরছি না
+        isCommunity: false,
         communityId: null,
       },
     });
   } else {
-    // আগের data যাই থাকুক, normalize করে নিই
     chat = await prisma.chat.update({
       where: { id: chat.id },
       data: {
-        isGroup: false,        // ✅ force it to NOT be group
+        isGroup: false,
         isCommunity: false,
         communityId: null,
       },
@@ -263,7 +261,6 @@ exports.uploadChatImage = (req, res) => {
     }
   });
 };
-
 // Create (or reuse) a private chat; also supports group=false + one target
 exports.createPrivateChat = async (req, res) => {
   try {
@@ -277,27 +274,29 @@ exports.createPrivateChat = async (req, res) => {
     if (!isGroup && UserId.length === 1) {
       const targetUserId = Number(UserId[0]);
 
-      // ✅ Check if these two users are the same (prevent self-chat)
+      // ✅ self-chat block
       if (currentUserId === targetUserId) {
         return res.status(400).json({ message: 'Cannot create chat with yourself' });
       }
 
-      // ✅ Find existing private chat between exactly these two users
-      // Exclude community chats (isCommunity === true) so a community chat
-      // that happens to contain only these two users doesn't block creating
-      // a dedicated private chat.
+      // ✅ Global Chat কে exclude করে exact private chat খুঁজি
       const existingChats = await prisma.chat.findMany({
         where: {
           isGroup: false,
           isCommunity: false,
+          // 🚫 Global Chat বাদ
+          OR: [
+            { name: null },
+            { name: { not: 'Global Chat' } },
+          ],
           AND: [
             { users: { some: { userId: currentUserId } } },
-            { users: { some: { userId: targetUserId } } }
-          ]
+            { users: { some: { userId: targetUserId } } },
+          ],
         },
         include: { 
           users: { select: { userId: true } },
-          _count: { select: { users: true } }
+          _count: { select: { users: true } },
         },
       });
 
@@ -311,11 +310,9 @@ exports.createPrivateChat = async (req, res) => {
       if (exactMatch) {
         return res.json({ message: 'Private chat already exists', chatId: exactMatch.id });
       }
-
-      // NOTE: We intentionally do NOT short-circuit to an existing community chat here.
-      // Private chats should be created with their own chat IDs even if users share a community chat.
     }
 
+    // ✅ New private / group chat তৈরি করি (Global Chat ছাড়া)
     const chat = await prisma.chat.create({
       data: {
         isGroup: isGroup || false,
@@ -335,7 +332,7 @@ exports.createPrivateChat = async (req, res) => {
   }
 };
 
-// Create a group chat (with optional image upload via req.file)
+
 exports.createGroupChat = async (req, res) => {
   try {
     const currentUserId = req.authData.id;
@@ -839,7 +836,6 @@ exports.getMessagesPaginated = async (req, res) => {
     res.status(500).json({ message: 'Server error' });
   }
 };
-
 // Find chats that contain only the two specified users
 exports.getChatsByUsers = async (req, res) => {
   const user1Id = req.authData.id;
@@ -849,6 +845,11 @@ exports.getChatsByUsers = async (req, res) => {
   try {
     const chats = await prisma.chat.findMany({
       where: {
+        // 🚫 Global Chat বাদ
+        OR: [
+          { name: null },
+          { name: { not: 'Global Chat' } },
+        ],
         users: {
           every: { userId: { in: [user1Id, user2Id] } },
         },
@@ -870,7 +871,6 @@ exports.getChatsByUsers = async (req, res) => {
   }
 };
 
-// Add users to a group (admin only)
 exports.addUsersToGroup = async (req, res) => {
   const { chatId } = req.params;
   const { userIds } = req.body;
