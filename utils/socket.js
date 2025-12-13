@@ -1,7 +1,7 @@
 // utils/socket.js
 const { Server } = require('socket.io');
 const { PrismaClient } = require('@prisma/client');
-const admin = require('../firebaseAdmin'); // Import Firebase Admin
+const admin = require('../firebaseAdmin');
 const prisma = new PrismaClient();
 
 let ioInstance;
@@ -28,7 +28,6 @@ async function getFriendIds(userId) {
   return rows.map((r) => (r.requesterId === userId ? r.receiverId : r.requesterId));
 }
 
-// 50m threshold + history append
 async function smartPersistLocation(userId, latitude, longitude, threshold = 50) {
   const last = await prisma.location.findUnique({ where: { userId } });
   if (!last) {
@@ -50,7 +49,6 @@ async function smartPersistLocation(userId, latitude, longitude, threshold = 50)
   return { moved: true, dist };
 }
 
-// Helper function to get latest message ID in a chat
 async function getLatestMessageId(chatId) {
   const latestMessage = await prisma.message.findFirst({
     where: { chatId },
@@ -60,7 +58,6 @@ async function getLatestMessageId(chatId) {
   return latestMessage?.id || 0;
 }
 
-// Updated function to remove 'sent you a message' from the notification title
 async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstName, senderLastName, messageContent) {
   try {
     const chat = await prisma.chat.findUnique({
@@ -75,43 +72,31 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
 
     for (const userOnChat of chat.users) {
       const user = userOnChat.user;
-
       if (user.id === senderId) continue;
 
-      // Check if user is online
-      if (isUserOnline(user.id)) {
-        console.log(`Skipping notification for online user ${user.id} in chat ${chatId}`);
-        continue;
-      }
+      if (isUserOnline(user.id)) continue;
 
-      // Check if the chat is muted for the user
       const isMuted = userOnChat.isMuted;
-      if (isMuted) {
-        console.log(`Skipping notification for muted chat ${chatId} for user ${user.id}`);
-        continue;
-      }
+      if (isMuted) continue;
 
       if (user.fcmToken) {
         const notificationPayload = {
           token: user.fcmToken,
           notification: {
-            title: `${senderFirstName} ${senderLastName}`,
-            body: messageContent,
+            title: `${senderFirstName || ''} ${senderLastName || ''}`.trim() || 'New message',
+            body: messageContent || '',
           },
           data: {
             chatId: String(chatId),
-            senderName: `${senderFirstName} ${senderLastName}`,
+            senderName: `${senderFirstName || ''} ${senderLastName || ''}`.trim(),
           },
         };
 
         try {
           await admin.messaging().send(notificationPayload);
-          console.log(`Push notification sent to offline user ${user.id}`);
         } catch (error) {
           console.error(`Failed to send push notification to user ${user.id}:`, error);
         }
-      } else {
-        console.log(`User ${user.id} is offline but has no FCM token`);
       }
     }
   } catch (error) {
@@ -119,29 +104,54 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
   }
 }
 
-// Ensure isUserOnline is defined before sendPushNotificationToOfflineUsers
 function isUserOnline(userId) {
-  if (!ioInstance) {
-    console.error('Socket.IO instance not initialized');
-    return false;
-  }
+  if (!ioInstance) return false;
 
   const userRoom = ioInstance.sockets.adapter.rooms.get(`user:${userId}`);
-  if (!userRoom || userRoom.size === 0) {
-    console.log(`User ${userId} is not connected to any socket`);
-    return false;
-  }
+  if (!userRoom || userRoom.size === 0) return false;
 
   for (const socketId of userRoom) {
     const socket = ioInstance.sockets.sockets.get(socketId);
-    if (socket && socket.data && socket.data.userId === userId) {
-      console.log(`User ${userId} is online with socket ID ${socketId}`);
-      return true;
-    }
+    if (socket && socket.data && socket.data.userId === userId) return true;
   }
-
-  console.log(`User ${userId} has no valid socket connections`);
   return false;
+}
+
+/**
+ * ✅ Ensure Global Chat exists + ensure membership + join room
+ * IMPORTANT: Prisma compound unique is @@unique([userId, chatId]) => where key becomes userId_chatId
+ */
+async function ensureGlobalChatAndJoin(socket, userId) {
+  try {
+    let globalChat = await prisma.chat.findFirst({
+      where: { name: 'Global Chat', communityId: null },
+      select: { id: true },
+    });
+
+    if (!globalChat) {
+      globalChat = await prisma.chat.create({
+        data: {
+          name: 'Global Chat',
+          isGroup: false,
+          isCommunity: false,
+          communityId: null,
+        },
+        select: { id: true },
+      });
+    }
+
+    // ensure membership exists (no error even if already exists)
+    await prisma.userOnChat.upsert({
+      where: { userId_chatId: { userId, chatId: globalChat.id } },
+      update: {},
+      create: { userId, chatId: globalChat.id, role: 'MEMBER', lastSeenMessageId: 0 },
+    });
+
+    socket.join(`chat_${globalChat.id}`);
+    console.log(`🌍 User ${userId} joined global chat_${globalChat.id}`);
+  } catch (e) {
+    console.error('❌ ensureGlobalChatAndJoin failed:', e);
+  }
 }
 
 function initSocket(server) {
@@ -150,99 +160,57 @@ function initSocket(server) {
   io.on('connection', async (socket) => {
     console.log('✅ Socket connected:', socket.id);
 
-    const userId = parseInt(socket.handshake.query?.userId || 0, 10) || null;
-    if (userId) {
-      socket.data.userId = userId;
+    const rawUserId = socket.handshake.query?.userId;
+    const userId = rawUserId ? parseInt(rawUserId, 10) : null;
 
+    if (userId && Number.isInteger(userId)) {
+      socket.data.userId = userId;
       socket.join(`user:${userId}`);
 
-      const friendIds = await getFriendIds(userId);
-      friendIds.forEach((fid) => {
-        socket.join(`friendOf:${fid}`); // optional
-      });
+      try {
+        const friendIds = await getFriendIds(userId);
+        friendIds.forEach((fid) => socket.join(`friendOf:${fid}`));
+      } catch (e) {
+        console.error('❌ getFriendIds error:', e);
+      }
 
-      // 🚀 Auto-join all user's chats for better UX
+      // 🚀 Auto-join all user's chats
       try {
         const userChats = await prisma.chat.findMany({
           where: { users: { some: { userId } } },
           select: { id: true },
         });
-        
-        userChats.forEach(chat => {
-          socket.join(`chat_${chat.id}`);
-        });
-        
+
+        userChats.forEach(chat => socket.join(`chat_${chat.id}`));
         console.log(`🔵 User ${userId} auto-joined ${userChats.length} chats`);
       } catch (err) {
         console.error('❌ Error auto-joining chats:', err);
       }
 
+      // ✅ Always join global chat (fix realtime not coming)
+      await ensureGlobalChatAndJoin(socket, userId);
+
       socket.emit('socket:ready', { userId });
     }
 
-    // ✅ mark entire chat as read (chat-based approach) - DISABLED: Using REST API only
-    // socket.on('markChatAsRead', async ({ chatId }) => {
-    //   const userId = socket.data.userId;
-    //   if (!userId || !chatId) {
-    //     console.log('❌ markChatAsRead: No userId found in socket data. User might not be authenticated.', { 
-    //       socketId: socket.id, 
-    //       chatId, 
-    //       handshakeUserId: socket.handshake.query?.userId 
-    //     });
-    //     return;
-    //   }
-
-    //   console.log(`🔍 markChatAsRead called by User ${userId} for chat ${chatId}`);
-
-    //   try {
-    //     // Verify user is part of the chat
-    //     const userInChat = await prisma.userOnChat.findFirst({
-    //       where: { userId, chatId: parseInt(chatId, 10) }
-    //     });
-
-    //     if (!userInChat) {
-    //       console.log(`❌ User ${userId} not found in chat ${chatId}`);
-    //       return;
-    //     }
-
-    //     // Update lastReadAt to current timestamp for chat-based read receipt
-    //     const updated = await prisma.userOnChat.update({
-    //       where: { id: userInChat.id },
-    //       data: { 
-    //         lastSeenMessageId: await getLatestMessageId(parseInt(chatId, 10)),
-    //         // Add lastReadAt if you add it to schema later
-    //       }
-    //     });
-
-    //     console.log(`✅ User ${userId} marked chat ${chatId} as read`);
-
-    //     // Notify other users in the chat that this user has read the chat
-    //     socket.to(`chat_${chatId}`).emit('chatRead', {
-    //       chatId: parseInt(chatId, 10),
-    //       userId,
-    //       readAt: new Date().toISOString()
-    //     });
-
-    //   } catch (err) {
-    //     console.error('❌ markChatAsRead error:', err);
-    //     socket.emit('markChatAsReadError', { 
-    //       error: 'Failed to mark chat as read',
-    //       chatId
-    //     });
-    //   }
-    // });
-
-    // --------------- CHAT EVENTS (as you had) ---------------
+    // --------------- CHAT EVENTS ---------------
     socket.on('joinChat', (chatId) => {
-      socket.join(`chat_${chatId}`);
-      console.log(`🔵 User joined chat_${chatId}`);
+      const cid = parseInt(chatId, 10);
+      if (!cid || !Number.isInteger(cid)) return;
+
+      socket.join(`chat_${cid}`);
+      console.log(`🔵 User joined chat_${cid}`);
     });
 
     socket.on('sendMessage', async (data) => {
-      const { chatId, content, senderId, imageUrl } = data;
+      let { chatId, content, senderId, imageUrl } = data || {};
 
-      if (!chatId || (!content && !imageUrl) || !senderId) {
-        console.log('❌ Missing fields in sendMessage');
+      // ✅ normalize
+      chatId = parseInt(chatId, 10);
+      senderId = parseInt(senderId, 10);
+
+      if (!chatId || !Number.isInteger(chatId) || !senderId || !Number.isInteger(senderId) || (!content && !imageUrl)) {
+        console.log('❌ Missing/invalid fields in sendMessage', { chatId, senderId });
         return;
       }
 
@@ -253,17 +221,21 @@ function initSocket(server) {
         });
 
         if (!chat) {
-          console.log('❌ Chat not found');
           socket.emit('messageError', { error: 'Chat not found' });
           return;
         }
 
-        // Check if chat is locked and if user is admin
+        // ✅ ensure sender is a member (important esp for global)
+        const senderInChat = chat.users.find(u => u.userId === senderId);
+        if (!senderInChat) {
+          socket.emit('messageError', { error: 'You are not a member of this chat', chatId });
+          return;
+        }
+
+        // ✅ locked group check
         if (chat.isGroup && chat.isLocked) {
-          const senderInChat = chat.users.find(u => u.userId === senderId);
-          if (!senderInChat || senderInChat.role !== 'ADMIN') {
-            console.log('🔒 Chat is locked, only admins can send messages');
-            socket.emit('messageError', { 
+          if (senderInChat.role !== 'ADMIN') {
+            socket.emit('messageError', {
               error: 'This group chat is locked. Only admins can send messages.',
               chatId,
               isLocked: true
@@ -272,8 +244,8 @@ function initSocket(server) {
           }
         }
 
+        // ✅ block check (only meaningful for private chat; still safe)
         const recipient = chat.users.find((u) => u.userId !== senderId)?.user;
-
         if (recipient) {
           const isBlocked = await prisma.block.findFirst({
             where: {
@@ -284,32 +256,27 @@ function initSocket(server) {
             },
           });
           if (isBlocked) {
-            console.log('🚫 Message blocked');
             socket.emit('messageError', { error: 'Message blocked' });
             return;
           }
         }
 
         const message = await prisma.message.create({
-          data: { chatId, senderId, content, imageUrl },
+          data: { chatId, senderId, content: content || null, imageUrl: imageUrl || null },
           include: { sender: true },
         });
 
-        // ✅ Update chat's updatedAt timestamp
         await prisma.chat.update({
           where: { id: chatId },
           data: { updatedAt: new Date() },
         });
 
-        // ✅ Auto-mark chat as read for the sender (they just sent a message)
         await prisma.userOnChat.updateMany({
-          where: { 
-            userId: senderId, 
-            chatId: chatId 
-          },
+          where: { userId: senderId, chatId },
           data: { lastSeenMessageId: message.id }
         });
 
+        // ✅ IMPORTANT: emit only to the correct room
         io.to(`chat_${chatId}`).emit('newMessage', {
           id: message.id,
           content: message.content,
@@ -319,10 +286,9 @@ function initSocket(server) {
           createdAt: message.createdAt,
         });
 
-        // Send push notifications to offline users, including sender's first and last name
         const sender = await prisma.user.findUnique({ where: { id: senderId } });
         if (sender) {
-          sendPushNotificationToOfflineUsers(chatId, senderId, sender.firstName, sender.lastName, content);
+          sendPushNotificationToOfflineUsers(chatId, senderId, sender.firstName, sender.lastName, content || '');
         }
       } catch (error) {
         console.error('❌ Error sending message:', error);
@@ -331,15 +297,18 @@ function initSocket(server) {
     });
 
     socket.on('typing', ({ chatId, username }) => {
-      socket.to(`chat_${chatId}`).emit('typing', { username });
+      const cid = parseInt(chatId, 10);
+      if (!cid) return;
+      socket.to(`chat_${cid}`).emit('typing', { username });
     });
 
     socket.on('stopTyping', ({ chatId, username }) => {
-      socket.to(`chat_${chatId}`).emit('stopTyping', { username });
+      const cid = parseInt(chatId, 10);
+      if (!cid) return;
+      socket.to(`chat_${cid}`).emit('stopTyping', { username });
     });
 
-    // --------------- MAP / LOCATION EVENTS (new) ---------------
-    // client emits: 'location:update' { latitude, longitude }
+    // --------------- LOCATION EVENTS ---------------
     socket.on('location:update', async ({ latitude, longitude }) => {
       const uid = socket.data.userId;
       if (!uid || typeof latitude !== 'number' || typeof longitude !== 'number') return;
@@ -347,7 +316,6 @@ function initSocket(server) {
       const res = await smartPersistLocation(uid, latitude, longitude, 50);
       if (!res.moved) return;
 
-      // broadcast to your friends (who are listening in room friendOf:<you>)
       io.to(`friendOf:${uid}`).emit('location:friendUpdate', {
         userId: uid,
         latitude,
@@ -355,28 +323,23 @@ function initSocket(server) {
         updatedAt: Date.now(),
       });
     });
-    //added last, maybe not needed or must be needed
 
     socket.on('markMessageAsRead', async ({ chatId, userId, lastSeenMessageId }) => {
-      if (!chatId || !userId || !lastSeenMessageId) {
-        console.log('❌ Missing fields in markMessageAsRead');
-        return;
-      }
+      const cid = parseInt(chatId, 10);
+      const uid = parseInt(userId, 10);
+      const lastId = parseInt(lastSeenMessageId, 10);
+      if (!cid || !uid || !lastId) return;
 
       try {
-        // Update the lastSeenMessageId for the user in the chat
         await prisma.userOnChat.updateMany({
-          where: { userId, chatId },
-          data: { lastSeenMessageId },
+          where: { userId: uid, chatId: cid },
+          data: { lastSeenMessageId: lastId },
         });
 
-        console.log(`✅ User ${userId} marked messages up to ${lastSeenMessageId} as read in chat ${chatId}`);
-
-        // Notify other users in the chat
-        socket.to(`chat_${chatId}`).emit('messageRead', {
-          chatId,
-          userId,
-          lastSeenMessageId,
+        socket.to(`chat_${cid}`).emit('messageRead', {
+          chatId: cid,
+          userId: uid,
+          lastSeenMessageId: lastId,
         });
       } catch (error) {
         console.error('❌ Error in markMessageAsRead:', error);

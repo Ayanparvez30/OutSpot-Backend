@@ -1407,13 +1407,17 @@ exports.getChatReadStatus = async (req, res) => {
   }
 };
 
-// 🚀 NEW: Get unread chats only (excludes chats with unreadCount = 0)
 exports.getUnreadChats = async (req, res) => {
   const currentUserId = req.authData.id;
 
   try {
+    const globalChat = await getOrCreateGlobalChat(); // ✅ add this
+
     const chats = await prisma.chat.findMany({
-      where: { users: { some: { userId: currentUserId } }       ,  id: { not: globalChat.id },  },
+      where: { 
+        users: { some: { userId: currentUserId } },
+        id: { not: globalChat.id }, // ✅ Global exclude
+      },
       include: {
         users: {
           include: {
@@ -1437,22 +1441,14 @@ exports.getUnreadChats = async (req, res) => {
         messages: {
           orderBy: { createdAt: 'desc' },
           take: 1,
-          select: {
-            id: true,
-            content: true,
-            imageUrl: true,
-            createdAt: true,
-            senderId: true,
-          },
+          select: { id: true, content: true, imageUrl: true, createdAt: true, senderId: true },
         },
-        _count: {
-          select: { messages: true },
-        },
+        _count: { select: { messages: true } },
       },
       orderBy: { updatedAt: 'desc' },
     });
 
-    // ✅ Batch weekly points for all unique users across all chats
+ 
     const allUserIds = Array.from(
       new Set(chats.flatMap(c => c.users.map(u => u.userId)))
     );
