@@ -77,33 +77,58 @@ exports.getGlobalChatId = async (req, res) => {
 
     if (!membership) {
       await prisma.userOnChat.create({
-        data: {
-          userId,
-          chatId: chat.id,
-          role: 'MEMBER',
-          lastSeenMessageId: 0,
-        },
+        data: { userId, chatId: chat.id, role: 'MEMBER', lastSeenMessageId: 0 },
       });
     }
 
-    // ✅ COUNT all members
+    // ✅ member count
     const memberCount = await prisma.userOnChat.count({
       where: { chatId: chat.id },
     });
+
+    // ✅ latest message (preview)
+    const last = await prisma.message.findFirst({
+      where: { chatId: chat.id },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        content: true,
+        imageUrl: true,
+        createdAt: true,
+        senderId: true,
+        sender: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+          },
+        },
+      },
+    });
+
+    const latestMessage = last
+      ? {
+          id: last.id,
+          content: last.content,
+          imageUrl: last.imageUrl,
+          createdAt: last.createdAt,
+          senderId: last.senderId,
+          sender: last.sender,
+        }
+      : null;
 
     return res.json({
       success: true,
       chatId: chat.id,
       name: chat.name || 'Global Chat',
       isLocked: chat.isLocked,
-      memberCount, // 🔥 THIS is what frontend needs
+      memberCount,
+      latestMessage, // ✅ added
     });
   } catch (error) {
     console.error('getGlobalChatId error:', error);
-    return res.status(500).json({
-      success: false,
-      message: 'Failed to load global chat',
-    });
+    return res.status(500).json({ success: false, message: 'Failed to load global chat' });
   }
 };
 
