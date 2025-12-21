@@ -67,8 +67,9 @@ exports.signup = async (req, res) => {
     const hashedPassword = hashPassword(password);
     const authToken = randomKey(40);
 
-    // inviter
-    const refCode = normEmail(referralCode || req.query?.ref || '') || (referralCode || req.query?.ref || null); // keep original if not email
+    const refCodeRaw = (referralCode || req.query?.ref || '').toString().trim();
+const refCode = refCodeRaw ? refCodeRaw : null;
+
     const inviter = refCode
       ? await prisma.user.findUnique({ where: { referralCode: refCode } }).catch(() => null)
       : null;
