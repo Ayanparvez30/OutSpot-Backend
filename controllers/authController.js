@@ -66,15 +66,35 @@ exports.signup = async (req, res) => {
     const fullPhone = normPhone(phone, countryCode);
     const hashedPassword = hashPassword(password);
     const authToken = randomKey(40);
+// inviter (NEW: referralCode = inviter's username)
+const refRaw = (referralCode ?? req.query?.ref ?? '').toString().trim();
 
-    const refCodeRaw = (referralCode || req.query?.ref || '').toString().trim();
-const refCode = refCodeRaw ? refCodeRaw : null;
+let inviter = null;
+if (refRaw) {
+  // 1) username match (case-insensitive) + must be verified
+  inviter = await prisma.user.findFirst({
+    where: {
+      username: { equals: refRaw, mode: 'insensitive' },
+      isVerified: true,
+    },
+    select: { id: true, username: true, isVerified: true },
+  });
 
-    const inviter = refCode
-      ? await prisma.user.findUnique({ where: { referralCode: refCode } }).catch(() => null)
-      : null;
+  // 2) (optional backward compatibility) old referralCode links still work
+  if (!inviter) {
+    const legacy = await prisma.user
+      .findUnique({ where: { referralCode: refRaw }, select: { id: true, username: true, isVerified: true } })
+      .catch(() => null);
 
-    // ---------- 1) USERNAME EXISTS? ----------
+    if (legacy?.isVerified) inviter = legacy;
+  }
+
+  // 3) invalid referral username => block signup (as you requested)
+  if (!inviter) {
+    return response.response_with_code(res, 400, 'Invalid referral username.');
+  }
+}
+
     const usernameUser = await prisma.user.findUnique({ where: { username } });
     if (usernameUser) {
       if (usernameUser.isVerified) {
@@ -968,17 +988,16 @@ exports.updateFcmToken = async (req, res) => {
 
   res.json({ message: "Token updated" });
 };
-
 exports.getMyReferral = async (req, res) => {
   const userId = req.authData.id;
   const user = await prisma.user.findUnique({
     where: { id: userId },
-    select: { referralCode: true, username: true }
+    select: { username: true }
   });
 
   if (!user) return res.status(404).json({ error: 'User not found' });
 
-  const code = user.referralCode;
+  const code = user.username; 
   const deep = process.env.APP_DEEP_LINK ? `${process.env.APP_DEEP_LINK}?ref=${code}` : null;
   const web  = process.env.APP_SHARE_BASE ? `${process.env.APP_SHARE_BASE}?ref=${code}` : null;
 
@@ -988,4 +1007,3 @@ exports.getMyReferral = async (req, res) => {
     message: 'Share this code/link with friends to earn points!'
   });
 };
-
