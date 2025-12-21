@@ -10,6 +10,9 @@ require('dotenv').config();
 const nodemailer = require('nodemailer');
 const { addPointsWithMultiplier, addPointsDirect } = require('../utils/points');
 const REFERRAL_REWARD_POINTS = Number(process.env.REFERRAL_REWARD_POINTS || 50);
+function normUsername(u) {
+  return u ? String(u).trim().toLowerCase() : null;
+}
 
 // ---------- helpers ----------
 function normEmail(email) {
@@ -66,19 +69,19 @@ exports.signup = async (req, res) => {
     const fullPhone = normPhone(phone, countryCode);
     const hashedPassword = hashPassword(password);
     const authToken = randomKey(40);
-// inviter (NEW: referralCode = inviter's username)
-const refRaw = (referralCode ?? req.query?.ref ?? '').toString().trim();
+username = normUsername(username);
+const refRaw = normUsername(referralCode ?? req.query?.ref ?? '');
 
 let inviter = null;
 if (refRaw) {
-  // 1) username match (case-insensitive) + must be verified
-  inviter = await prisma.user.findFirst({
-    where: {
-      username: { equals: refRaw, mode: 'insensitive' },
-      isVerified: true,
-    },
-    select: { id: true, username: true, isVerified: true },
-  });
+inviter = await prisma.user.findFirst({
+  where: {
+    username: refRaw,     // ✅ no mode
+    isVerified: true,
+  },
+  select: { id: true, username: true, isVerified: true },
+});
+
 
   // 2) (optional backward compatibility) old referralCode links still work
   if (!inviter) {
