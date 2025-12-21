@@ -129,12 +129,21 @@ if (refRaw) {
               : {}),
           }
         });
+try {
+  await sendEmail(toEmail, 'Your OTP for Verification', `
+    <h1>Verification OTP</h1>
+    <p>Your OTP is: <strong>${otp}</strong></p>
+    <p>This OTP expires in 10 minutes.</p>
+  `);
+} catch (mailErr) {
+  console.error('sendEmail failed (resend OTP):', mailErr);
+  return response.response_with_code(
+    res,
+    500,
+    'OTP email could not be sent. Please check SMTP config and try again.'
+  );
+}
 
-        await sendEmail(toEmail, 'Your OTP for Verification', `
-          <h1>Verification OTP</h1>
-          <p>Your OTP is: <strong>${otp}</strong></p>
-          <p>This OTP expires in 10 minutes.</p>
-        `);
 
         return response.true_status(res, {
           isNewUser: false,
@@ -214,11 +223,21 @@ if (refRaw) {
           }
         });
 
-        await sendEmail(email, 'Your OTP for Email Verification', `
-          <h1>Email Verification</h1>
-          <p>Your OTP is: <strong>${otp}</strong></p>
-          <p>This OTP expires in 10 minutes.</p>
-        `);
+   try {
+  await sendEmail(email, 'Your OTP for Email Verification', `
+    <h1>Email Verification</h1>
+    <p>Your OTP is: <strong>${otp}</strong></p>
+    <p>This OTP expires in 10 minutes.</p>
+  `);
+} catch (mailErr) {
+  console.error('sendEmail failed (email exists resend):', mailErr);
+  return response.response_with_code(
+    res,
+    500,
+    'OTP email could not be sent. Please check SMTP config and try again.'
+  );
+}
+
 
         return response.true_status(res, {
           isNewUser: false,
@@ -431,11 +450,24 @@ if (inviter && inviter.id !== u.id) {
         return created;
       });
 
-      await sendEmail(email, 'Verify Your Email', `
-        <h1>Email Verification</h1>
-        <p>Your OTP is: <strong>${otp}</strong></p>
-        <p>This OTP will expire in 10 minutes.</p>
-      `);
+try {
+  await sendEmail(email, 'Verify Your Email', `
+    <h1>Email Verification</h1>
+    <p>Your OTP is: <strong>${otp}</strong></p>
+    <p>This OTP will expire in 10 minutes.</p>
+  `);
+} catch (mailErr) {
+  console.error('sendEmail failed (fresh signup OTP):', mailErr);
+
+  // OPTIONAL: user create rollback করতে চাইলে uncomment করুন
+  // await prisma.user.delete({ where: { id: user.id } });
+
+  return response.response_with_code(
+    res,
+    500,
+    'OTP email could not be sent. Please check SMTP config and try again.'
+  );
+}
 
       return response.true_status(res, {
         isNewUser: true,
@@ -996,10 +1028,11 @@ exports.getMyReferral = async (req, res) => {
   });
 
   if (!user) return res.status(404).json({ error: 'User not found' });
+const code = (user.username || '').trim();
+const ref = encodeURIComponent(code);
 
-  const code = user.username; 
-  const deep = process.env.APP_DEEP_LINK ? `${process.env.APP_DEEP_LINK}?ref=${code}` : null;
-  const web  = process.env.APP_SHARE_BASE ? `${process.env.APP_SHARE_BASE}?ref=${code}` : null;
+const deep = process.env.APP_DEEP_LINK ? `${process.env.APP_DEEP_LINK}?ref=${ref}` : null;
+const web  = process.env.APP_SHARE_BASE ? `${process.env.APP_SHARE_BASE}?ref=${ref}` : null;
 
   res.json({
     referralCode: code,
