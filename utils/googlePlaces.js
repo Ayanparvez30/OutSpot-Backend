@@ -1,37 +1,37 @@
 
 const GMAPS_BASE = 'https://maps.googleapis.com/maps/api/place';
+// utils/googlePlaces.js
 
 const fieldsForDetails = [
-  // core
   'place_id',
   'name',
   'formatted_address',
+  'vicinity',
   'geometry/location',
   'types',
-
-  // media + status
   'photos',
+
   'opening_hours/open_now',
   'opening_hours/weekday_text',
 
-  // ratings
   'rating',
   'user_ratings_total',
 
-  // ✅ restaurant fields
   'formatted_phone_number',
   'international_phone_number',
   'website',
   'url',
+
   'price_level',
+  'business_status',
 ].join(',');
 
-function photoUrlByRef(photoRef, maxwidth = 400) {
+function photoUrlByRef(photoRef, maxwidth = 800) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!photoRef || !key) return null;
-
-  return `${GMAPS_BASE}/photo?maxwidth=${maxwidth}&photoreference=${photoRef}&key=${key}`;
+  return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${maxwidth}&photoreference=${photoRef}&key=${key}`;
 }
+
 
 async function nearby({ lat, lng, radius = 2500, keyword, type }) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
