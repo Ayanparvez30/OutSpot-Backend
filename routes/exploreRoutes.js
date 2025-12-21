@@ -9,7 +9,8 @@ const {
 
   // ✅ Restaurants
   getRestaurantCategories,
-  getRestaurantsByCategory
+  getRestaurantsByCategory,
+  getTopTrendingWeekRestaurants
 } = require('../controllers/exploreController');
 
 // Footer Explore landing (category cards + "new" badges)
@@ -30,5 +31,10 @@ router.get('/restaurants/categories', checkAuth, getRestaurantCategories);
 
 // Category wise places
 router.get('/restaurants/category/:key/places', checkAuth, getRestaurantsByCategory);
+router.get(
+  '/restaurants/top-trending/week',
+  checkAuth,
+  getTopTrendingWeekRestaurants
+);
 
 module.exports = router;

@@ -9,6 +9,10 @@ const haversineMeters = (a, b) => {
   const A = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
   return 2 * R * Math.asin(Math.sqrt(A));
 };
+function buildPhotosArray(d, max = 8) {
+  const refs = (d?.photos || []).slice(0, max).map(p => p.photo_reference).filter(Boolean);
+  return refs.map(ref => photoUrlByRef(ref, 1200)).filter(Boolean);
+}
 
 // ---- de-dupe tuning (env overrideable) ----
 const NEARBY_WITH_PLACEID   = Number(process.env.EXPLORE_DUP_RADIUS_WITH_PLACEID || 0);   // 0 = skip proximity when placeId present
@@ -300,8 +304,6 @@ exports.getRestaurantCategories = async (req, res) => {
     return res.status(500).json({ success: false, error: 'Failed to load categories' });
   }
 };
-
-// GET /api/restaurants/category/:key/places?lat&lng&radius=2500
 exports.getRestaurantsByCategory = async (req, res) => {
   try {
     const { key } = req.params;
@@ -316,7 +318,6 @@ exports.getRestaurantsByCategory = async (req, res) => {
       return res.status(400).json({ success: false, error: 'lat/lng required' });
     }
 
-    // ✅ pull up to ~60 results (3 pages) inside radius
     const places = await nearbyAll({
       lat,
       lng,
@@ -326,30 +327,32 @@ exports.getRestaurantsByCategory = async (req, res) => {
       maxPages: 3,
     });
 
-    // ✅ details calls are expensive; enrich top N only
-    const DETAIL_LIMIT = Number(process.env.RESTAURANT_DETAILS_LIMIT || 15);
+    // ✅ IMPORTANT: এখানে details call বেশি হবে
+    // limit এর উপর details call নিয়ন্ত্রণ করবেন
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 10;
+
+    const top = places.slice(0, limit);
 
     const restaurants = await Promise.all(
-      places.map(async (p, idx) => {
+      top.map(async (p) => {
         const placeId = p.place_id;
+
+        // ✅ Full details for every item in list (আপনার চাওয়া অনুযায়ী)
         let d = null;
-        if (idx < DETAIL_LIMIT) {
-          try {
-            d = await details(placeId);
-          } catch (e) {
-            d = null;
-          }
+        try {
+          d = await details(placeId);
+        } catch (err) {
+          d = null;
         }
 
-        const photoRef =
-          p.photos?.[0]?.photo_reference ||
-          d?.photos?.[0]?.photo_reference ||
-          null;
+        const photos = buildPhotosArray(d, 8);        // ✅ multiple photos
+        const image =
+          photos[0] ||
+          photoUrlByRef(p.photos?.[0]?.photo_reference, 1200) ||
+          '';
 
-        const image = photoUrlByRef(photoRef, 800) || '';
-
-        const lat2 = p.geometry?.location?.lat ?? d?.geometry?.location?.lat;
-        const lng2 = p.geometry?.location?.lng ?? d?.geometry?.location?.lng;
+        const lat2 = p.geometry?.location?.lat ?? d?.geometry?.location?.lat ?? 0;
+        const lng2 = p.geometry?.location?.lng ?? d?.geometry?.location?.lng ?? 0;
 
         const openNow = d?.opening_hours?.open_now ?? p.opening_hours?.open_now;
         const status = openNowToStatus(openNow);
@@ -359,25 +362,29 @@ exports.getRestaurantsByCategory = async (req, res) => {
           name: d?.name || p.name || '',
           address: d?.formatted_address || p.vicinity || '',
           phone: d?.formatted_phone_number || d?.international_phone_number || '',
-          website: d?.website || d?.url || '',
-          lat: typeof lat2 === 'number' ? lat2 : 0,
-          lng: typeof lng2 === 'number' ? lng2 : 0,
+          website: d?.website || '',
+          googleMapsUrl: d?.url || '',
+          lat: Number(lat2),
+          lng: Number(lng2),
+
+          // ✅ images
           image,
+          photos,
+
           category: cat.title,
+          priceLevel: d?.price_level ?? null,
           priceRange: priceLevelToRange(d?.price_level) || '',
+          openNow: openNow ?? null,
           status,
+          weekdayText: d?.opening_hours?.weekday_text || [],
+
           rating: Number(d?.rating ?? p.rating ?? 0),
+          totalReviews: Number(d?.user_ratings_total ?? p.user_ratings_total ?? 0),
+          businessStatus: d?.business_status || null,
+          types: d?.types || p.types || [],
         };
       })
     );
-
-    // Sort: rating desc then distance asc
-    const here = { lat, lng };
-    restaurants.sort((a, b) => {
-      const dA = haversineMeters(here, { lat: a.lat, lng: a.lng });
-      const dB = haversineMeters(here, { lat: b.lat, lng: b.lng });
-      return (b.rating || 0) - (a.rating || 0) || dA - dB;
-    });
 
     return res.json({
       success: true,
@@ -388,5 +395,233 @@ exports.getRestaurantsByCategory = async (req, res) => {
   } catch (e) {
     console.error('getRestaurantsByCategory error', e);
     return res.status(500).json({ success: false, error: 'Failed to load restaurants' });
+  }
+};
+
+function startOfWeekMonday(d = new Date()) {
+  const date = new Date(d);
+  const day = date.getDay(); // 0=Sun,1=Mon...
+  const diff = day === 0 ? -6 : 1 - day; // Monday start
+  date.setDate(date.getDate() + diff);
+  date.setHours(0, 0, 0, 0);
+  return date;
+}
+
+async function getFriendIds(userId) {
+  const rows = await prisma.friendship.findMany({
+    where: {
+      status: 'ACCEPTED',
+      OR: [{ requesterId: userId }, { receiverId: userId }],
+    },
+    select: { requesterId: true, receiverId: true },
+  });
+
+  const ids = new Set();
+  for (const r of rows) {
+    ids.add(r.requesterId === userId ? r.receiverId : r.requesterId);
+  }
+  return [...ids];
+}
+
+async function getUserAvatar(userId) {
+  // Optional: latest saved minime avatar
+  const m = await prisma.minime.findFirst({
+    where: { userId, isSaved: true },
+    select: { avatarUrl: true, selfieUrl: true },
+    orderBy: { updatedAt: 'desc' },
+  });
+  return m?.avatarUrl || m?.selfieUrl || null;
+}
+
+exports.getTopTrendingWeekRestaurants = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 3000;
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 10;
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ success: false, error: 'lat/lng required' });
+    }
+
+    const since = startOfWeekMonday(new Date());
+
+const grouped = await prisma.locationPoint.groupBy({
+  by: ['placeId'],
+  where: {
+    createdAt: { gte: since },
+    placeId: { not: null },
+    latitude: { not: null },
+    longitude: { not: null },
+  },
+  _count: { placeId: true },  // ✅ visitCount
+  _sum: { points: true },     // ✅ pointsCollected
+  take: limit * 6,
+  orderBy: [
+    { _sum: { points: 'desc' } },
+    { _count: { placeId: 'desc' } },
+  ],
+});
+
+
+    if (!grouped.length) {
+      return res.json({
+        success: true,
+        title: 'Top Trending',
+        subtitle: 'Best of the week',
+        since,
+        radius,
+        restaurants: [],
+      });
+    }
+
+    const placeIds = grouped.map(g => g.placeId).filter(Boolean);
+
+    // ✅ uniqueUsers: placeId ভিত্তিতে distinct user গণনা
+    // Prisma distinct + count workaround:
+    const allWeekPoints = await prisma.locationPoint.findMany({
+      where: {
+        createdAt: { gte: since },
+        placeId: { in: placeIds },
+      },
+      select: { placeId: true, userId: true, latitude: true, longitude: true, placeName: true, createdAt: true },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    const uniqueUsersMap = new Map(); // placeId -> Set(userId)
+    const latestByPlace = new Map();  // placeId -> latest lp
+
+    for (const lp of allWeekPoints) {
+      if (!uniqueUsersMap.has(lp.placeId)) uniqueUsersMap.set(lp.placeId, new Set());
+      uniqueUsersMap.get(lp.placeId).add(lp.userId);
+
+      if (!latestByPlace.has(lp.placeId)) {
+        latestByPlace.set(lp.placeId, lp); // because sorted desc
+      }
+    }
+
+    // ✅ Friend list
+    const friendIds = await getFriendIds(userId);
+
+    // ✅ Friends who went where (distinct by placeId+userId)
+    let friendsByPlace = new Map(); // placeId -> Set(friendId)
+    if (friendIds.length) {
+      const friendVisits = await prisma.locationPoint.findMany({
+        where: {
+          createdAt: { gte: since },
+          placeId: { in: placeIds },
+          userId: { in: friendIds },
+        },
+        select: { placeId: true, userId: true },
+      });
+
+      friendsByPlace = new Map();
+      for (const v of friendVisits) {
+        if (!friendsByPlace.has(v.placeId)) friendsByPlace.set(v.placeId, new Set());
+        friendsByPlace.get(v.placeId).add(v.userId);
+      }
+    }
+
+    // ✅ Build output
+    const here = { lat, lng };
+    const out = [];
+
+    for (const g of grouped) {
+      const placeId = g.placeId;
+      const last = latestByPlace.get(placeId);
+      if (!last?.latitude || !last?.longitude) continue;
+
+      // radius filter (user position)
+      const dMeters = haversineMeters(here, { lat: last.latitude, lng: last.longitude });
+      if (dMeters > radius) continue;
+
+      // Google details for proper address/phone/website/photo
+      let d = null;
+      try { d = await details(placeId); } catch (e) { d = null; }
+
+      const photoRef = d?.photos?.[0]?.photo_reference || null;
+
+      const friendSet = friendsByPlace.get(placeId) || new Set();
+      const friendsCount = friendSet.size;
+
+      // Preview 3 friends
+      const previewIds = [...friendSet].slice(0, 3);
+      const previewUsers = previewIds.length
+        ? await prisma.user.findMany({
+            where: { id: { in: previewIds } },
+            select: { id: true, username: true, firstName: true, lastName: true },
+          })
+        : [];
+
+      const friendsPreview = [];
+      for (const u of previewUsers) {
+        friendsPreview.push({
+          id: u.id,
+          username: u.username,
+          name: `${u.firstName || ''} ${u.lastName || ''}`.trim(),
+          avatar: await getUserAvatar(u.id),
+        });
+      }
+const photos = buildPhotosArray(d, 8);
+const image = photos[0] || '';
+
+out.push({
+  id: String(placeId),
+  name: d?.name || last.placeName || '',
+  address: d?.formatted_address || '',
+  phone: d?.formatted_phone_number || d?.international_phone_number || '',
+  website: d?.website || '',
+  googleMapsUrl: d?.url || '',
+  lat: d?.geometry?.location?.lat ?? last.latitude,
+  lng: d?.geometry?.location?.lng ?? last.longitude,
+
+  image,
+  photos,
+
+  category: 'Trending',
+  priceLevel: d?.price_level ?? null,
+  priceRange: priceLevelToRange(d?.price_level) || '',
+  openNow: d?.opening_hours?.open_now ?? null,
+  status: openNowToStatus(d?.opening_hours?.open_now),
+  weekdayText: d?.opening_hours?.weekday_text || [],
+
+  rating: Number(d?.rating ?? 0),
+  totalReviews: Number(d?.user_ratings_total ?? 0),
+  businessStatus: d?.business_status || null,
+  types: d?.types || [],
+
+  visitCount: g._count?.placeId || 0,     
+  uniqueUsers: uniqueUsersMap.get(placeId)?.size || 0,
+  pointsCollected: g._sum?.points || 0,
+  distanceMeters: Math.round(dMeters),
+
+  friendsCount,
+  friendsPreview,
+});
+
+      if (out.length >= limit) break;
+    }
+
+    // ✅ Sort: points -> uniqueUsers -> visitCount -> distance
+    out.sort((a, b) =>
+      (b.pointsCollected || 0) - (a.pointsCollected || 0) ||
+      (b.uniqueUsers || 0) - (a.uniqueUsers || 0) ||
+      (b.visitCount || 0) - (a.visitCount || 0) ||
+      (a.distanceMeters || 0) - (b.distanceMeters || 0)
+    );
+
+    return res.json({
+      success: true,
+      title: 'Top Trending',
+      subtitle: 'Best of the week',
+      since,
+      radius,
+      restaurants: out.slice(0, limit),
+    });
+  } catch (e) {
+    console.error('getTopTrendingWeekRestaurants error', e);
+    return res.status(500).json({ success: false, error: 'Failed to load trending week' });
   }
 };
