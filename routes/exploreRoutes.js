@@ -5,7 +5,11 @@ const {
   getExploreHome,
   getCategoryPlaces,
   recordVisit,
-  getPlaceDetail
+  getPlaceDetail,
+
+  // ✅ Restaurants
+  getRestaurantCategories,
+  getRestaurantsByCategory
 } = require('../controllers/exploreController');
 
 // Footer Explore landing (category cards + "new" badges)
@@ -19,5 +23,12 @@ router.get('/explore/place/:placeId', checkAuth, getPlaceDetail);
 
 // Visit/Check-in → points award
 router.post('/explore/visit', checkAuth, recordVisit);
+
+// ===================== Restaurants =====================
+// Tabs list: Trending | Popular | Bars | Outdoors | Events
+router.get('/restaurants/categories', checkAuth, getRestaurantCategories);
+
+// Category wise places
+router.get('/restaurants/category/:key/places', checkAuth, getRestaurantsByCategory);
 
 module.exports = router;

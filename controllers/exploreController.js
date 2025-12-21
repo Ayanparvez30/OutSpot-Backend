@@ -1,27 +1,54 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { nearby, details, photoUrlByRef } = require('../utils/googlePlaces');
+const { nearby, nearbyAll, details, photoUrlByRef } = require('../utils/googlePlaces');
 const { addPointsWithMultiplier } = require('../utils/points');
+
 const toRad = d => (d * Math.PI) / 180;
 const haversineMeters = (a, b) => {
   const R = 6371000, dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
   const A = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
   return 2 * R * Math.asin(Math.sqrt(A));
 };
+
 // ---- de-dupe tuning (env overrideable) ----
 const NEARBY_WITH_PLACEID   = Number(process.env.EXPLORE_DUP_RADIUS_WITH_PLACEID || 0);   // 0 = skip proximity when placeId present
 const NEARBY_WITHOUT_PLACEID= Number(process.env.EXPLORE_DUP_RADIUS_METERS       || 15);  // fallback when no placeId
 const DUP_WINDOW_HOURS      = Number(process.env.EXPLORE_DUP_WINDOW_HOURS        || 12);  // 12h window
 
 const CATEGORIES = [
-  { key: 'rooftop-bars',      title: 'Rooftop Bars',      icon: '🍹', keyword: 'rooftop bar',                         type: 'bar',             points: 4 },
+  { key: 'rooftop-bars',      title: 'Rooftop Bars',      icon: '🍹', keyword: 'rooftop bar',                         type: 'bar',               points: 4 },
   { key: 'outdoor-activities',title: 'Outdoor Activities',icon: '🌳', keyword: 'park OR hiking OR outdoor activity',  type: 'tourist_attraction', points: 3 },
-  { key: 'venue-events',      title: 'Venue Events',      icon: '🎤', keyword: 'concert venue OR live music',         type: 'night_club',      points: 4 },
-  { key: 'popular-restaurants',title:'Popular Restaurants',icon:'🍽️', keyword: 'popular restaurant',                  type: 'restaurant',      points: 4 },
+  { key: 'venue-events',      title: 'Venue Events',      icon: '🎤', keyword: 'concert venue OR live music',         type: 'night_club',         points: 4 },
+  { key: 'popular-restaurants',title:'Popular Restaurants',icon:'🍽️', keyword: 'popular restaurant',                  type: 'restaurant',         points: 4 },
 ];
 
-const getCategory = key => CATEGORIES.find(c => c.key === key);
+// ===================== Restaurant Tabs (Home Restaurants) =====================
+// UI tabs: Trending | Popular | Bars | Outdoors | Events
+const RESTAURANT_CATEGORIES = [
+  { key: 'trending', title: 'Trending', icon: '🔥', type: 'restaurant', keyword: 'popular restaurants' },
+  { key: 'popular',  title: 'Popular',  icon: '⭐', type: 'restaurant', keyword: 'top rated restaurants' },
+  { key: 'bars',     title: 'Bars',     icon: '🍻', type: 'bar',        keyword: 'bar' },
+  { key: 'outdoors', title: 'Outdoors', icon: '🌿', type: 'restaurant', keyword: 'outdoor seating restaurant' },
+  { key: 'events',   title: 'Events',   icon: '🎉', type: 'restaurant', keyword: 'live music restaurant' },
+];
 
+const getRestaurantCategory = (key) => RESTAURANT_CATEGORIES.find((c) => c.key === key);
+
+function priceLevelToRange(level) {
+  if (level === 0) return '$';
+  if (level === 1) return '$$';
+  if (level === 2) return '$$$';
+  if (level === 3) return '$$$$';
+  return '';
+}
+
+function openNowToStatus(openNow) {
+  if (openNow === true) return 'Open';
+  if (openNow === false) return 'Closed';
+  return 'Unknown';
+}
+
+const getCategory = key => CATEGORIES.find(c => c.key === key);
 
 async function computeNewCounts({ userId, lat, lng, radius = 2500 }) {
   const ttlMinutes = Number(
@@ -34,6 +61,7 @@ async function computeNewCounts({ userId, lat, lng, radius = 2500 }) {
     where: { userId }, select: { communityId: true }
   });
   const communityIds = myCommunities.map(c => c.communityId);
+
   const friendOR = [
     { friendRequestsSent:     { some: { receiverId: userId,  status: 'ACCEPTED' } } },
     { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } }
@@ -77,7 +105,6 @@ async function computeNewCounts({ userId, lat, lng, radius = 2500 }) {
   }
   return results;
 }
-
 
 exports.getExploreHome = async (req, res) => {
   try {
@@ -140,6 +167,7 @@ exports.getCategoryPlaces = async (req, res) => {
     res.status(500).json({ error: 'Failed to load places' });
   }
 };
+
 exports.recordVisit = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -230,7 +258,6 @@ exports.recordVisit = async (req, res) => {
   }
 };
 
-
 exports.getPlaceDetail = async (req, res) => {
   try {
     const { placeId } = req.params;
@@ -253,5 +280,113 @@ exports.getPlaceDetail = async (req, res) => {
   } catch (e) {
     console.error('place detail error', e);
     res.status(500).json({ error: 'Failed to load place detail' });
+  }
+};
+
+// ===================== Restaurant APIs =====================
+// GET /api/restaurants/categories
+exports.getRestaurantCategories = async (req, res) => {
+  try {
+    return res.json({
+      success: true,
+      categories: RESTAURANT_CATEGORIES.map((c) => ({
+        key: c.key,
+        title: c.title,
+        icon: c.icon,
+      })),
+    });
+  } catch (e) {
+    console.error('getRestaurantCategories error', e);
+    return res.status(500).json({ success: false, error: 'Failed to load categories' });
+  }
+};
+
+// GET /api/restaurants/category/:key/places?lat&lng&radius=2500
+exports.getRestaurantsByCategory = async (req, res) => {
+  try {
+    const { key } = req.params;
+    const cat = getRestaurantCategory(key);
+    if (!cat) return res.status(404).json({ success: false, error: 'Unknown category' });
+
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 2500;
+
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ success: false, error: 'lat/lng required' });
+    }
+
+    // ✅ pull up to ~60 results (3 pages) inside radius
+    const places = await nearbyAll({
+      lat,
+      lng,
+      radius,
+      keyword: cat.keyword,
+      type: cat.type,
+      maxPages: 3,
+    });
+
+    // ✅ details calls are expensive; enrich top N only
+    const DETAIL_LIMIT = Number(process.env.RESTAURANT_DETAILS_LIMIT || 15);
+
+    const restaurants = await Promise.all(
+      places.map(async (p, idx) => {
+        const placeId = p.place_id;
+        let d = null;
+        if (idx < DETAIL_LIMIT) {
+          try {
+            d = await details(placeId);
+          } catch (e) {
+            d = null;
+          }
+        }
+
+        const photoRef =
+          p.photos?.[0]?.photo_reference ||
+          d?.photos?.[0]?.photo_reference ||
+          null;
+
+        const image = photoUrlByRef(photoRef, 800) || '';
+
+        const lat2 = p.geometry?.location?.lat ?? d?.geometry?.location?.lat;
+        const lng2 = p.geometry?.location?.lng ?? d?.geometry?.location?.lng;
+
+        const openNow = d?.opening_hours?.open_now ?? p.opening_hours?.open_now;
+        const status = openNowToStatus(openNow);
+
+        return {
+          id: String(placeId),
+          name: d?.name || p.name || '',
+          address: d?.formatted_address || p.vicinity || '',
+          phone: d?.formatted_phone_number || d?.international_phone_number || '',
+          website: d?.website || d?.url || '',
+          lat: typeof lat2 === 'number' ? lat2 : 0,
+          lng: typeof lng2 === 'number' ? lng2 : 0,
+          image,
+          category: cat.title,
+          priceRange: priceLevelToRange(d?.price_level) || '',
+          status,
+          rating: Number(d?.rating ?? p.rating ?? 0),
+        };
+      })
+    );
+
+    // Sort: rating desc then distance asc
+    const here = { lat, lng };
+    restaurants.sort((a, b) => {
+      const dA = haversineMeters(here, { lat: a.lat, lng: a.lng });
+      const dB = haversineMeters(here, { lat: b.lat, lng: b.lng });
+      return (b.rating || 0) - (a.rating || 0) || dA - dB;
+    });
+
+    return res.json({
+      success: true,
+      category: { key: cat.key, title: cat.title },
+      radius,
+      restaurants,
+    });
+  } catch (e) {
+    console.error('getRestaurantsByCategory error', e);
+    return res.status(500).json({ success: false, error: 'Failed to load restaurants' });
   }
 };
