@@ -17,6 +17,10 @@ function haversine(a, b) {
     Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(A));
 }
+const firstAvatar = (minimeArr) =>
+  Array.isArray(minimeArr) && minimeArr.length > 0
+    ? (minimeArr[0]?.avatarUrl || null)
+    : null;
 
 async function getFriendIds(userId) {
   const rows = await prisma.friendship.findMany({
@@ -261,10 +265,26 @@ function initSocket(server) {
           }
         }
 
-        const message = await prisma.message.create({
-          data: { chatId, senderId, content: content || null, imageUrl: imageUrl || null },
-          include: { sender: true },
-        });
+const message = await prisma.message.create({
+  data: { chatId, senderId, content: content || null, imageUrl: imageUrl || null },
+  include: {
+    sender: {
+      select: {
+        id: true,
+        username: true,
+        firstName: true,
+        lastName: true,
+        minime: {
+          select: { avatarUrl: true },
+          where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' },
+          take: 1,
+        },
+      },
+    },
+  },
+});
+
 
         await prisma.chat.update({
           where: { id: chatId },
@@ -276,15 +296,21 @@ function initSocket(server) {
           data: { lastSeenMessageId: message.id }
         });
 
-        // ✅ IMPORTANT: emit only to the correct room
         io.to(`chat_${chatId}`).emit('newMessage', {
-          id: message.id,
-          content: message.content,
-          imageUrl: message.imageUrl,
-          sender: { id: message.sender.id, username: message.sender.username },
-          chatId: message.chatId,
-          createdAt: message.createdAt,
-        });
+  id: message.id,
+  content: message.content,
+  imageUrl: message.imageUrl,
+  sender: {
+    id: message.sender.id,
+    username: message.sender.username,
+    firstName: message.sender.firstName,
+    lastName: message.sender.lastName,
+    avatarUrl: firstAvatar(message.sender.minime),
+  },
+  chatId: message.chatId,
+  createdAt: message.createdAt,
+});
+
 
         const sender = await prisma.user.findUnique({ where: { id: senderId } });
         if (sender) {
