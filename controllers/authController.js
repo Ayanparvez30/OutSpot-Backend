@@ -116,7 +116,14 @@ inviter = await prisma.user.findFirst({
         const toEmail = email || usernameUser.email;
         const otp = generateOTP();
         const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-
+// ✅ prevent assigning a phone that belongs to another user
+const nextPhone = fullPhone || usernameUser.phone || null;
+if (nextPhone) {
+  const phoneOwner = await prisma.user.findUnique({ where: { phone: nextPhone } });
+  if (phoneOwner && phoneOwner.id !== usernameUser.id) {
+    return response.response_with_code(res, 409, 'Phone number already used by another account.');
+  }
+}
         await prisma.user.update({
           where: { username },
           data: {
@@ -162,6 +169,12 @@ try {
 
       // B) no email, but phone present → keep pending for Firebase verify
       if (fullPhone) {
+        // ✅ prevent assigning a phone that belongs to another user
+const phoneOwner = await prisma.user.findUnique({ where: { phone: fullPhone } });
+if (phoneOwner && phoneOwner.id !== usernameUser.id) {
+  return response.response_with_code(res, 409, 'Phone number already used by another account.');
+}
+
         const pending = await prisma.user.update({
           where: { username },
           data: {
