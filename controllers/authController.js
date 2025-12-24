@@ -13,6 +13,19 @@ const REFERRAL_REWARD_POINTS = Number(process.env.REFERRAL_REWARD_POINTS || 50);
 function normUsername(u) {
   return u ? String(u).trim().toLowerCase() : null;
 }
+const jwt = require('jsonwebtoken');
+function signPendingSignup(payload) {
+  const secret = process.env.PENDING_SIGNUP_JWT_SECRET;
+  const ttlMin = Number(process.env.PENDING_SIGNUP_TTL_MIN || 10);
+  if (!secret) throw new Error('Missing PENDING_SIGNUP_JWT_SECRET');
+  return jwt.sign(payload, secret, { expiresIn: `${ttlMin}m` });
+}
+
+function verifyPendingSignup(token) {
+  const secret = process.env.PENDING_SIGNUP_JWT_SECRET;
+  if (!secret) throw new Error('Missing PENDING_SIGNUP_JWT_SECRET');
+  return jwt.verify(token, secret);
+}
 
 // ---------- helpers ----------
 function normEmail(email) {
@@ -167,41 +180,34 @@ try {
         }, 'Verification pending. We sent a new OTP to your email.');
       }
 
-      // B) no email, but phone present → keep pending for Firebase verify
-      if (fullPhone) {
-        // ✅ prevent assigning a phone that belongs to another user
-const phoneOwner = await prisma.user.findUnique({ where: { phone: fullPhone } });
-if (phoneOwner && phoneOwner.id !== usernameUser.id) {
-  return response.response_with_code(res, 409, 'Phone number already used by another account.');
+   // B) no email, but phone present → DO NOT write to DB. return pendingSignupToken
+if (fullPhone) {
+  // ✅ prevent assigning a phone that belongs to another user
+  const phoneOwner = await prisma.user.findUnique({ where: { phone: fullPhone } });
+  if (phoneOwner && phoneOwner.id !== usernameUser.id) {
+    return response.response_with_code(res, 409, 'Phone number already used by another account.');
+  }
+
+  const pendingSignupToken = signPendingSignup({
+    phone: fullPhone,
+    username: usernameUser.username,          // existing username
+    password: hashedPassword,                 // hashed
+    referredById: usernameUser.referredById || (inviter ? inviter.id : null),
+  });
+
+  return response.true_status(res, {
+    isNewUser: false,
+    pendingSignupToken,
+    user: {
+      id: usernameUser.id,                    // already exists in DB
+      username: usernameUser.username,
+      phone: fullPhone,
+      email: usernameUser.email || null,
+      isVerified: false
+    }
+  }, 'Phone signup pending. Verify with Firebase in /verify-otp.');
 }
 
-        const pending = await prisma.user.update({
-          where: { username },
-          data: {
-            email: usernameUser.email || null,
-            phone: fullPhone,
-            password: hashedPassword,
-            isVerified: false,
-            otp: null,
-            otpExpiresAt: null,
-            authorization: null,
-            ...(inviter && inviter.id !== usernameUser.id && !usernameUser.referredById
-              ? { referredById: inviter.id }
-              : {}),
-          }
-        });
-
-        return response.true_status(res, {
-          isNewUser: false,
-          user: {
-            id: pending.id,
-            username: pending.username,
-            email: pending.email || null,
-            phone: pending.phone || null,
-            isVerified: false
-          }
-        }, 'Phone signup pending. Verify with Firebase in /verify-otp.');
-      }
 
       // C) neither email nor phone supplied
       return response.response_with_code(
@@ -272,34 +278,25 @@ if (phoneOwner && phoneOwner.id !== usernameUser.id) {
         if (username && phoneUser.username && phoneUser.username !== username) {
           return response.response_with_code(res, 409, 'Phone number belongs to a different user.');
         }
+// Phone exists but not verified → DO NOT update DB. return pendingSignupToken
+const pendingSignupToken = signPendingSignup({
+  phone: fullPhone,
+  username: phoneUser.username,
+  password: hashedPassword,
+  referredById: phoneUser.referredById || (inviter ? inviter.id : null),
+});
 
-        // keep pending; verify later with Firebase
-        const pending = await prisma.user.update({
-          where: { phone: fullPhone },
-          data: {
-            email: email || phoneUser.email || null,
-            username: username || phoneUser.username,
-            password: hashedPassword,
-            isVerified: false,
-            otp: null,
-            otpExpiresAt: null,
-            authorization: null,
-            ...(inviter && inviter.id !== phoneUser.id && !phoneUser.referredById
-              ? { referredById: inviter.id }
-              : {}),
-          }
-        });
-
-        return response.true_status(res, {
-          isNewUser: false,
-          user: {
-            id: pending.id,
-            phone: pending.phone,
-            username: pending.username,
-            email: pending.email || null,
-            isVerified: false
-          }
-        }, 'Phone signup pending. Verify with Firebase in /verify-otp.');
+return response.true_status(res, {
+  isNewUser: false,
+  pendingSignupToken,
+  user: {
+    id: phoneUser.id,
+    phone: phoneUser.phone,
+    username: phoneUser.username,
+    email: phoneUser.email || null,
+    isVerified: false
+  }
+}, 'Phone signup pending. Verify with Firebase in /verify-otp.');
       }
     }
 
@@ -397,44 +394,47 @@ if (inviter && inviter.id !== u.id) {
         // fall through to pending
       }
     }
-
-    // 4.b) Fresh create — phone pending (no email)
-    if (fullPhone && !email) {
-      const created = await prisma.$transaction(async (tx) => {
-        const u = await tx.user.create({
-          data: {
-            email: null,
-            phone: fullPhone,
-            username,
-            password: hashedPassword,
-            isVerified: false,
-            otp: null,
-            otpExpiresAt: null,
-            authorization: null,
-            referredById: inviter ? inviter.id : null,
-          }
-        });
-        if (inviter && inviter.id !== u.id) {
-          const already = await tx.referral.findFirst({ where: { inviteeId: u.id } });
-          if (!already) {
-            await tx.referral.create({
-              data: { inviterId: inviter.id, inviteeId: u.id, status: 'PENDING' }
-            });
-          }
-        }
-        return u;
-      });
-
-      return response.true_status(res, {
-        isNewUser: true,
-        user: {
-          id: created.id,
-          phone: created.phone,
-          username: created.username,
-          isVerified: false
-        }
-      }, 'Phone signup pending. Verify with Firebase in /verify-otp.');
+// 4.b) Phone signup pending (NO DB SAVE until verified)
+if (fullPhone && !email) {
+  // uniqueness checks (same behavior)
+  const usernameUser = await prisma.user.findUnique({ where: { username } });
+  if (usernameUser) {
+    if (usernameUser.isVerified) {
+      return response.response_with_code(res, 409, 'Username already exists.');
     }
+    return response.response_with_code(
+      res,
+      409,
+      'Username already pending. Verify phone to finish signup.'
+    );
+  }
+
+  const phoneUser = await prisma.user.findUnique({ where: { phone: fullPhone } });
+  if (phoneUser?.isVerified) {
+    return response.response_with_code(res, 409, 'Phone number already registered and verified.');
+  }
+  if (phoneUser && phoneUser.username && phoneUser.username !== username) {
+    return response.response_with_code(res, 409, 'Phone number belongs to a different user.');
+  }
+
+  // Create pending token (store minimal, safe fields)
+  const pendingSignupToken = signPendingSignup({
+    phone: fullPhone,
+    username,
+    password: hashedPassword,              // already hashed
+    referredById: inviter ? inviter.id : null
+  });
+
+  return response.true_status(res, {
+    isNewUser: true,
+    pendingSignupToken,
+    user: {
+      phone: fullPhone,
+      username,
+      isVerified: false
+    }
+  }, 'Phone signup pending. Verify with Firebase in /verify-otp.');
+}
 
     // 4.c) Fresh create — Email OTP
     if (email) {
@@ -507,63 +507,141 @@ try {
 // ---------- AUTH: VERIFY OTP ----------
 exports.verifyOtp = async (req, res) => {
   try {
-    let { email, phone, otp, firebaseIdToken, countryCode } = req.body;
+    let { email, phone, otp, firebaseIdToken, countryCode,pendingSignupToken } = req.body;
     email = normEmail(email);
     const fullPhone = normPhone(phone, countryCode);
+// A) Firebase verify path
+if (firebaseIdToken) {
+  try {
+    const decoded = await verifyFirebaseIdToken(firebaseIdToken);
+    const firebaseUid = decoded.uid;
+    const phoneFromToken = decoded.phone_number;
 
-    // A) Firebase verify path
-    if (firebaseIdToken) {
-      try {
-        const decoded = await verifyFirebaseIdToken(firebaseIdToken);
-        const firebaseUid = decoded.uid;
-        const phoneFromToken = decoded.phone_number;
+    // determine phone
+    const finalPhone = fullPhone || phoneFromToken;
 
-        const identifier =
-          email ? { email } :
-          (fullPhone ? { phone: fullPhone } :
-          (phoneFromToken ? { phone: phoneFromToken } : null));
+    // try find existing user by email/phone
+    const identifier =
+      email ? { email } :
+      (finalPhone ? { phone: finalPhone } : null);
 
-        if (!identifier) {
-          return response.response_with_code(res, 400, 'Email or phone required with Firebase token');
-        }
+    if (!identifier) {
+      return response.response_with_code(res, 400, 'Email or phone required with Firebase token');
+    }
 
-        const user = await prisma.user.findFirst({ where: identifier });
-        if (!user) return response.response_with_code(res, 404, 'User not found');
+    let user = await prisma.user.findFirst({ where: identifier });
 
-        const token = randomKey(40);
+    // ✅ If no user exists, create from pendingSignupToken
+    if (!user) {
+      if (!pendingSignupToken) {
+        return response.response_with_code(res, 400, 'pendingSignupToken required for new phone signup');
+      }
+let pending;
+try {
+  pending = verifyPendingSignup(pendingSignupToken);
+} catch (e) {
+  return response.response_with_code(res, 400, 'Invalid or expired pendingSignupToken');
+}
 
-        const updatedUser = await prisma.$transaction(async (tx) => {
-          const u = await tx.user.update({
-            where: { id: user.id },
-            data: {
-              isVerified: true,
-              otp: null,
-              otpExpiresAt: null,
-              authorization: token,
-              firebaseUid
-            }
-          });
+     
 
-          if (u.referredById) {
-            await applyReferralOnVerified({ inviterId: u.referredById, inviteeId: u.id }, tx);
+      // phone mismatch guard
+      if (pending.phone && finalPhone && pending.phone !== finalPhone) {
+        return response.response_with_code(res, 400, 'Phone mismatch for pending signup');
+      }
+
+      // username unique check again (race-safe)
+      const existingUsername = await prisma.user.findUnique({ where: { username: pending.username } });
+      if (existingUsername) {
+        return response.response_with_code(res, 409, 'Username already exists.');
+      }
+
+      // phone unique check again
+      const existingPhone = await prisma.user.findUnique({ where: { phone: finalPhone } });
+      if (existingPhone?.isVerified) {
+        return response.response_with_code(res, 409, 'Phone number already registered and verified.');
+      }
+
+      const token = randomKey(40);
+
+      const created = await prisma.$transaction(async (tx) => {
+        const u = await tx.user.create({
+          data: {
+            email: email || null,
+            phone: finalPhone,
+            username: pending.username,
+            password: pending.password,      // hashed
+            isVerified: true,
+            otp: null,
+            otpExpiresAt: null,
+            authorization: token,
+            firebaseUid,
+            referredById: pending.referredById || null,
           }
-          return u;
         });
 
-        return response.true_status(res, {
-          token,
-          user: {
-            id: updatedUser.id,
-            email: updatedUser.email || null,
-            phone: updatedUser.phone || null,
-            isVerified: true
+        // referral reward (only after verified)
+        if (u.referredById) {
+          const already = await tx.referral.findFirst({ where: { inviteeId: u.id } });
+          if (!already) {
+            await tx.referral.create({
+              data: { inviterId: u.referredById, inviteeId: u.id, status: 'REWARDED', rewardedAt: new Date() }
+            });
+            await addPointsDirect(u.referredById, REFERRAL_REWARD_POINTS, 'REFERRAL_REWARD', u.id, tx);
           }
-        }, 'Verified via Firebase phone auth');
-      } catch (err) {
-        console.error('Firebase verify failed:', err);
-        return response.response_with_code(res, 401, 'Invalid Firebase ID token');
-      }
+        }
+
+        return u;
+      });
+
+      return response.true_status(res, {
+        token: created.authorization,
+        user: {
+          id: created.id,
+          email: created.email || null,
+          phone: created.phone || null,
+          username: created.username,
+          isVerified: true
+        }
+      }, 'Verified via Firebase phone auth');
     }
+
+    // ✅ existing user path (your current logic)
+    const token = randomKey(40);
+
+    const updatedUser = await prisma.$transaction(async (tx) => {
+      const u = await tx.user.update({
+        where: { id: user.id },
+        data: {
+          isVerified: true,
+          otp: null,
+          otpExpiresAt: null,
+          authorization: token,
+          firebaseUid
+        }
+      });
+
+      if (u.referredById) {
+        await applyReferralOnVerified({ inviterId: u.referredById, inviteeId: u.id }, tx);
+      }
+      return u;
+    });
+
+    return response.true_status(res, {
+      token,
+      user: {
+        id: updatedUser.id,
+        email: updatedUser.email || null,
+        phone: updatedUser.phone || null,
+        isVerified: true
+      }
+    }, 'Verified via Firebase phone auth');
+
+  } catch (err) {
+    console.error('Firebase verify failed:', err);
+    return response.response_with_code(res, 401, 'Invalid Firebase ID token');
+  }
+}
 
     // B) Email OTP path
     if (!otp || (!email && !fullPhone)) {
