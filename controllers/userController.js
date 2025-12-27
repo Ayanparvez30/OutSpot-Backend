@@ -257,6 +257,7 @@ async function getUserProfile(req, res) {
     where: { id: profileUserId },
     select: {
       id: true,
+      email: true,
       username: true,
       firstName: true,
       lastName: true,
@@ -304,6 +305,7 @@ async function getProfile(req, res) {
       where: { id: userId },
       select: {
         id: true,
+        email: true,
         username: true,
         firstName: true,
         lastName: true,
