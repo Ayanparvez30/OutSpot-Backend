@@ -20,17 +20,20 @@ const NEARBY_WITHOUT_PLACEID= Number(process.env.EXPLORE_DUP_RADIUS_METERS      
 const DUP_WINDOW_HOURS      = Number(process.env.EXPLORE_DUP_WINDOW_HOURS        || 12);  // 12h window
 
 const CATEGORIES = [
-  { key: 'rooftop-bars',      title: 'Rooftop Bars',      icon: '🍹', keyword: 'rooftop bar',                         type: 'bar',               points: 4 },
-  { key: 'outdoor-activities',title: 'Outdoor Activities',icon: '🌳', keyword: 'park OR hiking OR outdoor activity',  type: 'tourist_attraction', points: 3 },
-  { key: 'venue-events',      title: 'Venue Events',      icon: '🎤', keyword: 'concert venue OR live music',         type: 'night_club',         points: 4 },
-  { key: 'popular-restaurants',title:'Popular Restaurants',icon:'🍽️', keyword: 'popular restaurant',                  type: 'restaurant',         points: 4 },
+  { key: 'rooftop-bars',       title: 'Rooftop Bars',       icon: '🍹', keyword: 'rooftop bar',                        type: 'bar',               points: 4, imageKey: 'rooftop-bars' },
+  { key: 'outdoor-activities', title: 'Outdoor Activities', icon: '🌳', keyword: 'park OR hiking OR outdoor activity', type: 'tourist_attraction', points: 3, imageKey: 'outdoor-activities' },
+  { key: 'venue-events',       title: 'Venue Events',       icon: '🎤', keyword: 'concert venue OR live music',        type: 'night_club',        points: 4, imageKey: 'venue-events' },
+  { key: 'popular-restaurants',title: 'Popular Restaurants',icon: '🍽️', keyword: 'popular restaurant',                 type: 'restaurant',        points: 4, imageKey: 'popular-restaurants' },
+  { key: 'cafes',              title: 'Cafes',              icon: '☕', keyword: 'cafe',                               type: 'cafe',              points: 3, imageKey: 'cafes' },
 ];
 
-// ===================== Restaurant Tabs (Home Restaurants) =====================
-// UI tabs: Trending | Popular | Bars | Outdoors | Events
+
 const RESTAURANT_CATEGORIES = [
   { key: 'trending', title: 'Trending', icon: '🔥', type: 'restaurant', keyword: 'popular restaurants' },
   { key: 'popular',  title: 'Popular',  icon: '⭐', type: 'restaurant', keyword: 'top rated restaurants' },
+
+  { key: 'cafes',    title: 'Cafes',    icon: '☕', type: 'cafe',       keyword: 'cafe' },
+
   { key: 'bars',     title: 'Bars',     icon: '🍻', type: 'bar',        keyword: 'bar' },
   { key: 'outdoors', title: 'Outdoors', icon: '🌿', type: 'restaurant', keyword: 'outdoor seating restaurant' },
   { key: 'events',   title: 'Events',   icon: '🎉', type: 'restaurant', keyword: 'live music restaurant' },
@@ -121,9 +124,15 @@ exports.getExploreHome = async (req, res) => {
     }
 
     const newCounts = await computeNewCounts({ userId, lat, lng, radius });
-    const cards = CATEGORIES.map(c => ({
-      key: c.key, title: c.title, icon: c.icon, newCount: newCounts[c.key] || 0, points: c.points
-    }));
+const cards = CATEGORIES.map(c => ({
+  key: c.key,
+  title: c.title,
+  icon: c.icon,
+  imageKey: c.imageKey || c.key,
+  newCount: newCounts[c.key] || 0,
+  points: c.points
+}));
+
 
     res.json({ categories: cards });
   } catch (e) {
