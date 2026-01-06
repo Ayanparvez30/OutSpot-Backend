@@ -542,7 +542,7 @@ async function deleteAccount(req, res) {
     return res.status(500).json({ error: 'Failed to delete account' });
   }
 }
-async function getUserStats(req, res) {
+async function getUserStatsByUserId (req, res){
   try {
     const viewerId = req.authData.id;
     const userId = parseInt(req.params.userId, 10);
@@ -551,6 +551,31 @@ async function getUserStats(req, res) {
       return res.status(400).json({ success: false, message: "Invalid userId" });
     }
 
+    // ✅ Allow self
+    const isSelf = viewerId === userId;
+
+    // ✅ Allow only friends (ACCEPTED) if not self
+    if (!isSelf) {
+      const friendship = await prisma.friendship.findFirst({
+        where: {
+          status: "ACCEPTED",
+          OR: [
+            { requesterId: viewerId, receiverId: userId },
+            { requesterId: userId, receiverId: viewerId },
+          ],
+        },
+        select: { id: true },
+      });
+
+      if (!friendship) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only view stats of your friends.",
+        });
+      }
+    }
+
+    // --------- Stats ----------
     const friendsCount = await prisma.friendship.count({
       where: {
         status: "ACCEPTED",
@@ -561,25 +586,24 @@ async function getUserStats(req, res) {
     const groupsCount = await prisma.communityMember.count({
       where: { userId },
     });
-const myCommunity = await prisma.communityMember.findFirst({
-  where: { userId },
-  orderBy: [{ joinedAt: "desc" }, { id: "desc" }],
-  include: {
-    community: { select: { id: true, name: true, imageUrl: true } },
-  },
-});
 
+    // ✅ latest joined community (joinedAt preferred; fallback by id)
+    const myCommunity = await prisma.communityMember.findFirst({
+      where: { userId },
+      orderBy: [{ joinedAt: "desc" }, { id: "desc" }],
+      include: {
+        community: { select: { id: true, name: true, imageUrl: true } },
+      },
+    });
 
-    // ✅ spots visited = unique placeId count (fallback: lat/lng distinct)
+    // ✅ spots visited: unique placeId else distinct lat/lng
     let spotsVisited = 0;
 
-    // A) placeId থাকলে (best)
     const placeIdCount = await prisma.locationPoint.count({
       where: { userId, placeId: { not: null } },
     });
 
     if (placeIdCount > 0) {
-      // distinct count workaround
       const uniquePlaces = await prisma.locationPoint.findMany({
         where: { userId, placeId: { not: null } },
         distinct: ["placeId"],
@@ -587,7 +611,6 @@ const myCommunity = await prisma.communityMember.findFirst({
       });
       spotsVisited = uniquePlaces.length;
     } else {
-      // B) fallback: distinct lat/lng
       const uniqueCoords = await prisma.locationPoint.findMany({
         where: { userId, latitude: { not: null }, longitude: { not: null } },
         distinct: ["latitude", "longitude"],
@@ -596,7 +619,6 @@ const myCommunity = await prisma.communityMember.findFirst({
       spotsVisited = uniqueCoords.length;
     }
 
-    // challenges completed (আপনার existing logic ঠিক আছে)
     const challengesCompleted = await prisma.pointsLedger.count({
       where: {
         userId,
@@ -616,11 +638,10 @@ const myCommunity = await prisma.communityMember.findFirst({
       },
     });
   } catch (err) {
-    console.error("getUserStats error:", err);
+    console.error("getUserStatsByUserId error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
-}
-
+};
 module.exports = {
 
   saveProfile,
@@ -640,7 +661,7 @@ module.exports = {
   getUserPoints,
   submitForPoints,
   getAchievementStatus,
-getUserStats,
+getUserStatsByUserId,
   // Account
   deleteAccount,
 };
