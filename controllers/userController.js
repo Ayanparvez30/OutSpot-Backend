@@ -567,7 +567,7 @@ async function getUserStats(req, res)  {
     // ---------- myCommunity (pick 1 community for display) ----------
     const myCommunity = await prisma.communityMember.findFirst({
       where: { userId },
-      orderBy: { createdAt: "desc" }, // latest joined
+      orderBy: { joinedAt: "desc" }, // latest joined
       include: {
         community: { select: { id: true, name: true, imageUrl: true } },
       },
