@@ -561,15 +561,14 @@ async function getUserStats(req, res) {
     const groupsCount = await prisma.communityMember.count({
       where: { userId },
     });
+const myCommunity = await prisma.communityMember.findFirst({
+  where: { userId },
+  orderBy: [{ joinedAt: "desc" }, { id: "desc" }],
+  include: {
+    community: { select: { id: true, name: true, imageUrl: true } },
+  },
+});
 
-    // NOTE: আপনার schema তে joinedAt না থাকলে createdAt ব্যবহার করুন
-    const myCommunity = await prisma.communityMember.findFirst({
-      where: { userId },
-      orderBy: { createdAt: "desc" }, // <-- joinedAt থাকলে joinedAt দিন
-      include: {
-        community: { select: { id: true, name: true, imageUrl: true } },
-      },
-    });
 
     // ✅ spots visited = unique placeId count (fallback: lat/lng distinct)
     let spotsVisited = 0;
