@@ -44,6 +44,8 @@ router.post('/minime/save-latest', checkAuth, userController.saveLatestMinime);
 router.get('/minime/current', checkAuth, userController.getCurrentMinime);
 router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
 router.post('/me/privacy', checkAuth, userController.updatePrivacy);
+// routes/userRoutes.js
+router.get("/users/:userId/stats", checkAuth, userController.getUserStats);
 
 router.get('/me/profile', checkAuth, userController.getProfile);
 
