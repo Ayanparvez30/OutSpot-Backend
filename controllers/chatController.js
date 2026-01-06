@@ -63,74 +63,93 @@ async function getOrCreateGlobalChat() {
 
   return chat;
 }
+function normCityLabel(city) {
+  const s = String(city || "").trim();
+  if (!s) return null;
+  // basic cleanup
+  return s.replace(/\s+/g, " ");
+}
 
+async function getOrCreateGlobalChatByCity(cityLabel) {
+  const label = normCityLabel(cityLabel) || "All USA";
+  const name = `Global Chat - ${label}`; // e.g. Global Chat - New York, NY
+
+  let chat = await prisma.chat.findFirst({
+    where: {
+      name,
+      communityId: null,
+      isCommunity: false,
+    },
+  });
+
+  if (!chat) {
+    chat = await prisma.chat.create({
+      data: {
+        name,
+        isGroup: false,
+        isCommunity: false,
+        communityId: null,
+      },
+    });
+  } else {
+    chat = await prisma.chat.update({
+      where: { id: chat.id },
+      data: {
+        isGroup: false,
+        isCommunity: false,
+        communityId: null,
+      },
+    });
+  }
+
+  return chat;
+}
 exports.getGlobalChatId = async (req, res) => {
   const userId = req.authData.id;
+  const city = req.query.city; // ✅ frontend will pass
 
   try {
-    const chat = await getOrCreateGlobalChat();
+    const chat = await getOrCreateGlobalChatByCity(city);
 
-    // ✅ ensure membership
     let membership = await prisma.userOnChat.findFirst({
       where: { userId, chatId: chat.id },
     });
 
     if (!membership) {
       await prisma.userOnChat.create({
-        data: { userId, chatId: chat.id, role: 'MEMBER', lastSeenMessageId: 0 },
+        data: { userId, chatId: chat.id, role: "MEMBER", lastSeenMessageId: 0 },
       });
     }
 
-    // ✅ member count
-    const memberCount = await prisma.userOnChat.count({
-      where: { chatId: chat.id },
-    });
+    const memberCount = await prisma.userOnChat.count({ where: { chatId: chat.id } });
 
-    // ✅ latest message (preview)
     const last = await prisma.message.findFirst({
       where: { chatId: chat.id },
-      orderBy: { createdAt: 'desc' },
+      orderBy: { createdAt: "desc" },
       select: {
-        id: true,
-        content: true,
-        imageUrl: true,
-        createdAt: true,
-        senderId: true,
-        sender: {
-          select: {
-            id: true,
-            username: true,
-            firstName: true,
-            lastName: true,
-          },
-        },
+        id: true, content: true, imageUrl: true, createdAt: true, senderId: true,
+        sender: { select: { id: true, username: true, firstName: true, lastName: true } },
       },
     });
-
-    const latestMessage = last
-      ? {
-          id: last.id,
-          content: last.content,
-          imageUrl: last.imageUrl,
-          createdAt: last.createdAt,
-          senderId: last.senderId,
-          sender: last.sender,
-        }
-      : null;
 
     return res.json({
       success: true,
       chatId: chat.id,
-      name: chat.name || 'Global Chat',
+      name: chat.name || "Global Chat",
+      city: city || "All USA",
       isLocked: chat.isLocked,
       memberCount,
-      latestMessage, // ✅ added
+      latestMessage: last ? {
+        id: last.id, content: last.content, imageUrl: last.imageUrl,
+        createdAt: last.createdAt, senderId: last.senderId, sender: last.sender,
+      } : null,
     });
   } catch (error) {
-    console.error('getGlobalChatId error:', error);
-    return res.status(500).json({ success: false, message: 'Failed to load global chat' });
+    console.error("getGlobalChatId error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
 
 exports.sendTextMessage = async (req, res) => {
   const userId = req.authData.id;
@@ -161,28 +180,24 @@ exports.sendTextMessage = async (req, res) => {
     // ✅ member কিনা check করি
     let isMember = chat.users.some((u) => u.userId === userId);
 
-    // ✅ member না হলে: যদি Global Chat হয়, auto-join করাই
-    if (!isMember) {
-      const globalChat = await getOrCreateGlobalChat(); // সবসময় same row দেবে
+    // ✅ member না হলে: যদি Global Chat (any city variant) হয়, auto-join করাই
+if (!isMember) {
+  const isGlobalVariant =
+    chat?.communityId === null &&
+    chat?.isCommunity === false &&
+    typeof chat?.name === "string" &&
+    chat.name.startsWith("Global Chat");
 
-      if (chatId === globalChat.id) {
-        await prisma.userOnChat.create({
-          data: {
-            userId,
-            chatId,
-            role: 'MEMBER',
-            lastSeenMessageId: 0,
-          },
-        });
+  if (isGlobalVariant) {
+    await prisma.userOnChat.create({
+      data: { userId, chatId, role: "MEMBER", lastSeenMessageId: 0 },
+    });
+    isMember = true;
+  } else {
+    return res.status(403).json({ message: "You are not a member of this chat" });
+  }
+}
 
-        isMember = true;
-      } else {
-        // অন্য কোনো chat হলে শুধু block
-        return res.status(403).json({ message: 'You are not a member of this chat' });
-      }
-    }
-
-    // ✅ এখন safe ভাবে message create
     const message = await prisma.message.create({
       data: {
         chatId,
@@ -313,19 +328,20 @@ exports.createPrivateChat = async (req, res) => {
 
       // ✅ Global Chat কে exclude করে exact private chat খুঁজি
       const existingChats = await prisma.chat.findMany({
-        where: {
-          isGroup: false,
-          isCommunity: false,
-          // 🚫 Global Chat বাদ
-          OR: [
-            { name: null },
-            { name: { not: 'Global Chat' } },
-          ],
-          AND: [
-            { users: { some: { userId: currentUserId } } },
-            { users: { some: { userId: targetUserId } } },
-          ],
-        },
+   where: {
+  isGroup: false,
+  isCommunity: false,
+
+  // exclude any global chat variants
+  NOT: { name: { startsWith: "Global Chat" } },
+
+  // exact two users condition
+  AND: [
+    { users: { some: { userId: currentUserId } } },
+    { users: { some: { userId: targetUserId } } },
+  ],
+},
+
         include: { 
           users: { select: { userId: true } },
           _count: { select: { users: true } },
