@@ -542,7 +542,7 @@ async function deleteAccount(req, res) {
     return res.status(500).json({ error: 'Failed to delete account' });
   }
 }
-async function getUserStats(req, res)  {
+async function getUserStats(req, res) {
   try {
     const viewerId = req.authData.id;
     const userId = parseInt(req.params.userId, 10);
@@ -551,7 +551,6 @@ async function getUserStats(req, res)  {
       return res.status(400).json({ success: false, message: "Invalid userId" });
     }
 
-    // ---------- friends count ----------
     const friendsCount = await prisma.friendship.count({
       where: {
         status: "ACCEPTED",
@@ -559,62 +558,52 @@ async function getUserStats(req, res)  {
       },
     });
 
-    // ---------- groups/community count ----------
     const groupsCount = await prisma.communityMember.count({
       where: { userId },
     });
 
-    // ---------- myCommunity (pick 1 community for display) ----------
+    // NOTE: আপনার schema তে joinedAt না থাকলে createdAt ব্যবহার করুন
     const myCommunity = await prisma.communityMember.findFirst({
       where: { userId },
-      orderBy: { joinedAt: "desc" }, // latest joined
+      orderBy: { createdAt: "desc" }, // <-- joinedAt থাকলে joinedAt দিন
       include: {
         community: { select: { id: true, name: true, imageUrl: true } },
       },
     });
 
-    // ---------- spots visited ----------
+    // ✅ spots visited = unique placeId count (fallback: lat/lng distinct)
     let spotsVisited = 0;
 
-    // Option A: যদি SpotVisit / CheckIn table থাকে
-    const hasSpotVisitModel = !!prisma.spotVisit;
-    if (hasSpotVisitModel) {
-      spotsVisited = await prisma.spotVisit.count({
-        where: { userId },
-      });
-    } else {
-      // Option B: Story table এ placeId থাকলে distinct count
-      // NOTE: আপনার schema অনুযায়ী placeId field নাম ভিন্ন হলে adjust করবেন
-      const distinctPlaces = await prisma.story.findMany({
-        where: {
-          userId,
-          status: "ACTIVE",
-          placeId: { not: null },
-        },
+    // A) placeId থাকলে (best)
+    const placeIdCount = await prisma.locationPoint.count({
+      where: { userId, placeId: { not: null } },
+    });
+
+    if (placeIdCount > 0) {
+      // distinct count workaround
+      const uniquePlaces = await prisma.locationPoint.findMany({
+        where: { userId, placeId: { not: null } },
         distinct: ["placeId"],
         select: { placeId: true },
       });
-      spotsVisited = distinctPlaces.length;
-    }
-
-    // ---------- challenges completed ----------
-    let challengesCompleted = 0;
-
-    // Option A: challengeCompletion table থাকলে
-    const hasChallengeCompletionModel = !!prisma.challengeCompletion;
-    if (hasChallengeCompletionModel) {
-      challengesCompleted = await prisma.challengeCompletion.count({
-        where: { userId, status: "COMPLETED" },
-      });
+      spotsVisited = uniquePlaces.length;
     } else {
-      // Option B: pointsLedger reason দিয়ে (আপনারা completion এ ledger add করলে)
-      challengesCompleted = await prisma.pointsLedger.count({
-        where: {
-          userId,
-          reason: { in: ["DAILY_CHALLENGE_COMPLETE", "WEEKLY_CHALLENGE_COMPLETE"] },
-        },
+      // B) fallback: distinct lat/lng
+      const uniqueCoords = await prisma.locationPoint.findMany({
+        where: { userId, latitude: { not: null }, longitude: { not: null } },
+        distinct: ["latitude", "longitude"],
+        select: { latitude: true, longitude: true },
       });
+      spotsVisited = uniqueCoords.length;
     }
+
+    // challenges completed (আপনার existing logic ঠিক আছে)
+    const challengesCompleted = await prisma.pointsLedger.count({
+      where: {
+        userId,
+        reason: { in: ["DAILY_CHALLENGE_COMPLETE", "WEEKLY_CHALLENGE_COMPLETE"] },
+      },
+    });
 
     return res.json({
       success: true,
@@ -631,7 +620,8 @@ async function getUserStats(req, res)  {
     console.error("getUserStats error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
-};
+}
+
 module.exports = {
 
   saveProfile,
