@@ -25,10 +25,16 @@ const s3Client = new S3Client({
     secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
   },
 });
+function isGlobalChatName(name) {
+  return typeof name === "string" && name.startsWith("Global Chat");
+}
+
+
+const NOT_GLOBAL_CHAT_WHERE = { NOT: { name: { startsWith: "Global Chat" } } };
 
 const upload = multer({ dest: 'uploads/' });
 
-// -------------------- helpers --------------------
+
 const firstAvatar = (minimeArr) =>
   Array.isArray(minimeArr) && minimeArr.length > 0
     ? (minimeArr[0]?.avatarUrl || null)
@@ -45,7 +51,7 @@ async function getOrCreateGlobalChat() {
     chat = await prisma.chat.create({
       data: {
         name: 'Global Chat',
-        isGroup: false,        // একে normal group ধরছি না
+        isGroup: false,    
         isCommunity: false,
         communityId: null,
       },
@@ -72,7 +78,7 @@ function normCityLabel(city) {
 
 async function getOrCreateGlobalChatByCity(cityLabel) {
   const label = normCityLabel(cityLabel) || "All USA";
-  const name = `Global Chat - ${label}`; // e.g. Global Chat - New York, NY
+  const name = `Global Chat - ${label}`;
 
   let chat = await prisma.chat.findFirst({
     where: {
@@ -106,7 +112,7 @@ async function getOrCreateGlobalChatByCity(cityLabel) {
 }
 exports.getGlobalChatId = async (req, res) => {
   const userId = req.authData.id;
-  const city = req.query.city; // ✅ frontend will pass
+  const city = req.query.city;
 
   try {
     const chat = await getOrCreateGlobalChatByCity(city);
@@ -158,45 +164,50 @@ exports.sendTextMessage = async (req, res) => {
   try {
     chatId = parseInt(chatId, 10);
     if (!chatId || !Number.isInteger(chatId)) {
-      return res.status(400).json({ message: 'Valid chatId is required' });
+      return res.status(400).json({ message: "Valid chatId is required" });
     }
 
     if (!content || !String(content).trim()) {
-      return res.status(400).json({ message: 'Message content is required' });
+      return res.status(400).json({ message: "Message content is required" });
     }
     content = String(content).trim();
 
+   
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
-      include: {
-        users: { select: { userId: true } },
-      },
+      include: { users: { select: { userId: true } } },
     });
 
     if (!chat) {
-      return res.status(404).json({ message: 'Chat not found' });
+      return res.status(404).json({ message: "Chat not found" });
     }
 
-    // ✅ member কিনা check করি
+    const isGlobalVariant =
+      chat?.communityId === null &&
+      chat?.isCommunity === false &&
+      isGlobalChatName(chat?.name);
+
     let isMember = chat.users.some((u) => u.userId === userId);
 
-    // ✅ member না হলে: যদি Global Chat (any city variant) হয়, auto-join করাই
-if (!isMember) {
-  const isGlobalVariant =
-    chat?.communityId === null &&
-    chat?.isCommunity === false &&
-    typeof chat?.name === "string" &&
-    chat.name.startsWith("Global Chat");
 
-  if (isGlobalVariant) {
-    await prisma.userOnChat.create({
-      data: { userId, chatId, role: "MEMBER", lastSeenMessageId: 0 },
-    });
-    isMember = true;
-  } else {
-    return res.status(403).json({ message: "You are not a member of this chat" });
-  }
-}
+    if (!isMember) {
+      if (isGlobalVariant) {
+
+        const existing = await prisma.userOnChat.findFirst({
+          where: { userId, chatId },
+        });
+
+        if (!existing) {
+          await prisma.userOnChat.create({
+            data: { userId, chatId, role: "MEMBER", lastSeenMessageId: 0 },
+          });
+        }
+        isMember = true;
+      } else {
+        return res.status(403).json({ message: "You are not a member of this chat" });
+      }
+    }
+
 
     const message = await prisma.message.create({
       data: {
@@ -215,7 +226,7 @@ if (!isMember) {
             minime: {
               select: { avatarUrl: true },
               where: { isSaved: true },
-              orderBy: { updatedAt: 'desc' },
+              orderBy: { updatedAt: "desc" },
               take: 1,
             },
           },
@@ -241,21 +252,62 @@ if (!isMember) {
       },
     };
 
-    // ✅ Socket emit
+
     try {
-      const io = require('../utils/socket').getIO();
-      io.to(`chat_${chatId}`).emit('newMessage', formatted);
+      const io = require("../utils/socket").getIO();
+      io.to(`chat_${chatId}`).emit("newMessage", formatted);
     } catch (socketErr) {
-      console.error('sendTextMessage socket error:', socketErr);
+      console.error("sendTextMessage socket error:", socketErr);
+    }
+
+
+    if (isGlobalVariant && chat.name !== "Global Chat - All USA") {
+      try {
+        const allUSAChat = await getOrCreateGlobalChatByCity("All USA");
+
+        const mem = await prisma.userOnChat.findFirst({
+          where: { userId, chatId: allUSAChat.id },
+        });
+        if (!mem) {
+          await prisma.userOnChat.create({
+            data: { userId, chatId: allUSAChat.id, role: "MEMBER", lastSeenMessageId: 0 },
+          });
+        }
+
+   
+        const mirror = await prisma.message.create({
+          data: {
+            chatId: allUSAChat.id,
+            senderId: userId,
+            content,
+            imageUrl: null,
+          },
+        });
+
+      
+        try {
+          const io = require("../utils/socket").getIO();
+          io.to(`chat_${allUSAChat.id}`).emit("newMessage", {
+            ...formatted,
+            id: mirror.id,
+            chatId: allUSAChat.id,
+            createdAt: mirror.createdAt,
+          });
+        } catch (e) {
+          console.error("mirror emit error:", e);
+        }
+      } catch (mirrorErr) {
+        console.error("mirror to All USA error:", mirrorErr);
+     
+      }
     }
 
     return res.json({ success: true, message: formatted });
   } catch (error) {
-    console.error('sendTextMessage error:', error);
-    return res.status(500).json({ message: 'Failed to send message' });
+    console.error("sendTextMessage error:", error);
+    return res.status(500).json({ message: "Failed to send message" });
   }
 };
-
 
 
 async function uploadFileToS3(filePath, bucketName, fileName) {
@@ -275,9 +327,7 @@ async function uploadFileToS3(filePath, bucketName, fileName) {
   }
 }
 
-// -------------------- Controllers --------------------
 
-// Upload a chat image (standalone)
 exports.uploadChatImage = (req, res) => {
   upload.single('image')(req, res, async (err) => {
     if (err) {
@@ -308,7 +358,7 @@ exports.uploadChatImage = (req, res) => {
     }
   });
 };
-// Create (or reuse) a private chat; also supports group=false + one target
+
 exports.createPrivateChat = async (req, res) => {
   try {
     const currentUserId = req.authData.id;
@@ -321,21 +371,18 @@ exports.createPrivateChat = async (req, res) => {
     if (!isGroup && UserId.length === 1) {
       const targetUserId = Number(UserId[0]);
 
-      // ✅ self-chat block
+  
       if (currentUserId === targetUserId) {
         return res.status(400).json({ message: 'Cannot create chat with yourself' });
       }
 
-      // ✅ Global Chat কে exclude করে exact private chat খুঁজি
       const existingChats = await prisma.chat.findMany({
    where: {
   isGroup: false,
   isCommunity: false,
 
-  // exclude any global chat variants
   NOT: { name: { startsWith: "Global Chat" } },
 
-  // exact two users condition
   AND: [
     { users: { some: { userId: currentUserId } } },
     { users: { some: { userId: targetUserId } } },
@@ -348,7 +395,7 @@ exports.createPrivateChat = async (req, res) => {
         },
       });
 
-      // Find chat with exactly 2 users (current user and target user)
+ 
       const exactMatch = existingChats.find(chat => 
         chat._count.users === 2 && 
         chat.users.some(u => u.userId === currentUserId) &&
@@ -360,7 +407,7 @@ exports.createPrivateChat = async (req, res) => {
       }
     }
 
-    // ✅ New private / group chat তৈরি করি (Global Chat ছাড়া)
+
     const chat = await prisma.chat.create({
       data: {
         isGroup: isGroup || false,
@@ -452,7 +499,7 @@ exports.createGroupChat = async (req, res) => {
   }
 };
 
-// Update group chat (name/image) — admin only
+
 exports.updateGroupChat = async (req, res) => {
   try {
     const currentUserId = req.authData.id;
@@ -516,7 +563,7 @@ exports.updateGroupChat = async (req, res) => {
   }
 };
 
-// Delete a chat (participant only) - removes user from chat instead of deleting entire chat
+
 exports.deleteChat = async (req, res) => {
   const { chatId } = req.params;
   const currentUserId = req.authData.id;
@@ -532,21 +579,19 @@ exports.deleteChat = async (req, res) => {
     const userInChat = chat.users.find(u => u.userId === currentUserId);
     if (!userInChat) return res.status(403).json({ message: 'You are not part of this chat' });
 
-    // Use transaction to handle the deletion logic
+  
     await prisma.$transaction(async (tx) => {
-      // Remove the user from the chat
+
       await tx.userOnChat.delete({
         where: { id: userInChat.id }
       });
 
-      // Check remaining users after deletion
+ 
       const remainingUsers = await tx.userOnChat.count({
         where: { chatId: chat.id }
       });
 
-      // Delete the entire chat if:
-      // 1. No users left, OR
-      // 2. It's a private chat (not a group) and only 1 user remains
+   
       if (remainingUsers === 0 || (!chat.isGroup && remainingUsers === 1)) {
         await tx.chat.delete({ where: { id: chat.id } });
       }
@@ -670,15 +715,15 @@ exports.getMyChats = async (req, res) => {
   const currentUserId = req.authData.id;
 
   try {
-    // 👇 Global Chat row ta ber kore nilam
-    const globalChat = await getOrCreateGlobalChat();
 
-    const chats = await prisma.chat.findMany({
-      where: { 
-        users: { some: { userId: currentUserId } },
-        // 👇 Ei line diye Global Chat exclude
-        id: { not: globalChat.id },
-      },
+
+const chats = await prisma.chat.findMany({
+  where: {
+    users: { some: { userId: currentUserId } },
+    ...NOT_GLOBAL_CHAT_WHERE,          // ✅ Global variants বাদ
+  },
+
+
       include: {
         users: {
           include: {
@@ -889,19 +934,17 @@ exports.getChatsByUsers = async (req, res) => {
   if (isNaN(user2Id)) return res.status(400).json({ message: 'Invalid user ID' });
 
   try {
-    const chats = await prisma.chat.findMany({
-      where: {
-        // 🚫 Global Chat বাদ
-        OR: [
-          { name: null },
-          { name: { not: 'Global Chat' } },
-        ],
-        users: {
-          every: { userId: { in: [user1Id, user2Id] } },
-        },
-      },
-      include: { users: { select: { userId: true } } },
-    });
+ const chats = await prisma.chat.findMany({
+  where: {
+    ...NOT_GLOBAL_CHAT_WHERE, 
+
+    users: {
+      every: { userId: { in: [user1Id, user2Id] } },
+    },
+  },
+  include: { users: { select: { userId: true } } },
+});
+
 
     const result = chats
       .filter(c => {
@@ -1459,13 +1502,14 @@ exports.getUnreadChats = async (req, res) => {
   const currentUserId = req.authData.id;
 
   try {
-    const globalChat = await getOrCreateGlobalChat(); // ✅ add this
+ 
 
-    const chats = await prisma.chat.findMany({
-      where: { 
-        users: { some: { userId: currentUserId } },
-        id: { not: globalChat.id }, // ✅ Global exclude
-      },
+const chats = await prisma.chat.findMany({
+  where: {
+    users: { some: { userId: currentUserId } },
+    ...NOT_GLOBAL_CHAT_WHERE,    
+  },
+
       include: {
         users: {
           include: {
@@ -1680,17 +1724,17 @@ exports.searchChats = async (req, res) => {
       return res.status(400).json({ error: "Keyword is required for search" });
     }
 
-    // Get chats belonging to the user
-    const userChats = await prisma.chat.findMany({
-      where: {
-        users: { some: { userId: currentUserId } },
-      },
-      select: { id: true },
-    });
+const userChats = await prisma.chat.findMany({
+  where: {
+    users: { some: { userId: currentUserId } },
+    ...NOT_GLOBAL_CHAT_WHERE, 
+  },
+  select: { id: true },
+});
+
 
     const chatIds = userChats.map(chat => chat.id);
 
-    // Search message contents within user's chats
     const matchingChats = await prisma.chat.findMany({
       where: {
         id: { in: chatIds },
