@@ -542,6 +542,96 @@ async function deleteAccount(req, res) {
     return res.status(500).json({ error: 'Failed to delete account' });
   }
 }
+async function getUserStats(req, res)  {
+  try {
+    const viewerId = req.authData.id;
+    const userId = parseInt(req.params.userId, 10);
+
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ success: false, message: "Invalid userId" });
+    }
+
+    // ---------- friends count ----------
+    const friendsCount = await prisma.friendship.count({
+      where: {
+        status: "ACCEPTED",
+        OR: [{ requesterId: userId }, { receiverId: userId }],
+      },
+    });
+
+    // ---------- groups/community count ----------
+    const groupsCount = await prisma.communityMember.count({
+      where: { userId },
+    });
+
+    // ---------- myCommunity (pick 1 community for display) ----------
+    const myCommunity = await prisma.communityMember.findFirst({
+      where: { userId },
+      orderBy: { createdAt: "desc" }, // latest joined
+      include: {
+        community: { select: { id: true, name: true, imageUrl: true } },
+      },
+    });
+
+    // ---------- spots visited ----------
+    let spotsVisited = 0;
+
+    // Option A: যদি SpotVisit / CheckIn table থাকে
+    const hasSpotVisitModel = !!prisma.spotVisit;
+    if (hasSpotVisitModel) {
+      spotsVisited = await prisma.spotVisit.count({
+        where: { userId },
+      });
+    } else {
+      // Option B: Story table এ placeId থাকলে distinct count
+      // NOTE: আপনার schema অনুযায়ী placeId field নাম ভিন্ন হলে adjust করবেন
+      const distinctPlaces = await prisma.story.findMany({
+        where: {
+          userId,
+          status: "ACTIVE",
+          placeId: { not: null },
+        },
+        distinct: ["placeId"],
+        select: { placeId: true },
+      });
+      spotsVisited = distinctPlaces.length;
+    }
+
+    // ---------- challenges completed ----------
+    let challengesCompleted = 0;
+
+    // Option A: challengeCompletion table থাকলে
+    const hasChallengeCompletionModel = !!prisma.challengeCompletion;
+    if (hasChallengeCompletionModel) {
+      challengesCompleted = await prisma.challengeCompletion.count({
+        where: { userId, status: "COMPLETED" },
+      });
+    } else {
+      // Option B: pointsLedger reason দিয়ে (আপনারা completion এ ledger add করলে)
+      challengesCompleted = await prisma.pointsLedger.count({
+        where: {
+          userId,
+          reason: { in: ["DAILY_CHALLENGE_COMPLETE", "WEEKLY_CHALLENGE_COMPLETE"] },
+        },
+      });
+    }
+
+    return res.json({
+      success: true,
+      data: {
+        userId,
+        spotsVisited,
+        friends: friendsCount,
+        groups: groupsCount,
+        challengesCompleted,
+        myCommunity: myCommunity?.community || null,
+      },
+    });
+  } catch (err) {
+    console.error("getUserStats error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
 module.exports = {
 
   saveProfile,
@@ -561,7 +651,7 @@ module.exports = {
   getUserPoints,
   submitForPoints,
   getAchievementStatus,
-
+getUserStats,
   // Account
   deleteAccount,
 };
