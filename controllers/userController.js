@@ -122,8 +122,7 @@ async function uploadAvatarWithMulter(req, res) {
 async function generateMinime(req, res) {
   try {
     const userId = req.authData.id;
-   const { shirt, pant, shoes, glasses, lipstick, jewelry, watch, bag } = req.body || {};
-
+    const { shirt, pant, shoes, glasses, lipstick, jewelry, bag } = req.body || {};
 
     const last = await prisma.minime.findFirst({
       where: { userId },
@@ -141,8 +140,7 @@ async function generateMinime(req, res) {
         shoes,
         glasses,
         lipstick,
-jewelry: jewelry ?? watch ?? null,
-
+        jewelry,
         bag,
         selfieUrl: faceRef,  
         isSaved: false,
