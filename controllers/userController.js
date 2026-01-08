@@ -642,10 +642,106 @@ async function getUserStatsByUserId (req, res){
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
+async function getMiniMeLockerByUserId(req, res) {
+  try {
+    const viewerId = req.authData.id;
+    const targetUserId = parseInt(req.params.userId, 10);
+
+    if (!Number.isFinite(targetUserId)) {
+      return res.status(400).json({ error: "Invalid userId" });
+    }
+
+    // ✅ target user minimal info (privacy)
+    const target = await prisma.user.findUnique({
+      where: { id: targetUserId },
+      select: { id: true, isProfilePrivate: true },
+    });
+
+    if (!target) return res.status(404).json({ error: "User not found" });
+
+    const isSelf = viewerId === targetUserId;
+
+    // ✅ block check (same idea as your computeNewCounts notBlocked)
+    if (!isSelf) {
+      const blocked = await prisma.user.findFirst({
+        where: {
+          id: targetUserId,
+          OR: [
+            { blockedBy: { some: { blockerId: viewerId } } }, // target blocked by viewer?
+            { blocks: { some: { blockedId: viewerId } } },    // target blocked viewer?
+          ],
+        },
+        select: { id: true },
+      });
+
+      if (blocked) {
+        return res.status(403).json({ error: "You cannot view this locker." });
+      }
+    }
+
+    // ✅ friend check (only needed for private profiles)
+    let isFriend = false;
+    if (!isSelf) {
+      const fr = await prisma.friendship.findFirst({
+        where: {
+          status: "ACCEPTED",
+          OR: [
+            { requesterId: viewerId, receiverId: targetUserId },
+            { requesterId: targetUserId, receiverId: viewerId },
+          ],
+        },
+        select: { id: true },
+      });
+      isFriend = !!fr;
+    }
+
+    // ✅ permission
+    const allowView = isSelf || !target.isProfilePrivate || isFriend;
+
+    if (!allowView) {
+      return res.status(403).json({
+        error: "This locker is private. Only friends can view it.",
+      });
+    }
+
+    // ✅ Return saved minis only
+    const minis = await prisma.minime.findMany({
+      where: { userId: targetUserId, isSaved: true },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        avatarUrl: true,
+        selfieUrl: true,
+        shirt: true,
+        pant: true,
+        shoes: true,
+        glasses: true,
+        lipstick: true,
+        jewelry: true,
+        bag: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+
+    return res.json({
+      userId: targetUserId,
+      isSelf,
+      isFriend: isSelf ? true : isFriend,
+      isPrivate: !!target.isProfilePrivate,
+      locker: minis,
+    });
+  } catch (e) {
+    console.error("getMiniMeLockerByUserId error:", e);
+    return res.status(500).json({ error: "Failed to load locker" });
+  }
+}
+
 module.exports = {
 
   saveProfile,
   uploadAvatarWithMulter,
+  getMiniMeLockerByUserId,
   generateMinime,
   regenerateMinime,
   saveLatestMinime,

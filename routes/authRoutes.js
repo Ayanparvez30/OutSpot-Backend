@@ -61,6 +61,10 @@ router.post('/submit-for-points', checkAuth,upload.single('media'), userControll
 router.get('/me/achievements', checkAuth, userController.getAchievementStatus);
 // const { getMyReferral } = require('../controllers/authController');
 router.get('/referral', checkAuth, authController.getMyReferral);
+router.get(
+  "/users/:userId/minime-locker",checkAuth,
+  userController.getMiniMeLockerByUserId
+);
 
 router.post(
   '/minime/upload-avatar',
