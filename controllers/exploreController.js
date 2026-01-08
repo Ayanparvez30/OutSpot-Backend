@@ -180,44 +180,95 @@ exports.getCategoryPlaces = async (req, res) => {
     res.status(500).json({ error: 'Failed to load places' });
   }
 };
-
 exports.recordVisit = async (req, res) => {
   try {
     const userId = req.authData.id;
-    let { placeId, name, latitude, longitude, mediaUrl, categoryKey } = req.body;
+    let { placeId, name, latitude, longitude, mediaUrl, categoryKey } = req.body || {};
 
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
+
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ error: 'Bad latitude/longitude' });
     }
+    if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+      return res.status(400).json({ error: 'Latitude/longitude out of range' });
+    }
 
-    // points per category (fallback to 5, matches your schema default)
+    // ✅ require placeId (so we can validate)
+    if (!placeId || typeof placeId !== 'string' || placeId.trim().length < 5) {
+      return res.status(400).json({ error: 'placeId required to award points' });
+    }
+    placeId = placeId.trim();
+
+    // points per category (fallback to 5)
     const cat = categoryKey ? getCategory(categoryKey) : null;
     const points = cat?.points ?? 5;
 
-    const since = new Date(Date.now() - DUP_WINDOW_HOURS * 60 * 60 * 1000);
+    // --------------------------
+    // ✅ server-side place validate
+    // --------------------------
+    const MAX_PLACE_DISTANCE_METERS = Number(process.env.MAX_PLACE_DISTANCE_METERS || 120);
 
-    /* ---------- 1) Precise de-dupe by placeId (best) ---------- */
-    if (placeId) {
-      const priorSamePlace = await prisma.locationPoint.findFirst({
-        where: { userId, placeId, createdAt: { gte: since } },
-        select: { id: true, createdAt: true }
+    let placeLat = null;
+    let placeLng = null;
+    let placeNameFromGoogle = null;
+
+    try {
+      const d = await details(placeId);
+      placeLat = d?.geometry?.location?.lat ?? null;
+      placeLng = d?.geometry?.location?.lng ?? null;
+      placeNameFromGoogle = d?.name ?? null;
+    } catch (e) {
+      return res.status(502).json({
+        awarded: false,
+        error: 'Failed to verify placeId via Google Places',
       });
-      if (priorSamePlace) {
-        return res.status(200).json({
-          awarded: false,
-          reason: 'duplicate-place-within-window',
-          placeId,
-          windowHours: DUP_WINDOW_HOURS,
-          since: priorSamePlace.createdAt
-        });
-      }
     }
 
-    /* ---------- 2) Proximity fallback (configurable) ---------- 
-       Only apply when placeId is missing (or you set a tiny nonzero radius). */
-    const fallbackRadius = placeId ? NEARBY_WITH_PLACEID : NEARBY_WITHOUT_PLACEID;
+    if (!Number.isFinite(placeLat) || !Number.isFinite(placeLng)) {
+      return res.status(400).json({
+        awarded: false,
+        error: 'Invalid placeId (no geometry)',
+      });
+    }
+
+    const distToPlace = haversineMeters(
+      { lat, lng },
+      { lat: placeLat, lng: placeLng }
+    );
+
+    if (distToPlace > MAX_PLACE_DISTANCE_METERS) {
+      return res.status(403).json({
+        awarded: false,
+        reason: 'too-far-from-place',
+        placeId,
+        distanceMeters: Math.round(distToPlace),
+        maxMeters: MAX_PLACE_DISTANCE_METERS,
+      });
+    }
+
+    const since = new Date(Date.now() - DUP_WINDOW_HOURS * 60 * 60 * 1000);
+
+    /* ---------- 1) Precise de-dupe by placeId ---------- */
+    const priorSamePlace = await prisma.locationPoint.findFirst({
+      where: { userId, placeId, createdAt: { gte: since } },
+      select: { id: true, createdAt: true }
+    });
+
+    if (priorSamePlace) {
+      return res.status(200).json({
+        awarded: false,
+        reason: 'duplicate-place-within-window',
+        placeId,
+        windowHours: DUP_WINDOW_HOURS,
+        since: priorSamePlace.createdAt
+      });
+    }
+
+    /* ---------- 2) Proximity fallback (optional) ---------- 
+       If you keep NEARBY_WITH_PLACEID=0 it will skip. */
+    const fallbackRadius = NEARBY_WITH_PLACEID;
 
     if (fallbackRadius > 0) {
       const recent = await prisma.locationPoint.findMany({
@@ -249,8 +300,8 @@ exports.recordVisit = async (req, res) => {
       data: {
         userId,
         mediaUrl: mediaUrl || '',
-        placeId: placeId || null,     // persist precise place
-        placeName: name || null,
+        placeId, // ✅ always stored
+        placeName: (name && String(name).trim()) || placeNameFromGoogle || null,
         latitude: lat,
         longitude: lng,
         points
@@ -263,7 +314,8 @@ exports.recordVisit = async (req, res) => {
       awarded: true,
       points,
       id: created.id,
-      placeId: placeId || null
+      placeId,
+      distanceMeters: Math.round(distToPlace),
     });
   } catch (e) {
     console.error('recordVisit error', e);
