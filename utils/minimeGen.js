@@ -109,32 +109,44 @@ function colorHintFromString(s) {
   return null;
 }
 function accessoriesLines(o, isFeminine) {
-  if (!isFeminine) return '';
   const raw = o.jewelry || '';
   const j = String(raw).toLowerCase();
 
   const bag = o.bag || 'none';
   const lips = o.lipstick || 'natural';
-  let necklace = 'none', earrings = 'none', wrist = 'none';
 
-  if (/^https?:\/\//i.test(raw)) {
+  let necklace = 'none', earrings = 'none', wrist = 'none';
+  const isUrl = /^https?:\/\//i.test(raw);
+
+  if (isUrl) {
     const color = colorHintFromString(raw) || 'as in the reference image';
-    necklace = `EXACTLY match this image → ${raw}. Plain thin chain only (NO pendant/charm). Color: ${color}.`;
+
+    // URL যদি watch related হয় → wrist strict ref
+    const looksLikeWatch =
+      /watch|wrist|strap|rolex|omega|casio|apple|seiko/.test(String(raw).toLowerCase());
+
+    if (looksLikeWatch) {
+      wrist = `EXACTLY match this image → ${raw}. Watch only. Color: ${color}.`;
+    } else {
+      necklace = `EXACTLY match this image → ${raw}. Plain thin chain only (NO pendant/charm). Color: ${color}.`;
+    }
+  } else if (j.includes('watch')) {
+    wrist = 'minimal watch (simple face; avoid bulky sports style unless specified)';
+  } else if (j.includes('bracelet')) {
+    wrist = 'simple bracelet';
   } else if (j.includes('chain') || j.includes('necklace')) {
     necklace = 'plain thin chain necklace (no pendant, no charm, minimalist)';
   } else if (j.includes('earring')) {
     earrings = 'small stud earrings';
-  } else if (j.includes('watch')) {
-    wrist = 'minimal watch';
-  } else if (j.includes('bracelet')) {
-    wrist = 'simple bracelet';
   } else if (j && j !== 'none') {
-    necklace = `${raw} (no pendant unless explicitly specified)`;
+
+    if (isFeminine) necklace = `${raw} (no pendant unless explicitly specified)`;
+    else wrist = `${raw} (keep it minimal; prefer wrist accessory)`;
   }
 
   return `
 # ACCESSORIES
-- Lipstick: ${lips}
+- Lipstick: ${isFeminine ? lips : 'none'}
 - Necklace: ${necklace}
 - Earrings: ${earrings}
 - Wrist: ${wrist}
@@ -178,7 +190,8 @@ ${facialHairLines}
 - Pants/bottom: ${o.pant || 'straight jeans'}
 - Shoes: ${o.shoes || 'casual sneakers'}
 ${glassesLine}
-${isFeminine ? accessoriesLines(o, isFeminine) : ''}
+${accessoriesLines(o, isFeminine)}
+
 
 # COMPOSITION & STYLE
 - Neutral pose, arms relaxed by sides, single character only.
