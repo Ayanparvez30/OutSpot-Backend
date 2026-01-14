@@ -81,7 +81,7 @@ function mapGlasses(glassesKey) {
   return GLASSES_MAP[glassesKey] || glassesKey;
 }
 
-function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }) {
+function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag,watch }) {
   return {
     shirt: shirt || 'basic solid color t-shirt',
     pant: pant || 'straight jeans',
