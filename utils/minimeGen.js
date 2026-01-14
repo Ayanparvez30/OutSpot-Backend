@@ -90,6 +90,7 @@ function normalizeOutfit({ shirt, pant, shoes, glasses, lipstick, jewelry, bag }
     lipstick,
     jewelry,
     bag,
+    watch
   };
 }
 
@@ -108,35 +109,49 @@ function colorHintFromString(s) {
   if (l.includes('purple')) return 'purple';
   return null;
 }
+function isWatchRef(v) {
+  const s = String(v || '').toLowerCase();
+  return s.includes('/watches/') || s.includes('watch');
+}
+
 function accessoriesLines(o, isFeminine) {
   const bag = o.bag || 'none';
-  const lips = o.lipstick || 'natural';
+
+  // lipstick শুধু feminine এ দেখাবো
+  const lips = isFeminine ? (o.lipstick || 'natural') : null;
 
   let necklace = 'none', earrings = 'none', wrist = 'none';
 
-  // ✅ WATCH for both masculine & feminine
-  if (o.watch) {
-    wrist = o.watch.startsWith('http')
-      ? `EXACTLY match this watch image → ${o.watch}. Realistic wrist fit, correct scale.`
-      : o.watch;
+  // ✅ watch source: o.watch (if you later add) OR jewelry URL that looks like a watch
+  const jewelryRaw = o.jewelry || '';
+  const watchCandidate =
+    (o.watch && String(o.watch).trim()) ? o.watch :
+    (isWatchRef(jewelryRaw) ? jewelryRaw : null);
+
+  // ✅ wrist watch instruction (works for masculine + feminine)
+  if (watchCandidate) {
+    wrist = isHttpUrl(watchCandidate)
+      ? `EXACTLY match this watch image → ${watchCandidate}. Fit it on the wrist realistically, correct scale, not oversized.`
+      : String(watchCandidate);
   }
 
-  // Feminine-only extras
-  if (isFeminine) {
-    const raw = o.jewelry || '';
-    if (raw.includes('chain')) necklace = 'plain thin chain necklace';
+  // ✅ feminine-only jewelry interpretation (necklace/earrings)
+  if (isFeminine && jewelryRaw && !isWatchRef(jewelryRaw)) {
+    const raw = String(jewelryRaw).toLowerCase();
+    if (raw.includes('chain') || raw.includes('necklace')) necklace = 'plain thin chain necklace (no pendant)';
     if (raw.includes('earring')) earrings = 'small stud earrings';
   }
 
   return `
 # ACCESSORIES
+${isFeminine ? `- Lipstick: ${lips}
+- Necklace: ${necklace}
+- Earrings: ${earrings}` : ''}
 - Wrist: ${wrist}
-${isFeminine ? `- Necklace: ${necklace}
-- Earrings: ${earrings}
-- Lipstick: ${lips}` : ''}
 - Bag: ${bag}
 `.trim();
 }
+
 
 
 function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit, facialHair, skinToneHint, hairHint }) {
@@ -270,6 +285,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     lipstick: opts.lipstick ?? mm.lipstick,
     jewelry:  opts.jewelry  ?? mm.jewelry,
     bag:      opts.bag      ?? mm.bag,
+      watch:    opts.watch    ?? mm.watch,
   });
 
   const prompt = buildMinimePrompt({
