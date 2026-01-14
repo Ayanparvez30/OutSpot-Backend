@@ -14,6 +14,7 @@ router.get('/chats/messages/:chatId', checkAuth, chatController.getMessages);
 router.get('/chats/messages-paginated/:chatId', checkAuth, chatController.getMessagesPaginated);
 router.get('/chats/:user2Id', checkAuth, chatController.getChatsByUsers);
 router.get('/chats/groupMembers/:chatId', checkAuth, chatController.getGroupMembers);
+router.get('/chats/global-rooms', checkAuth, chatController.getGlobalChatRooms);
 
 // add users (admin only)
 router.put('/chats/addUser/:chatId', checkAuth, chatController.addUsersToGroup);

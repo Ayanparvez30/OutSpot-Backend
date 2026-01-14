@@ -39,36 +39,7 @@ const firstAvatar = (minimeArr) =>
   Array.isArray(minimeArr) && minimeArr.length > 0
     ? (minimeArr[0]?.avatarUrl || null)
     : null;
-async function getOrCreateGlobalChat() {
-  let chat = await prisma.chat.findFirst({
-    where: {
-      name: 'Global Chat',
-      communityId: null,
-    },
-  });
 
-  if (!chat) {
-    chat = await prisma.chat.create({
-      data: {
-        name: 'Global Chat',
-        isGroup: false,    
-        isCommunity: false,
-        communityId: null,
-      },
-    });
-  } else {
-    chat = await prisma.chat.update({
-      where: { id: chat.id },
-      data: {
-        isGroup: false,
-        isCommunity: false,
-        communityId: null,
-      },
-    });
-  }
-
-  return chat;
-}
 function normCityLabel(city) {
   const s = String(city || "").trim();
   if (!s) return null;
@@ -156,7 +127,6 @@ exports.getGlobalChatId = async (req, res) => {
   }
 };
 
-
 exports.sendTextMessage = async (req, res) => {
   const userId = req.authData.id;
   let { chatId, content } = req.body;
@@ -172,42 +142,44 @@ exports.sendTextMessage = async (req, res) => {
     }
     content = String(content).trim();
 
-   
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
-      include: { users: { select: { userId: true } } },
+      include: { users: { select: { userId: true, role: true, lastSeenMessageId: true } } },
     });
 
-    if (!chat) {
-      return res.status(404).json({ message: "Chat not found" });
-    }
+    if (!chat) return res.status(404).json({ message: "Chat not found" });
 
     const isGlobalVariant =
       chat?.communityId === null &&
       chat?.isCommunity === false &&
       isGlobalChatName(chat?.name);
 
-    let isMember = chat.users.some((u) => u.userId === userId);
+    // ✅ membership check
+    const memberRow = chat.users.find((u) => u.userId === userId);
 
-
-    if (!isMember) {
-      if (isGlobalVariant) {
-
-        const existing = await prisma.userOnChat.findFirst({
-          where: { userId, chatId },
-        });
-
-        if (!existing) {
-          await prisma.userOnChat.create({
-            data: { userId, chatId, role: "MEMBER", lastSeenMessageId: 0 },
-          });
-        }
-        isMember = true;
-      } else {
+    if (!memberRow) {
+      if (!isGlobalVariant) {
         return res.status(403).json({ message: "You are not a member of this chat" });
       }
+
+      // ✅ Global room: ensure membership (RACE-SAFE)
+      await prisma.userOnChat.upsert({
+        where: { userId_chatId: { userId, chatId } }, // requires @@unique([userId, chatId])
+        update: {},
+        create: { userId, chatId, role: "MEMBER", lastSeenMessageId: 0 },
+      });
     }
 
+    // ✅ LOCK CHECK (REST)  — previously missing
+    if (chat.isGroup && chat.isLocked) {
+      // refresh my role
+      const myRow = await prisma.userOnChat.findFirst({ where: { userId, chatId } });
+      if (!myRow || myRow.role !== "ADMIN") {
+        return res.status(403).json({
+          message: "This group chat is locked. Only admins can send messages.",
+        });
+      }
+    }
 
     const message = await prisma.message.create({
       data: {
@@ -234,6 +206,18 @@ exports.sendTextMessage = async (req, res) => {
       },
     });
 
+    // ✅ keep chat fresh in list ordering
+    await prisma.chat.update({
+      where: { id: chatId },
+      data: { updatedAt: new Date() },
+    });
+
+    // ✅ Mark sender read position (like socket does)
+    await prisma.userOnChat.updateMany({
+      where: { userId, chatId },
+      data: { lastSeenMessageId: message.id },
+    });
+
     const formatted = {
       id: message.id,
       content: message.content,
@@ -252,54 +236,11 @@ exports.sendTextMessage = async (req, res) => {
       },
     };
 
-
     try {
       const io = require("../utils/socket").getIO();
       io.to(`chat_${chatId}`).emit("newMessage", formatted);
     } catch (socketErr) {
       console.error("sendTextMessage socket error:", socketErr);
-    }
-
-
-    if (isGlobalVariant && chat.name !== "Global Chat - All USA") {
-      try {
-        const allUSAChat = await getOrCreateGlobalChatByCity("All USA");
-
-        const mem = await prisma.userOnChat.findFirst({
-          where: { userId, chatId: allUSAChat.id },
-        });
-        if (!mem) {
-          await prisma.userOnChat.create({
-            data: { userId, chatId: allUSAChat.id, role: "MEMBER", lastSeenMessageId: 0 },
-          });
-        }
-
-   
-        const mirror = await prisma.message.create({
-          data: {
-            chatId: allUSAChat.id,
-            senderId: userId,
-            content,
-            imageUrl: null,
-          },
-        });
-
-      
-        try {
-          const io = require("../utils/socket").getIO();
-          io.to(`chat_${allUSAChat.id}`).emit("newMessage", {
-            ...formatted,
-            id: mirror.id,
-            chatId: allUSAChat.id,
-            createdAt: mirror.createdAt,
-          });
-        } catch (e) {
-          console.error("mirror emit error:", e);
-        }
-      } catch (mirrorErr) {
-        console.error("mirror to All USA error:", mirrorErr);
-     
-      }
     }
 
     return res.json({ success: true, message: formatted });
@@ -309,6 +250,40 @@ exports.sendTextMessage = async (req, res) => {
   }
 };
 
+exports.getGlobalChatRooms = async (req, res) => {
+  try {
+    const q = String(req.query.q || "").trim();
+
+    const where = {
+      communityId: null,
+      isCommunity: false,
+      name: {
+        startsWith: "Global Chat -",
+        ...(q ? { contains: q } : {}),
+      },
+    };
+
+    const rooms = await prisma.chat.findMany({
+      where,
+      orderBy: { updatedAt: "desc" },
+      select: { id: true, name: true, isLocked: true, updatedAt: true },
+    });
+
+    return res.json({
+      success: true,
+      rooms: rooms.map(r => ({
+        chatId: r.id,
+        name: r.name,
+        isLocked: r.isLocked,
+        updatedAt: r.updatedAt,
+        city: r.name.replace(/^Global Chat -\s*/i, "") || null,
+      })),
+    });
+  } catch (error) {
+    console.error("getGlobalChatRooms error:", error);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+};
 
 async function uploadFileToS3(filePath, bucketName, fileName) {
   const fileStream = fs.createReadStream(filePath);

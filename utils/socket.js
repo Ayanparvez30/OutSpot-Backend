@@ -6,8 +6,13 @@ const prisma = new PrismaClient();
 
 let ioInstance;
 
+function isGlobalChatName(name) {
+  return typeof name === "string" && name.startsWith("Global Chat");
+}
+
 // ---- helpers ----
 const toRad = d => (d * Math.PI) / 180;
+
 function haversine(a, b) {
   const R = 6371000;
   const dLat = toRad(b.lat - a.lat);
@@ -17,6 +22,7 @@ function haversine(a, b) {
     Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.asin(Math.sqrt(A));
 }
+
 const firstAvatar = (minimeArr) =>
   Array.isArray(minimeArr) && minimeArr.length > 0
     ? (minimeArr[0]?.avatarUrl || null)
@@ -34,15 +40,18 @@ async function getFriendIds(userId) {
 
 async function smartPersistLocation(userId, latitude, longitude, threshold = 50) {
   const last = await prisma.location.findUnique({ where: { userId } });
+
   if (!last) {
     await prisma.location.create({ data: { userId, latitude, longitude } });
     await prisma.locationHistory.create({ data: { userId, latitude, longitude } });
     return { moved: true, dist: null };
   }
+
   const dist = haversine(
     { lat: last.latitude, lng: last.longitude },
     { lat: latitude, lng: longitude }
   );
+
   if (dist < threshold) return { moved: false, dist };
 
   await prisma.location.update({
@@ -50,16 +59,8 @@ async function smartPersistLocation(userId, latitude, longitude, threshold = 50)
     data: { latitude, longitude },
   });
   await prisma.locationHistory.create({ data: { userId, latitude, longitude } });
-  return { moved: true, dist };
-}
 
-async function getLatestMessageId(chatId) {
-  const latestMessage = await prisma.message.findFirst({
-    where: { chatId },
-    orderBy: { createdAt: 'desc' },
-    select: { id: true }
-  });
-  return latestMessage?.id || 0;
+  return { moved: true, dist };
 }
 
 async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstName, senderLastName, messageContent) {
@@ -80,8 +81,7 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
 
       if (isUserOnline(user.id)) continue;
 
-      const isMuted = userOnChat.isMuted;
-      if (isMuted) continue;
+      if (userOnChat.isMuted) continue;
 
       if (user.fcmToken) {
         const notificationPayload = {
@@ -121,43 +121,6 @@ function isUserOnline(userId) {
   return false;
 }
 
-/**
- * ✅ Ensure Global Chat exists + ensure membership + join room
- * IMPORTANT: Prisma compound unique is @@unique([userId, chatId]) => where key becomes userId_chatId
- */
-async function ensureGlobalChatAndJoin(socket, userId) {
-  try {
-    let globalChat = await prisma.chat.findFirst({
-      where: { name: 'Global Chat', communityId: null },
-      select: { id: true },
-    });
-
-    if (!globalChat) {
-      globalChat = await prisma.chat.create({
-        data: {
-          name: 'Global Chat',
-          isGroup: false,
-          isCommunity: false,
-          communityId: null,
-        },
-        select: { id: true },
-      });
-    }
-
-    // ensure membership exists (no error even if already exists)
-    await prisma.userOnChat.upsert({
-      where: { userId_chatId: { userId, chatId: globalChat.id } },
-      update: {},
-      create: { userId, chatId: globalChat.id, role: 'MEMBER', lastSeenMessageId: 0 },
-    });
-
-    socket.join(`chat_${globalChat.id}`);
-    console.log(`🌍 User ${userId} joined global chat_${globalChat.id}`);
-  } catch (e) {
-    console.error('❌ ensureGlobalChatAndJoin failed:', e);
-  }
-}
-
 function initSocket(server) {
   const io = new Server(server, { cors: { origin: '*' } });
 
@@ -191,9 +154,6 @@ function initSocket(server) {
         console.error('❌ Error auto-joining chats:', err);
       }
 
-      // ✅ Always join global chat (fix realtime not coming)
-      await ensureGlobalChatAndJoin(socket, userId);
-
       socket.emit('socket:ready', { userId });
     }
 
@@ -209,11 +169,14 @@ function initSocket(server) {
     socket.on('sendMessage', async (data) => {
       let { chatId, content, senderId, imageUrl } = data || {};
 
-      // ✅ normalize
       chatId = parseInt(chatId, 10);
       senderId = parseInt(senderId, 10);
 
-      if (!chatId || !Number.isInteger(chatId) || !senderId || !Number.isInteger(senderId) || (!content && !imageUrl)) {
+      if (
+        !chatId || !Number.isInteger(chatId) ||
+        !senderId || !Number.isInteger(senderId) ||
+        (!content && !imageUrl)
+      ) {
         console.log('❌ Missing/invalid fields in sendMessage', { chatId, senderId });
         return;
       }
@@ -229,11 +192,32 @@ function initSocket(server) {
           return;
         }
 
-        // ✅ ensure sender is a member (important esp for global)
-        const senderInChat = chat.users.find(u => u.userId === senderId);
+        const isGlobalVariant =
+          chat?.communityId === null &&
+          chat?.isCommunity === false &&
+          isGlobalChatName(chat?.name);
+
+        // ✅ ensure sender is a member
+        let senderInChat = chat.users.find(u => u.userId === senderId);
+
+        // ✅ auto-add membership for global rooms (like REST)
         if (!senderInChat) {
-          socket.emit('messageError', { error: 'You are not a member of this chat', chatId });
-          return;
+          if (!isGlobalVariant) {
+            socket.emit('messageError', { error: 'You are not a member of this chat', chatId });
+            return;
+          }
+
+          await prisma.userOnChat.upsert({
+            where: { userId_chatId: { userId: senderId, chatId } }, // requires @@unique([userId, chatId])
+            update: {},
+            create: { userId: senderId, chatId, role: 'MEMBER', lastSeenMessageId: 0 },
+          });
+
+          // refresh role (for lock checks etc)
+          senderInChat = { userId: senderId, role: 'MEMBER' };
+        } else {
+          // normalize role
+          senderInChat = { userId: senderId, role: senderInChat.role };
         }
 
         // ✅ locked group check
@@ -248,73 +232,87 @@ function initSocket(server) {
           }
         }
 
-        // ✅ block check (only meaningful for private chat; still safe)
-        const recipient = chat.users.find((u) => u.userId !== senderId)?.user;
-        if (recipient) {
-          const isBlocked = await prisma.block.findFirst({
-            where: {
-              OR: [
-                { blockerId: senderId, blockedId: recipient.id },
-                { blockerId: recipient.id, blockedId: senderId },
-              ],
-            },
-          });
-          if (isBlocked) {
-            socket.emit('messageError', { error: 'Message blocked' });
-            return;
+        // ✅ block check ONLY for private chat (2 users, not group)
+        if (!chat.isGroup && chat.users?.length === 2) {
+          const recipient = chat.users.find((u) => u.userId !== senderId)?.user;
+          if (recipient) {
+            const isBlocked = await prisma.block.findFirst({
+              where: {
+                OR: [
+                  { blockerId: senderId, blockedId: recipient.id },
+                  { blockerId: recipient.id, blockedId: senderId },
+                ],
+              },
+            });
+
+            if (isBlocked) {
+              socket.emit('messageError', { error: 'Message blocked' });
+              return;
+            }
           }
         }
 
-const message = await prisma.message.create({
-  data: { chatId, senderId, content: content || null, imageUrl: imageUrl || null },
-  include: {
-    sender: {
-      select: {
-        id: true,
-        username: true,
-        firstName: true,
-        lastName: true,
-        minime: {
-          select: { avatarUrl: true },
-          where: { isSaved: true },
-          orderBy: { updatedAt: 'desc' },
-          take: 1,
-        },
-      },
-    },
-  },
-});
-
+        const message = await prisma.message.create({
+          data: {
+            chatId,
+            senderId,
+            content: content || null,
+            imageUrl: imageUrl || null
+          },
+          include: {
+            sender: {
+              select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                minime: {
+                  select: { avatarUrl: true },
+                  where: { isSaved: true },
+                  orderBy: { updatedAt: 'desc' },
+                  take: 1,
+                },
+              },
+            },
+          },
+        });
 
         await prisma.chat.update({
           where: { id: chatId },
           data: { updatedAt: new Date() },
         });
 
+        // ✅ mark sender as read up to this message
         await prisma.userOnChat.updateMany({
           where: { userId: senderId, chatId },
           data: { lastSeenMessageId: message.id }
         });
 
         io.to(`chat_${chatId}`).emit('newMessage', {
-  id: message.id,
-  content: message.content,
-  imageUrl: message.imageUrl,
-  sender: {
-    id: message.sender.id,
-    username: message.sender.username,
-    firstName: message.sender.firstName,
-    lastName: message.sender.lastName,
-    avatarUrl: firstAvatar(message.sender.minime),
-  },
-  chatId: message.chatId,
-  createdAt: message.createdAt,
-});
+          id: message.id,
+          content: message.content,
+          imageUrl: message.imageUrl,
+          sender: {
+            id: message.sender.id,
+            username: message.sender.username,
+            firstName: message.sender.firstName,
+            lastName: message.sender.lastName,
+            avatarUrl: firstAvatar(message.sender.minime),
+          },
+          chatId: message.chatId,
+          createdAt: message.createdAt,
+        });
 
-
+        // ✅ push notifications
         const sender = await prisma.user.findUnique({ where: { id: senderId } });
         if (sender) {
-          sendPushNotificationToOfflineUsers(chatId, senderId, sender.firstName, sender.lastName, content || '');
+          sendPushNotificationToOfflineUsers(
+            chatId,
+            senderId,
+            sender.firstName,
+            sender.lastName,
+            content || ''
+          );
         }
       } catch (error) {
         console.error('❌ Error sending message:', error);
