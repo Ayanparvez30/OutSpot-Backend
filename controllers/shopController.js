@@ -49,13 +49,22 @@ exports.previewCustomOutfit = async (req, res) => {
     case 'BOTTOM':    data.pant    = payload?.pant    || imageUrl || name || 'Custom Bottom'; break;
     case 'SHOES':     data.shoes   = payload?.shoes   || imageUrl || name || 'Custom Shoes'; break;
     case 'GLASSES':   data.glasses = payload?.glasses || imageUrl || name || 'Custom Glasses'; break;
-    case 'ACCESSORY': {
-      if (payload?.bag)          data.bag = payload.bag;
-      else if (payload?.watch)   data.jewelry = payload.watch;
-      else if (payload?.jewelry) data.jewelry = payload.jewelry;
-      else                       data.jewelry = imageUrl || name || 'Custom Accessory';
-      break;
-    }
+case 'ACCESSORY': {
+  if (payload?.bag) {
+    data.bag = payload.bag;
+  } 
+  else if (payload?.watch) {
+    data.watch = payload.watch; // ✅ NEW
+  } 
+  else if (payload?.jewelry) {
+    data.jewelry = payload.jewelry;
+  } 
+  else {
+    data.jewelry = imageUrl || name || 'Custom Accessory';
+  }
+  break;
+}
+
   }
 
   await prisma.minime.update({ where: { id: mm.id }, data });
