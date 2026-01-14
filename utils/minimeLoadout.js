@@ -32,12 +32,24 @@ exports.applyClothingToCurrentMinime = async (userId, item) => {
     case 'GLASSES':
       data.glasses = item.payload?.glasses || item.imageUrl || item.name;
       break;
-    case 'ACCESSORY':
-      if (item.payload?.bag) data.bag = item.payload.bag;
-      else if (item.payload?.watch) data.jewelry = item.payload.watch; // wrist jewelry
-      else if (item.payload?.jewelry) data.jewelry = item.payload.jewelry;
-      else data.jewelry = item.imageUrl || item.name;
-      break;
+
+
+case 'ACCESSORY':
+  if (item.payload?.bag) {
+    data.bag = item.payload.bag;
+  } 
+  else if (item.payload?.watch) {
+   
+    data.watch = item.payload.watch;
+  } 
+  else if (item.payload?.jewelry) {
+    data.jewelry = item.payload.jewelry;
+  } 
+  else {
+    data.jewelry = item.imageUrl || item.name;
+  }
+  break;
+
   }
 
   await prisma.minime.update({ where: { id: mm.id }, data });
