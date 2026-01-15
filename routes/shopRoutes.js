@@ -22,4 +22,6 @@ router.post('/shop/bundles/purchase', checkAuth, shop.purchasePointBundle);
 router.post('/shop/custom/preview', checkAuth, shop.previewCustomOutfit);
 router.post('/shop/custom/quick-buy', checkAuth, shop.quickBuyFromPreview);
 
+router.get('/shop/wardrobe', checkAuth, shop.getWardrobeInventory);
+
 module.exports = router;
