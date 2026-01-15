@@ -41,10 +41,18 @@ const firstAvatar = (minimeArr) =>
     : null;
 
 function normCityLabel(city) {
-  const s = String(city || "").trim();
+  let s = String(city || "").trim();
   if (!s) return null;
-  // basic cleanup
-  return s.replace(/\s+/g, " ");
+
+
+  while (/^Global Chat\s*-\s*/i.test(s)) {
+    s = s.replace(/^Global Chat\s*-\s*/i, "").trim();
+  }
+
+ 
+  s = s.replace(/\s+/g, " ");
+
+  return s || null;
 }
 
 async function getOrCreateGlobalChatByCity(cityLabel) {
@@ -249,7 +257,6 @@ exports.sendTextMessage = async (req, res) => {
     return res.status(500).json({ message: "Failed to send message" });
   }
 };
-
 exports.getGlobalChatRooms = async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
@@ -257,33 +264,69 @@ exports.getGlobalChatRooms = async (req, res) => {
     const where = {
       communityId: null,
       isCommunity: false,
-      name: {
-        startsWith: "Global Chat -",
-        ...(q ? { contains: q } : {}),
-      },
+      name: { startsWith: "Global Chat -" },
+      ...(q ? { name: { contains: q, mode: "insensitive" } } : {}),
     };
 
-    const rooms = await prisma.chat.findMany({
+    // ✅ get chats + memberCount + latest message
+    const roomsRaw = await prisma.chat.findMany({
       where,
       orderBy: { updatedAt: "desc" },
-      select: { id: true, name: true, isLocked: true, updatedAt: true },
+      select: {
+        id: true,
+        name: true,
+        isLocked: true,
+        updatedAt: true,
+        _count: { select: { users: true } },
+        messages: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: {
+            id: true,
+            content: true,
+            imageUrl: true,
+            createdAt: true,
+            sender: {
+              select: { id: true, username: true, firstName: true, lastName: true },
+            },
+          },
+        },
+      },
     });
 
-    return res.json({
-      success: true,
-      rooms: rooms.map(r => ({
+    // ✅ normalize city & dedupe duplicates by city label
+    const map = new Map(); // city => bestRoom
+    for (const r of roomsRaw) {
+      const city = normCityLabel(r.name.replace(/^Global Chat\s*-\s*/i, "")) || null;
+
+      const item = {
         chatId: r.id,
         name: r.name,
+        city,
         isLocked: r.isLocked,
         updatedAt: r.updatedAt,
-        city: r.name.replace(/^Global Chat -\s*/i, "") || null,
-      })),
-    });
+        memberCount: r._count.users,
+        latestMessage: r.messages?.[0] || null,
+      };
+
+      // keep latest updated room for same city
+      const prev = map.get(city || "");
+      if (!prev || new Date(item.updatedAt) > new Date(prev.updatedAt)) {
+        map.set(city || "", item);
+      }
+    }
+
+    const rooms = Array.from(map.values()).sort(
+      (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
+    );
+
+    return res.json({ success: true, rooms });
   } catch (error) {
     console.error("getGlobalChatRooms error:", error);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 };
+
 
 async function uploadFileToS3(filePath, bucketName, fileName) {
   const fileStream = fs.createReadStream(filePath);
