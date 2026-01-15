@@ -245,6 +245,44 @@ exports.listFeatured = async (_req, res) => {
   const items = await prisma.shopItem.findMany({ where: { isFeatured: true }, take: 12 });
   res.json({ success: true, data: items });
 };
+// controllers/shopController.js
+
+exports.getWardrobeInventory = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+
+    const rows = await prisma.userInventory.findMany({
+      where: { userId },
+      include: { item: true },
+      orderBy: { acquiredAt: "desc" },
+    });
+
+    // group by slot
+    const grouped = rows.reduce((acc, r) => {
+      const slot = r.item?.slot || "UNKNOWN";
+      if (!acc[slot]) acc[slot] = [];
+      acc[slot].push({
+        id: r.id,
+        equipped: r.equipped,
+        acquiredAt: r.acquiredAt,
+        item: r.item,
+      });
+      return acc;
+    }, {});
+
+    return res.json({
+      success: true,
+      data: {
+        totalOwned: rows.length,
+        grouped,
+        flat: rows,
+      },
+    });
+  } catch (e) {
+    console.error("getWardrobeInventory error:", e);
+    return res.status(500).json({ success: false, message: "Failed to load wardrobe", error: e.message });
+  }
+};
 
 exports.getInventory = async (req, res) => {
   const userId = req.authData.id;
@@ -321,6 +359,8 @@ exports.confirmIAPPurchase = async (req, res) => {
       });
       return res.json({ success: true, message: 'Multiplier activated', data: grant });
     }
+
+
 if (type === 'item') {
   const item = await prisma.shopItem.findUnique({ where: { id: Number(itemId) } });
   if (!item) return res.status(404).json({ success: false, message: 'Item not found' });
@@ -331,25 +371,52 @@ if (type === 'item') {
     create: { userId, itemId: item.id, equipped: false },
   });
 
+  console.log("✅ Item granted to inventory:", { userId, itemId: item.id, invId: inv.id });
+
   let minime = null;
 
   if (applyNow) {
     await applyClothingToCurrentMinime(userId, item);
+
+    // (optional but recommended) unequip others in same slot
+    await prisma.userInventory.updateMany({
+      where: {
+        userId,
+        equipped: true,
+        item: { slot: item.slot },
+        NOT: { itemId: item.id },
+      },
+      data: { equipped: false },
+    });
+
     await prisma.userInventory.update({ where: { id: inv.id }, data: { equipped: true } });
 
-    // latest (saved or draft) bring back
     minime = await prisma.minime.findFirst({
       where: { userId },
       orderBy: { createdAt: 'desc' }
     });
   }
 
+
+  const wardrobe = await prisma.userInventory.findMany({
+    where: { userId },
+    include: { item: true },
+    orderBy: { acquiredAt: 'desc' },
+  });
+
   return res.json({
     success: true,
     message: 'Item granted',
-    data: { inventory: inv, minime } // <-- MiniMe included
+    data: {
+      item,
+      inventory: inv,
+      minime,
+      wardrobeCount: wardrobe.length,
+      wardrobe,
+    }
   });
 }
+
 
     res.status(400).json({ success: false, message: 'Unknown purchase type' });
   } catch (e) {
