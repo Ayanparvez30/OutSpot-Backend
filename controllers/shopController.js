@@ -360,51 +360,25 @@ exports.confirmIAPPurchase = async (req, res) => {
       return res.json({ success: true, message: 'Multiplier activated', data: grant });
     }
 
-if (type === "item") {
-  // ✅ backend is source of truth: productId must exist in StoreProduct
-  const sp = await prisma.storeProduct.findUnique({ where: { productId } });
-  if (!sp || !sp.isActive) {
-    return res.status(404).json({
-      success: false,
-      message: "Unknown productId. Add it to StoreProduct catalog on backend.",
-    });
-  }
 
-  // ✅ create/update ShopItem for this productId
-  const item = await prisma.shopItem.upsert({
-    where: { productId },
-    update: {
-      slot: sp.slot,
-      name: sp.name,
-      brand: sp.brand || "Store",
-      imageUrl: sp.imageUrl,
-      priceUsd: sp.priceUsd || "0.00",
-      payload: sp.payload || {},
-      isFeatured: false,
-    },
-    create: {
-      productId,
-      slot: sp.slot,
-      name: sp.name,
-      brand: sp.brand || "Store",
-      imageUrl: sp.imageUrl,
-      priceUsd: sp.priceUsd || "0.00",
-      payload: sp.payload || {},
-      isFeatured: false,
-    },
-  });
+if (type === 'item') {
+  const item = await prisma.shopItem.findUnique({ where: { id: Number(itemId) } });
+  if (!item) return res.status(404).json({ success: false, message: 'Item not found' });
 
-  // ✅ grant inventory
   const inv = await prisma.userInventory.upsert({
     where: { userId_itemId: { userId, itemId: item.id } },
     update: {},
     create: { userId, itemId: item.id, equipped: false },
   });
 
+  console.log("✅ Item granted to inventory:", { userId, itemId: item.id, invId: inv.id });
+
   let minime = null;
+
   if (applyNow) {
     await applyClothingToCurrentMinime(userId, item);
 
+    // (optional but recommended) unequip others in same slot
     await prisma.userInventory.updateMany({
       where: {
         userId,
@@ -419,17 +393,29 @@ if (type === "item") {
 
     minime = await prisma.minime.findFirst({
       where: { userId },
-      orderBy: { createdAt: "desc" },
+      orderBy: { createdAt: 'desc' }
     });
   }
 
+
+  const wardrobe = await prisma.userInventory.findMany({
+    where: { userId },
+    include: { item: true },
+    orderBy: { acquiredAt: 'desc' },
+  });
+
   return res.json({
     success: true,
-    message: "Item granted",
-    data: { productId, item, inventory: inv, minime },
+    message: 'Item granted',
+    data: {
+      item,
+      inventory: inv,
+      minime,
+      wardrobeCount: wardrobe.length,
+      wardrobe,
+    }
   });
 }
-
 
 
     res.status(400).json({ success: false, message: 'Unknown purchase type' });
