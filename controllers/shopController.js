@@ -246,7 +246,6 @@ exports.listFeatured = async (_req, res) => {
   res.json({ success: true, data: items });
 };
 // controllers/shopController.js
-
 exports.getWardrobeInventory = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -257,30 +256,51 @@ exports.getWardrobeInventory = async (req, res) => {
       orderBy: { acquiredAt: "desc" },
     });
 
-    // group by slot
-    const grouped = rows.reduce((acc, r) => {
-      const slot = r.item?.slot || "UNKNOWN";
+    // ✅ flat (slot flattened)
+    const flat = rows.map((r) => ({
+      id: r.id,
+      userId: r.userId,
+      itemId: r.itemId,
+      equipped: r.equipped,
+      acquiredAt: r.acquiredAt,
+
+      // 👇 NEW top-level slot
+      slot: r.item?.slot || "UNKNOWN",
+
+      // keep item
+      item: r.item,
+    }));
+
+    // ✅ grouped by slot (each row contains slot too)
+    const grouped = flat.reduce((acc, r) => {
+      const slot = r.slot || "UNKNOWN";
       if (!acc[slot]) acc[slot] = [];
-      acc[slot].push({
-        id: r.id,
-        equipped: r.equipped,
-        acquiredAt: r.acquiredAt,
-        item: r.item,
-      });
+      acc[slot].push(r);
+      return acc;
+    }, {});
+
+    // ✅ quick helper: equipped item per slot
+    const equippedBySlot = Object.keys(grouped).reduce((acc, slot) => {
+      acc[slot] = grouped[slot].find((x) => x.equipped) || null;
       return acc;
     }, {});
 
     return res.json({
       success: true,
       data: {
-        totalOwned: rows.length,
+        totalOwned: flat.length,
         grouped,
-        flat: rows,
+        flat,
+        equippedBySlot,
       },
     });
   } catch (e) {
     console.error("getWardrobeInventory error:", e);
-    return res.status(500).json({ success: false, message: "Failed to load wardrobe", error: e.message });
+    return res.status(500).json({
+      success: false,
+      message: "Failed to load wardrobe",
+      error: e.message,
+    });
   }
 };
 
@@ -315,9 +335,25 @@ exports.getActiveMultiplier = async (req, res) => {
  */
 exports.confirmIAPPurchase = async (req, res) => {
   const userId = req.authData.id;
-  const { platform, productId, receipt, type, itemId, applyNow } = req.body;
+
+  // ✅ slot added (optional)
+  const { platform, productId, receipt, type, itemId, applyNow, slot } = req.body || {};
 
   try {
+    // ------------------ Basic validations ------------------
+    if (!platform || !productId || !receipt || !type) {
+      return res.status(400).json({
+        success: false,
+        message: 'platform, productId, receipt, type are required',
+      });
+    }
+
+    // ✅ slot validate (if provided)
+    if (slot && !VALID_SLOTS.includes(slot)) {
+      return res.status(400).json({ success: false, message: 'Invalid slot' });
+    }
+
+    // ------------------ Verify receipt ------------------
     let verified;
     if (platform === 'apple') {
       verified = await verifyApple(receipt, productId);
@@ -326,10 +362,16 @@ exports.confirmIAPPurchase = async (req, res) => {
     } else {
       return res.status(400).json({ success: false, message: 'Unknown platform' });
     }
-    if (!verified.ok) {
-      return res.status(400).json({ success: false, message: 'Receipt invalid', detail: verified.message });
+
+    if (!verified?.ok) {
+      return res.status(400).json({
+        success: false,
+        message: 'Receipt invalid',
+        detail: verified?.message || 'Verification failed',
+      });
     }
 
+    // ------------------ MULTIPLIER ------------------
     if (type === 'multiplier') {
       const mp = await prisma.multiplierProduct.findUnique({ where: { productId } });
       if (!mp) return res.status(404).json({ success: false, message: 'Product not found' });
@@ -337,10 +379,12 @@ exports.confirmIAPPurchase = async (req, res) => {
       const now = new Date();
       const endsAt = new Date(now.getTime() + mp.hours * 3600 * 1000);
 
-      // idempotency by receiptTxId
-      const existing = await prisma.activeMultiplier.findUnique({
-        where: { userId_receiptTxId: { userId, receiptTxId: verified.transactionId } },
-      }).catch(() => null);
+      // ✅ idempotency by receiptTxId
+      const existing = await prisma.activeMultiplier
+        .findUnique({
+          where: { userId_receiptTxId: { userId, receiptTxId: verified.transactionId } },
+        })
+        .catch(() => null);
 
       if (existing) {
         return res.json({ success: true, message: 'Already granted', data: existing });
@@ -357,72 +401,95 @@ exports.confirmIAPPurchase = async (req, res) => {
           receiptTxId: verified.transactionId,
         },
       });
+
       return res.json({ success: true, message: 'Multiplier activated', data: grant });
     }
 
+    // ------------------ ITEM ------------------
+    if (type === 'item') {
+      if (!itemId) {
+        return res.status(400).json({ success: false, message: 'itemId required for item purchase' });
+      }
 
-if (type === 'item') {
-  const item = await prisma.shopItem.findUnique({ where: { id: Number(itemId) } });
-  if (!item) return res.status(404).json({ success: false, message: 'Item not found' });
+      const item = await prisma.shopItem.findUnique({ where: { id: Number(itemId) } });
+      if (!item) return res.status(404).json({ success: false, message: 'Item not found' });
 
-  const inv = await prisma.userInventory.upsert({
-    where: { userId_itemId: { userId, itemId: item.id } },
-    update: {},
-    create: { userId, itemId: item.id, equipped: false },
-  });
+      // ✅ slot mismatch guard (only when client sends slot)
+      if (slot && item.slot !== slot) {
+        return res.status(400).json({
+          success: false,
+          message: `Slot mismatch. item.slot=${item.slot} but body.slot=${slot}`,
+        });
+      }
 
-  console.log("✅ Item granted to inventory:", { userId, itemId: item.id, invId: inv.id });
+      // ✅ add to inventory (idempotent)
+      const inv = await prisma.userInventory.upsert({
+        where: { userId_itemId: { userId, itemId: item.id } },
+        update: {},
+        create: { userId, itemId: item.id, equipped: false },
+      });
 
-  let minime = null;
+      console.log('✅ Item granted to inventory:', { userId, itemId: item.id, invId: inv.id });
 
-  if (applyNow) {
-    await applyClothingToCurrentMinime(userId, item);
+      let minime = null;
 
-    // (optional but recommended) unequip others in same slot
-    await prisma.userInventory.updateMany({
-      where: {
-        userId,
-        equipped: true,
-        item: { slot: item.slot },
-        NOT: { itemId: item.id },
-      },
-      data: { equipped: false },
-    });
+      // ✅ applyNow = equip + apply to minime
+      if (String(applyNow).toLowerCase() === 'true' || applyNow === true) {
+        // 1) apply in minime (creates draft if missing)
+        await applyClothingToCurrentMinime(userId, item);
 
-    await prisma.userInventory.update({ where: { id: inv.id }, data: { equipped: true } });
+        // 2) unequip others in same slot (recommended)
+        await prisma.userInventory.updateMany({
+          where: {
+            userId,
+            equipped: true,
+            item: { slot: item.slot },
+            NOT: { itemId: item.id },
+          },
+          data: { equipped: false },
+        });
 
-    minime = await prisma.minime.findFirst({
-      where: { userId },
-      orderBy: { createdAt: 'desc' }
-    });
-  }
+        // 3) equip this one
+        await prisma.userInventory.update({
+          where: { id: inv.id },
+          data: { equipped: true },
+        });
 
+        // 4) latest minime (saved/draft যেটাই latest)
+        minime = await prisma.minime.findFirst({
+          where: { userId },
+          orderBy: { createdAt: 'desc' },
+        });
+      }
 
-  const wardrobe = await prisma.userInventory.findMany({
-    where: { userId },
-    include: { item: true },
-    orderBy: { acquiredAt: 'desc' },
-  });
+      // ✅ wardrobe return (inventory list)
+      const wardrobe = await prisma.userInventory.findMany({
+        where: { userId },
+        include: { item: true },
+        orderBy: { acquiredAt: 'desc' },
+      });
 
-  return res.json({
-    success: true,
-    message: 'Item granted',
-    data: {
-      item,
-      inventory: inv,
-      minime,
-      wardrobeCount: wardrobe.length,
-      wardrobe,
+      return res.json({
+        success: true,
+        message: 'Item granted',
+        data: {
+          item,
+          inventory: inv,
+          minime,
+          wardrobeCount: wardrobe.length,
+          wardrobe,
+        },
+      });
     }
-  });
-}
 
-
-    res.status(400).json({ success: false, message: 'Unknown purchase type' });
+    // ------------------ Unknown type ------------------
+    return res.status(400).json({ success: false, message: 'Unknown purchase type' });
   } catch (e) {
-    res.status(500).json({ success: false, message: 'IAP confirm failed', error: e.message });
+    console.error('confirmIAPPurchase error:', e);
+    return res.status(500).json({ success: false, message: 'IAP confirm failed', error: e.message });
   }
 };
+
 exports.equipItem = async (req, res) => {
   const userId = req.authData.id;
   const { itemId, save } = req.body; // optional: save=true দিলে draft auto-save করবে
