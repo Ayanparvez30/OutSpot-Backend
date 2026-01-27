@@ -1,0 +1,67 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex gap-2 align-items-center">
+    <span class="text-muted"><%= total %> challenges</span>
+    <a href="/admin/challenges" class="btn btn-sm <%= !frequency ? 'btn-primary' : 'btn-outline-secondary' %>">All</a>
+    <a href="/admin/challenges?frequency=DAILY" class="btn btn-sm <%= frequency === 'DAILY' ? 'btn-primary' : 'btn-outline-secondary' %>">Daily</a>
+    <a href="/admin/challenges?frequency=WEEKLY" class="btn btn-sm <%= frequency === 'WEEKLY' ? 'btn-primary' : 'btn-outline-secondary' %>">Weekly</a>
+  </div>
+  <div class="d-flex gap-2">
+    <form method="GET" action="/admin/challenges" class="d-flex gap-2">
+      <input type="text" name="q" class="form-control form-control-sm" placeholder="Search..." value="<%= search %>" style="width:180px">
+      <button class="btn btn-sm btn-primary">Search</button>
+    </form>
+    <a href="/admin/challenges/create" class="btn btn-sm btn-success"><i class="bi bi-plus me-1"></i>Create</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>ID</th><th>Title</th><th>Frequency</th><th>Points</th><th>Tier</th><th>Active</th><th>Featured</th><th>Submissions</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        <% challenges.forEach(c => { %>
+          <tr>
+            <td><%= c.id %></td>
+            <td><%= c.title %></td>
+            <td><span class="badge bg-<%= c.frequency === 'DAILY' ? 'primary' : 'info' %>"><%= c.frequency %></span></td>
+            <td><%= c.points %></td>
+            <td><span class="badge bg-<%= c.tier === 'GOLD' ? 'warning' : 'secondary' %>"><%= c.tier %></span></td>
+            <td>
+              <% if (c.isActive) { %>
+                <span class="badge bg-success">Active</span>
+              <% } else { %>
+                <span class="badge bg-secondary">Inactive</span>
+              <% } %>
+            </td>
+            <td><%= c.isFeatured ? 'Yes' : '-' %></td>
+            <td><a href="/admin/challenges/<%= c.id %>/submissions"><%= c._count.submissions %></a></td>
+            <td>
+              <div class="d-flex gap-1">
+                <a href="/admin/challenges/<%= c.id %>/edit" class="btn btn-sm btn-outline-primary">Edit</a>
+                <% if (c.isActive) { %>
+                  <form method="POST" action="/admin/challenges/<%= c.id %>/deactivate" style="display:inline">
+                    <button class="btn btn-sm btn-outline-warning">Deactivate</button>
+                  </form>
+                <% } else { %>
+                  <form method="POST" action="/admin/challenges/<%= c.id %>/activate" style="display:inline">
+                    <button class="btn btn-sm btn-outline-success">Activate</button>
+                  </form>
+                <% } %>
+                <form method="POST" action="/admin/challenges/<%= c.id %>/feature" style="display:inline">
+                  <button class="btn btn-sm btn-outline-info"><%= c.isFeatured ? 'Unfeature' : 'Feature' %></button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        <% }) %>
+        <% if (challenges.length === 0) { %>
+          <tr><td colspan="9" class="text-center text-muted py-3">No challenges found.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>

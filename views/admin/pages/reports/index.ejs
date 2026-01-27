@@ -1,0 +1,46 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <span class="text-muted"><%= total %> reports</span>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="/admin/reports" class="btn btn-sm <%= !statusFilter ? 'btn-primary' : 'btn-outline-secondary' %>">All</a>
+    <a href="/admin/reports?status=PENDING" class="btn btn-sm <%= statusFilter === 'PENDING' ? 'btn-warning' : 'btn-outline-warning' %>">Pending</a>
+    <a href="/admin/reports?status=Reviewed" class="btn btn-sm <%= statusFilter === 'Reviewed' ? 'btn-info' : 'btn-outline-info' %>">Reviewed</a>
+    <a href="/admin/reports?status=Resolved" class="btn btn-sm <%= statusFilter === 'Resolved' ? 'btn-success' : 'btn-outline-success' %>">Resolved</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>ID</th><th>Reporter</th><th>Reported</th><th>Status</th><th>Date</th><th>Action</th></tr>
+      </thead>
+      <tbody>
+        <% reports.forEach(r => { %>
+          <tr>
+            <td><%= r.id %></td>
+            <td><a href="/admin/users/<%= r.reporter.id %>"><%= r.reporter.username %></a></td>
+            <td><a href="/admin/users/<%= r.reported.id %>"><%= r.reported.username %></a></td>
+            <td>
+              <% if (r.status === 'PENDING') { %>
+                <span class="badge bg-warning text-dark">Pending</span>
+              <% } else if (r.status === 'Reviewed') { %>
+                <span class="badge bg-info text-dark">Reviewed</span>
+              <% } else { %>
+                <span class="badge bg-success">Resolved</span>
+              <% } %>
+            </td>
+            <td><%= r.createdAt.toLocaleDateString() %></td>
+            <td><a href="/admin/reports/<%= r.id %>" class="btn btn-sm btn-outline-primary">View</a></td>
+          </tr>
+        <% }) %>
+        <% if (reports.length === 0) { %>
+          <tr><td colspan="6" class="text-center text-muted py-3">No reports found.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>

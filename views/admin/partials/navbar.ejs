@@ -1,0 +1,11 @@
+<nav class="navbar navbar-light bg-white border-bottom px-4">
+  <span class="navbar-text">
+    <% if (typeof title !== 'undefined') { %><strong><%= title %></strong><% } %>
+  </span>
+  <div class="d-flex align-items-center">
+    <% if (typeof adminUser !== 'undefined' && adminUser) { %>
+      <span class="me-3 text-muted"><i class="bi bi-person-circle me-1"></i><%= adminUser.username %></span>
+      <a href="/admin/logout" class="btn btn-outline-secondary btn-sm">Logout</a>
+    <% } %>
+  </div>
+</nav>

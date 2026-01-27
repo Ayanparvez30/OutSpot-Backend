@@ -1,0 +1,54 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <span class="text-muted"><%= total %> location points</span>
+  <form method="GET" action="/admin/locations" class="d-flex gap-2">
+    <input type="text" name="q" class="form-control form-control-sm" placeholder="Search place or user..." value="<%= search %>" style="width:220px">
+    <button class="btn btn-sm btn-primary">Search</button>
+  </form>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>ID</th><th>User</th><th>Place</th><th>Points</th><th>Media</th><th>Lat/Lng</th><th>Date</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        <% locationPoints.forEach(lp => { %>
+          <tr>
+            <td><%= lp.id %></td>
+            <td><a href="/admin/users/<%= lp.user.id %>"><%= lp.user.username %></a></td>
+            <td><%= lp.placeName || '-' %></td>
+            <td><%= lp.points %></td>
+            <td>
+              <% if (lp.mediaUrl) { %>
+                <a href="<%= lp.mediaUrl %>" target="_blank"><img src="<%= lp.mediaUrl %>" class="submission-img" alt="media" style="width:50px;height:50px"></a>
+              <% } else { %>-<% } %>
+            </td>
+            <td>
+              <% if (lp.latitude && lp.longitude) { %>
+                <%= lp.latitude.toFixed(4) %>, <%= lp.longitude.toFixed(4) %>
+              <% } else { %>-<% } %>
+            </td>
+            <td><%= lp.createdAt.toLocaleDateString() %></td>
+            <td>
+              <div class="d-flex gap-1">
+                <form method="POST" action="/admin/locations/<%= lp.id %>/adjust" class="d-flex gap-1" style="display:inline">
+                  <input type="number" name="points" class="form-control form-control-sm" value="<%= lp.points %>" style="width:60px">
+                  <button class="btn btn-sm btn-outline-primary">Set</button>
+                </form>
+                <form method="POST" action="/admin/locations/<%= lp.id %>/delete" style="display:inline">
+                  <button class="btn btn-sm btn-outline-danger" data-confirm="Remove this location point?">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        <% }) %>
+        <% if (locationPoints.length === 0) { %>
+          <tr><td colspan="8" class="text-center text-muted py-3">No location points found.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>

@@ -73,6 +73,12 @@ model User {
   multipliers ActiveMultiplier[]
   pointBundlePurchases PointBundlePurchase[]
   notificationRedDot   Boolean @default(false)
+
+  // Admin panel fields
+  isActive   Boolean  @default(true)
+  isBanned   Boolean  @default(false)
+  bannedAt   DateTime?
+  banReason  String?
 }
 
 model Minime {
@@ -349,6 +355,9 @@ model Challenge {
   submissions    Submission[]
   completions    ChallengeCompletion[]
 
+  isActive    Boolean @default(true)
+  isFeatured  Boolean @default(false)
+
   @@unique([title, frequency]) // <— add this
 }
 
@@ -415,6 +424,9 @@ model Report {
   reporterId  Int
   reportedId  Int
   status      String   @default("PENDING")  // PENDING, Reviewed, Resolved
+  reason      String?
+  adminNote   String?
+  reviewedAt  DateTime?
   createdAt   DateTime @default(now())
 
   reporter    User     @relation("Reporter", fields: [reporterId], references: [id])
@@ -543,4 +555,15 @@ model Referral {
 
   @@unique([inviterId, inviteeId])
   @@unique([inviteeId]) // ➜ একজন ইউজার মাত্র ১বারই রেফার্ড হতে পারবে
+}
+
+model AdminUser {
+  id        Int      @id @default(autoincrement())
+  username  String   @unique
+  email     String   @unique
+  password  String
+  role      String   @default("admin")
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

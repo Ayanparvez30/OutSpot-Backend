@@ -1,0 +1,36 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <span class="text-muted"><%= products.length %> products | <%= activeCount %> active multipliers</span>
+  </div>
+  <div class="d-flex gap-2">
+    <a href="/admin/points/ledger" class="btn btn-sm btn-outline-secondary">Points Ledger</a>
+    <a href="/admin/points/bundles" class="btn btn-sm btn-outline-secondary">Bundles</a>
+    <a href="/admin/points/purchases" class="btn btn-sm btn-outline-secondary">Purchases</a>
+    <a href="/admin/points/multipliers/create" class="btn btn-sm btn-success"><i class="bi bi-plus me-1"></i>Create</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>ID</th><th>Product ID</th><th>Factor</th><th>Hours</th><th>Store Price</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        <% products.forEach(p => { %>
+          <tr>
+            <td><%= p.id %></td>
+            <td><%= p.productId %></td>
+            <td><%= p.factor %>x</td>
+            <td><%= p.hours %>h</td>
+            <td>$<%= Number(p.priceUsd).toFixed(2) %></td>
+            <td><a href="/admin/points/multipliers/<%= p.id %>/edit" class="btn btn-sm btn-outline-primary">Edit</a></td>
+          </tr>
+        <% }) %>
+        <% if (products.length === 0) { %>
+          <tr><td colspan="6" class="text-center text-muted py-3">No multiplier products.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>

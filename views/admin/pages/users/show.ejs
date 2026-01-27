@@ -1,0 +1,199 @@
+<div class="row">
+  <div class="col-md-4">
+    <div class="card mb-3">
+      <div class="card-body text-center">
+        <h5><%= user.username %></h5>
+        <p class="text-muted mb-1"><%= user.email || 'No email' %></p>
+        <p class="text-muted mb-1"><%= user.phone || 'No phone' %></p>
+        <p class="mb-1"><strong><%= user.totalPoints %></strong> points</p>
+        <p class="text-muted mb-2"><%= [user.firstName, user.lastName].filter(Boolean).join(' ') || 'No name set' %></p>
+
+        <% if (user.isBanned) { %>
+          <span class="badge bg-danger mb-2">Banned</span>
+        <% } else if (!user.isActive) { %>
+          <span class="badge bg-secondary mb-2">Inactive</span>
+        <% } else { %>
+          <span class="badge bg-success mb-2">Active</span>
+        <% } %>
+
+        <div class="mt-2">
+          <a href="/admin/users/<%= user.id %>/edit" class="btn btn-sm btn-outline-primary">Edit Profile</a>
+          <a href="/admin/users/<%= user.id %>/inventory" class="btn btn-sm btn-outline-secondary">Inventory</a>
+          <a href="/admin/users/<%= user.id %>/points" class="btn btn-sm btn-outline-secondary">Points Ledger</a>
+        </div>
+      </div>
+    </div>
+
+    <div class="card mb-3">
+      <div class="card-header"><strong>Info</strong></div>
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex justify-content-between"><span>ID</span><span><%= user.id %></span></li>
+        <li class="list-group-item d-flex justify-content-between"><span>Referral Code</span><span><%= user.referralCode %></span></li>
+        <li class="list-group-item d-flex justify-content-between"><span>Friends</span><span><%= friendCount %></span></li>
+        <li class="list-group-item d-flex justify-content-between"><span>Communities</span><span><%= user.communities.length %></span></li>
+        <li class="list-group-item d-flex justify-content-between"><span>Joined</span><span><%= user.createdAt.toLocaleDateString() %></span></li>
+        <% if (user.Location) { %>
+          <li class="list-group-item d-flex justify-content-between"><span>Location</span><span><%= user.Location.latitude.toFixed(4) %>, <%= user.Location.longitude.toFixed(4) %></span></li>
+        <% } %>
+        <% if (user.bio) { %>
+          <li class="list-group-item"><span class="text-muted">Bio:</span> <%= user.bio %></li>
+        <% } %>
+      </ul>
+    </div>
+
+    <!-- Actions -->
+    <div class="card mb-3">
+      <div class="card-header"><strong>Actions</strong></div>
+      <div class="card-body">
+        <% if (user.isBanned) { %>
+          <form method="POST" action="/admin/users/<%= user.id %>/unban" class="mb-2">
+            <button class="btn btn-sm btn-success w-100" data-confirm="Unban this user?">Unban User</button>
+          </form>
+        <% } else { %>
+          <form method="POST" action="/admin/users/<%= user.id %>/ban" class="mb-2">
+            <input type="text" name="reason" class="form-control form-control-sm mb-1" placeholder="Ban reason (optional)">
+            <button class="btn btn-sm btn-danger w-100" data-confirm="Ban this user?">Ban User</button>
+          </form>
+        <% } %>
+
+        <% if (user.isActive) { %>
+          <form method="POST" action="/admin/users/<%= user.id %>/deactivate" class="mb-2">
+            <button class="btn btn-sm btn-warning w-100" data-confirm="Deactivate this user?">Deactivate</button>
+          </form>
+        <% } else { %>
+          <form method="POST" action="/admin/users/<%= user.id %>/activate" class="mb-2">
+            <button class="btn btn-sm btn-success w-100">Activate</button>
+          </form>
+        <% } %>
+
+        <hr>
+        <form method="POST" action="/admin/users/<%= user.id %>/adjust-points" class="mb-2">
+          <div class="input-group input-group-sm mb-1">
+            <input type="number" name="points" class="form-control" placeholder="Points (+/-)" required>
+            <input type="text" name="reason" class="form-control" placeholder="Reason" value="ADMIN_ADJUSTMENT">
+          </div>
+          <button class="btn btn-sm btn-outline-primary w-100">Adjust Points</button>
+        </form>
+
+        <hr>
+        <form method="POST" action="/admin/users/<%= user.id %>/grant-item">
+          <div class="input-group input-group-sm mb-1">
+            <select name="itemId" class="form-select" required>
+              <option value="">Grant item...</option>
+              <% shopItems.forEach(item => { %>
+                <option value="<%= item.id %>"><%= item.slot %> - <%= item.name %></option>
+              <% }) %>
+            </select>
+          </div>
+          <button class="btn btn-sm btn-outline-secondary w-100">Grant Item</button>
+        </form>
+      </div>
+    </div>
+  </div>
+
+  <div class="col-md-8">
+    <!-- Recent Submissions -->
+    <div class="card mb-3">
+      <div class="card-header"><strong>Recent Submissions</strong></div>
+      <div class="card-body p-0">
+        <% if (user.submissions.length === 0) { %>
+          <p class="text-muted p-3 mb-0">No submissions yet.</p>
+        <% } else { %>
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Challenge</th><th>Media</th><th>Date</th></tr></thead>
+            <tbody>
+              <% user.submissions.forEach(s => { %>
+                <tr>
+                  <td><%= s.challenge.title %></td>
+                  <td><a href="<%= s.mediaUrl %>" target="_blank"><img src="<%= s.mediaUrl %>" class="submission-img" alt="submission"></a></td>
+                  <td><%= s.createdAt.toLocaleDateString() %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+    </div>
+
+    <!-- Recent Points -->
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between">
+        <strong>Recent Points</strong>
+        <a href="/admin/users/<%= user.id %>/points" class="btn btn-sm btn-outline-primary">View All</a>
+      </div>
+      <div class="card-body p-0">
+        <% if (user.pointsLedger.length === 0) { %>
+          <p class="text-muted p-3 mb-0">No points history.</p>
+        <% } else { %>
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Base</th><th>Multiplier</th><th>Final</th><th>Reason</th><th>Date</th></tr></thead>
+            <tbody>
+              <% user.pointsLedger.forEach(p => { %>
+                <tr>
+                  <td><%= p.basePoints %></td>
+                  <td><%= p.appliedMultiplier %>x</td>
+                  <td><strong><%= p.finalPoints %></strong></td>
+                  <td><%= p.reason || '-' %></td>
+                  <td><%= p.createdAt.toLocaleDateString() %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+    </div>
+
+    <!-- Inventory preview -->
+    <div class="card mb-3">
+      <div class="card-header d-flex justify-content-between">
+        <strong>Inventory (<%= user.inventory.length %>)</strong>
+        <a href="/admin/users/<%= user.id %>/inventory" class="btn btn-sm btn-outline-primary">View All</a>
+      </div>
+      <div class="card-body p-0">
+        <% if (user.inventory.length === 0) { %>
+          <p class="text-muted p-3 mb-0">No items.</p>
+        <% } else { %>
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Item</th><th>Slot</th><th>Equipped</th><th>Action</th></tr></thead>
+            <tbody>
+              <% user.inventory.forEach(inv => { %>
+                <tr>
+                  <td><%= inv.item.name %></td>
+                  <td><%= inv.item.slot %></td>
+                  <td><%= inv.equipped ? 'Yes' : 'No' %></td>
+                  <td>
+                    <form method="POST" action="/admin/users/<%= user.id %>/remove-item" style="display:inline">
+                      <input type="hidden" name="inventoryId" value="<%= inv.id %>">
+                      <button class="btn btn-sm btn-outline-danger" data-confirm="Remove this item?">Remove</button>
+                    </form>
+                  </td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+    </div>
+
+    <!-- Reports -->
+    <% if (user.reportsReceived.length > 0) { %>
+      <div class="card mb-3">
+        <div class="card-header"><strong>Reports Received (<%= user.reportsReceived.length %>)</strong></div>
+        <div class="card-body p-0">
+          <table class="table table-sm mb-0">
+            <thead><tr><th>Reporter</th><th>Status</th><th>Date</th></tr></thead>
+            <tbody>
+              <% user.reportsReceived.forEach(r => { %>
+                <tr>
+                  <td><%= r.reporter.username %></td>
+                  <td><span class="badge badge-<%= r.status.toLowerCase() %>"><%= r.status %></span></td>
+                  <td><%= r.createdAt.toLocaleDateString() %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    <% } %>
+  </div>
+</div>

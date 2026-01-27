@@ -1,0 +1,97 @@
+<div class="row">
+  <div class="col-md-6">
+    <div class="card mb-3">
+      <div class="card-header"><strong>Report #<%= report.id %></strong></div>
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex justify-content-between">
+          <span>Reporter</span>
+          <a href="/admin/users/<%= report.reporter.id %>"><%= report.reporter.username %></a>
+        </li>
+        <li class="list-group-item d-flex justify-content-between">
+          <span>Reported</span>
+          <a href="/admin/users/<%= report.reported.id %>"><%= report.reported.username %></a>
+        </li>
+        <li class="list-group-item d-flex justify-content-between">
+          <span>Status</span>
+          <% if (report.status === 'PENDING') { %>
+            <span class="badge bg-warning text-dark">Pending</span>
+          <% } else if (report.status === 'Reviewed') { %>
+            <span class="badge bg-info text-dark">Reviewed</span>
+          <% } else { %>
+            <span class="badge bg-success">Resolved</span>
+          <% } %>
+        </li>
+        <li class="list-group-item d-flex justify-content-between">
+          <span>Date</span><span><%= report.createdAt.toLocaleString() %></span>
+        </li>
+        <% if (report.reason) { %>
+          <li class="list-group-item"><span class="text-muted">Reason:</span> <%= report.reason %></li>
+        <% } %>
+        <% if (report.adminNote) { %>
+          <li class="list-group-item"><span class="text-muted">Admin Note:</span> <%= report.adminNote %></li>
+        <% } %>
+        <% if (report.reviewedAt) { %>
+          <li class="list-group-item d-flex justify-content-between">
+            <span>Reviewed At</span><span><%= report.reviewedAt.toLocaleString() %></span>
+          </li>
+        <% } %>
+      </ul>
+    </div>
+
+    <!-- Reported user status -->
+    <div class="card mb-3">
+      <div class="card-header"><strong>Reported User Status</strong></div>
+      <ul class="list-group list-group-flush">
+        <li class="list-group-item d-flex justify-content-between">
+          <span>Banned</span><span><%= report.reported.isBanned ? 'Yes' : 'No' %></span>
+        </li>
+        <li class="list-group-item d-flex justify-content-between">
+          <span>Active</span><span><%= report.reported.isActive ? 'Yes' : 'No' %></span>
+        </li>
+      </ul>
+    </div>
+  </div>
+
+  <div class="col-md-6">
+    <!-- Update Status -->
+    <div class="card mb-3">
+      <div class="card-header"><strong>Update Status</strong></div>
+      <div class="card-body">
+        <form method="POST" action="/admin/reports/<%= report.id %>/status">
+          <div class="mb-3">
+            <label class="form-label">Status</label>
+            <select name="status" class="form-select">
+              <option value="PENDING" <%= report.status === 'PENDING' ? 'selected' : '' %>>Pending</option>
+              <option value="Reviewed" <%= report.status === 'Reviewed' ? 'selected' : '' %>>Reviewed</option>
+              <option value="Resolved" <%= report.status === 'Resolved' ? 'selected' : '' %>>Resolved</option>
+            </select>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Admin Note</label>
+            <textarea name="adminNote" class="form-control" rows="3"><%= report.adminNote || '' %></textarea>
+          </div>
+          <button type="submit" class="btn btn-primary">Update Status</button>
+        </form>
+      </div>
+    </div>
+
+    <!-- Enforcement Actions -->
+    <div class="card">
+      <div class="card-header"><strong>Enforcement Actions</strong></div>
+      <div class="card-body">
+        <form method="POST" action="/admin/reports/<%= report.id %>/action">
+          <input type="hidden" name="targetUserId" value="<%= report.reported.id %>">
+          <div class="d-grid gap-2">
+            <button type="submit" name="action" value="warn" class="btn btn-warning" data-confirm="Send a warning to this user?">Warn User</button>
+            <button type="submit" name="action" value="ban" class="btn btn-danger" data-confirm="Ban this user?">Ban User</button>
+            <button type="submit" name="action" value="deactivate" class="btn btn-secondary" data-confirm="Deactivate this user's account?">Deactivate Account</button>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="mt-3">
+  <a href="/admin/reports" class="btn btn-outline-secondary">Back to Reports</a>
+</div>

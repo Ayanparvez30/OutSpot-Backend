@@ -1,0 +1,58 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex gap-2 align-items-center">
+    <span class="text-muted"><%= total %> friendships</span>
+    <a href="/admin/friends" class="btn btn-sm <%= !statusFilter ? 'btn-primary' : 'btn-outline-secondary' %>">All</a>
+    <a href="/admin/friends?status=PENDING" class="btn btn-sm <%= statusFilter === 'PENDING' ? 'btn-warning' : 'btn-outline-warning' %>">Pending</a>
+    <a href="/admin/friends?status=ACCEPTED" class="btn btn-sm <%= statusFilter === 'ACCEPTED' ? 'btn-success' : 'btn-outline-success' %>">Accepted</a>
+  </div>
+  <a href="/admin/friends/blocks" class="btn btn-sm btn-outline-danger"><i class="bi bi-slash-circle me-1"></i>View Blocks</a>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>ID</th><th>Requester</th><th>Receiver</th><th>Status</th><th>Requested</th><th>Accepted</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        <% friendships.forEach(f => { %>
+          <tr>
+            <td><%= f.id %></td>
+            <td><a href="/admin/users/<%= f.requester.id %>"><%= f.requester.username %></a></td>
+            <td><a href="/admin/users/<%= f.receiver.id %>"><%= f.receiver.username %></a></td>
+            <td>
+              <% if (f.status === 'PENDING') { %>
+                <span class="badge bg-warning text-dark">Pending</span>
+              <% } else { %>
+                <span class="badge bg-success">Accepted</span>
+              <% } %>
+            </td>
+            <td><%= f.requestedAt.toLocaleDateString() %></td>
+            <td><%= f.acceptedAt ? f.acceptedAt.toLocaleDateString() : '-' %></td>
+            <td>
+              <div class="d-flex gap-1">
+                <% if (f.status === 'PENDING') { %>
+                  <form method="POST" action="/admin/friends/<%= f.id %>/approve" style="display:inline">
+                    <button class="btn btn-sm btn-outline-success">Approve</button>
+                  </form>
+                <% } else { %>
+                  <form method="POST" action="/admin/friends/<%= f.id %>/revoke" style="display:inline">
+                    <button class="btn btn-sm btn-outline-warning">Revoke</button>
+                  </form>
+                <% } %>
+                <form method="POST" action="/admin/friends/<%= f.id %>/remove" style="display:inline">
+                  <button class="btn btn-sm btn-outline-danger" data-confirm="Remove this friendship?">Remove</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        <% }) %>
+        <% if (friendships.length === 0) { %>
+          <tr><td colspan="7" class="text-center text-muted py-3">No friendships found.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>

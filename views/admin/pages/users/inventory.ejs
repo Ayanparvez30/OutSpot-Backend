@@ -1,0 +1,34 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5>Inventory for <a href="/admin/users/<%= user.id %>"><%= user.username %></a></h5>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>Image</th><th>Name</th><th>Slot</th><th>Brand</th><th>Equipped</th><th>Acquired</th><th>Action</th></tr>
+      </thead>
+      <tbody>
+        <% inventory.forEach(inv => { %>
+          <tr>
+            <td><img src="<%= inv.item.imageUrl %>" class="shop-img" alt="<%= inv.item.name %>"></td>
+            <td><%= inv.item.name %></td>
+            <td><%= inv.item.slot %></td>
+            <td><%= inv.item.brand || '-' %></td>
+            <td><%= inv.equipped ? 'Yes' : 'No' %></td>
+            <td><%= inv.acquiredAt.toLocaleDateString() %></td>
+            <td>
+              <form method="POST" action="/admin/users/<%= user.id %>/remove-item" style="display:inline">
+                <input type="hidden" name="inventoryId" value="<%= inv.id %>">
+                <button class="btn btn-sm btn-outline-danger" data-confirm="Remove this item?">Remove</button>
+              </form>
+            </td>
+          </tr>
+        <% }) %>
+        <% if (inventory.length === 0) { %>
+          <tr><td colspan="7" class="text-center text-muted py-3">No items in inventory.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>

@@ -1,0 +1,34 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <span class="text-muted"><%= total %> purchases</span>
+  <div class="d-flex gap-2">
+    <a href="/admin/points/multipliers" class="btn btn-sm btn-outline-secondary">Multipliers</a>
+    <a href="/admin/points/bundles" class="btn btn-sm btn-outline-secondary">Bundles</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>ID</th><th>User</th><th>Product</th><th>Points</th><th>Store Price</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        <% purchases.forEach(p => { %>
+          <tr>
+            <td><%= p.id %></td>
+            <td><a href="/admin/users/<%= p.user.id %>"><%= p.user.username %></a></td>
+            <td><%= p.productId %></td>
+            <td><%= p.points %></td>
+            <td>$<%= Number(p.priceUsd).toFixed(2) %></td>
+            <td><%= p.createdAt.toLocaleString() %></td>
+          </tr>
+        <% }) %>
+        <% if (purchases.length === 0) { %>
+          <tr><td colspan="6" class="text-center text-muted py-3">No purchases found.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>

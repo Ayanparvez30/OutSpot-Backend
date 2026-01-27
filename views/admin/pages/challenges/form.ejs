@@ -1,0 +1,55 @@
+<div class="row justify-content-center">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">
+        <strong><%= challenge ? 'Edit Challenge' : 'Create Challenge' %></strong>
+      </div>
+      <div class="card-body">
+        <form method="POST" action="<%= challenge ? `/admin/challenges/${challenge.id}/edit` : '/admin/challenges/create' %>">
+          <div class="mb-3">
+            <label class="form-label">Title</label>
+            <input type="text" name="title" class="form-control" value="<%= challenge ? challenge.title : '' %>" required>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Description</label>
+            <textarea name="description" class="form-control" rows="3" required><%= challenge ? challenge.description : '' %></textarea>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Type</label>
+            <input type="text" name="type" class="form-control" value="<%= challenge && challenge.type ? challenge.type : '' %>" placeholder="Optional">
+          </div>
+          <div class="row mb-3">
+            <div class="col">
+              <label class="form-label">Frequency</label>
+              <select name="frequency" class="form-select">
+                <option value="DAILY" <%= challenge && challenge.frequency === 'DAILY' ? 'selected' : '' %>>Daily</option>
+                <option value="WEEKLY" <%= challenge && challenge.frequency === 'WEEKLY' ? 'selected' : '' %>>Weekly</option>
+              </select>
+            </div>
+            <div class="col">
+              <label class="form-label">Tier</label>
+              <select name="tier" class="form-select">
+                <option value="SILVER" <%= challenge && challenge.tier === 'SILVER' ? 'selected' : '' %>>Silver</option>
+                <option value="GOLD" <%= challenge && challenge.tier === 'GOLD' ? 'selected' : '' %>>Gold</option>
+              </select>
+            </div>
+          </div>
+          <div class="row mb-3">
+            <div class="col">
+              <label class="form-label">Points</label>
+              <input type="number" name="points" class="form-control" value="<%= challenge ? challenge.points : 10 %>">
+            </div>
+            <div class="col">
+              <label class="form-label">Required Photos</label>
+              <input type="number" name="requiredPhotos" class="form-control" value="<%= challenge ? challenge.requiredPhotos : 1 %>">
+            </div>
+          </div>
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary"><%= challenge ? 'Update' : 'Create' %></button>
+            <a href="/admin/challenges" class="btn btn-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

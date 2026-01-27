@@ -1,0 +1,105 @@
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card metric-card primary">
+      <div class="card-body">
+        <div class="metric-label">Total Users</div>
+        <div class="metric-value"><%= metrics.totalUsers || 0 %></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card metric-card success">
+      <div class="card-body">
+        <div class="metric-label">New Today</div>
+        <div class="metric-value"><%= metrics.newUsersToday || 0 %></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card metric-card info">
+      <div class="card-body">
+        <div class="metric-label">New This Week</div>
+        <div class="metric-value"><%= metrics.newUsersWeek || 0 %></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card metric-card warning">
+      <div class="card-body">
+        <div class="metric-label">Active Challenges</div>
+        <div class="metric-value"><%= metrics.activeChallenges || 0 %> / <%= metrics.totalChallenges || 0 %></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3 mb-4">
+  <div class="col-md-3">
+    <div class="card metric-card danger">
+      <div class="card-body">
+        <div class="metric-label">Pending Reports</div>
+        <div class="metric-value"><%= metrics.pendingReports || 0 %></div>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-3">
+    <div class="card metric-card info">
+      <div class="card-body">
+        <div class="metric-label">Purchases (30d)</div>
+        <div class="metric-value"><%= metrics.totalPurchases || 0 %></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="row g-3">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Recent Reports</strong>
+        <a href="/admin/reports" class="btn btn-sm btn-outline-primary">View All</a>
+      </div>
+      <div class="card-body p-0">
+        <% if (recentReports.length === 0) { %>
+          <p class="text-muted p-3 mb-0">No pending reports.</p>
+        <% } else { %>
+          <table class="table table-hover mb-0">
+            <thead><tr><th>Reporter</th><th>Reported</th><th>Date</th></tr></thead>
+            <tbody>
+              <% recentReports.forEach(r => { %>
+                <tr>
+                  <td><a href="/admin/users/<%= r.reporter.id %>"><%= r.reporter.username %></a></td>
+                  <td><a href="/admin/users/<%= r.reported.id %>"><%= r.reported.username %></a></td>
+                  <td><%= r.createdAt.toLocaleDateString() %></td>
+                </tr>
+              <% }) %>
+            </tbody>
+          </table>
+        <% } %>
+      </div>
+    </div>
+  </div>
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header d-flex justify-content-between align-items-center">
+        <strong>Latest Users</strong>
+        <a href="/admin/users" class="btn btn-sm btn-outline-primary">View All</a>
+      </div>
+      <div class="card-body p-0">
+        <table class="table table-hover mb-0">
+          <thead><tr><th>Username</th><th>Email</th><th>Points</th><th>Joined</th></tr></thead>
+          <tbody>
+            <% recentUsers.forEach(u => { %>
+              <tr>
+                <td><a href="/admin/users/<%= u.id %>"><%= u.username %></a></td>
+                <td><%= u.email || '-' %></td>
+                <td><%= u.totalPoints %></td>
+                <td><%= u.createdAt.toLocaleDateString() %></td>
+              </tr>
+            <% }) %>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+</div>
