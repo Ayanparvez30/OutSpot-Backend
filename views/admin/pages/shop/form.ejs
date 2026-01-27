@@ -5,7 +5,7 @@
         <strong><%= item ? 'Edit Shop Item' : 'Create Shop Item' %></strong>
       </div>
       <div class="card-body">
-        <form method="POST" action="<%= item ? `/admin/shop/${item.id}/edit` : '/admin/shop/create' %>">
+        <form method="POST" action="<%= item ? `/admin/shop/${item.id}/edit` : '/admin/shop/create' %>" enctype="multipart/form-data">
           <div class="mb-3">
             <label class="form-label">Name</label>
             <input type="text" name="name" class="form-control" value="<%= item ? item.name : '' %>" required>
@@ -15,10 +15,15 @@
             <input type="text" name="brand" class="form-control" value="<%= item && item.brand ? item.brand : '' %>">
           </div>
           <div class="mb-3">
-            <label class="form-label">Image URL</label>
-            <input type="text" name="imageUrl" class="form-control" value="<%= item ? item.imageUrl : '' %>" required>
+            <label class="form-label">Image Upload</label>
+            <input type="file" name="imageFile" class="form-control" accept="image/*">
+            <small class="text-muted">Upload an image, or paste a URL below instead.</small>
+          </div>
+          <div class="mb-3">
+            <label class="form-label">Image URL <small class="text-muted">(optional if file uploaded)</small></label>
+            <input type="text" name="imageUrl" class="form-control" value="<%= item ? item.imageUrl : '' %>" placeholder="https://cdn.example.com/image.png">
             <% if (item && item.imageUrl) { %>
-              <img src="<%= item.imageUrl %>" class="shop-img mt-2" alt="preview">
+              <img src="<%= item.imageUrl %>" class="shop-img mt-2" alt="preview" style="max-height:100px">
             <% } %>
           </div>
           <div class="mb-3">
@@ -32,6 +37,16 @@
           <div class="mb-3">
             <label class="form-label">Payload (JSON)</label>
             <textarea name="payload" class="form-control" rows="2" placeholder='{"shirt": "Blue Hawaiian"}'><%= item && item.payload ? JSON.stringify(item.payload) : '' %></textarea>
+          </div>
+          <div class="row mb-3">
+            <div class="col">
+              <label class="form-label">Apple Product ID</label>
+              <input type="text" name="appleProductId" class="form-control" value="<%= item && item.appleProductId ? item.appleProductId : '' %>" placeholder="com.outspot.item_123">
+            </div>
+            <div class="col">
+              <label class="form-label">Google Product ID</label>
+              <input type="text" name="googleProductId" class="form-control" value="<%= item && item.googleProductId ? item.googleProductId : '' %>" placeholder="com.outspot.item_123">
+            </div>
           </div>
           <div class="mb-3 form-check">
             <input type="checkbox" name="isFeatured" class="form-check-input" id="isFeatured" <%= item && item.isFeatured ? 'checked' : '' %>>

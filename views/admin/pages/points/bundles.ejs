@@ -3,6 +3,7 @@
   <div class="d-flex gap-2">
     <a href="/admin/points/multipliers" class="btn btn-sm btn-outline-secondary">Multipliers</a>
     <a href="/admin/points/purchases" class="btn btn-sm btn-outline-secondary">Purchases</a>
+    <a href="/admin/points/bundles/create" class="btn btn-sm btn-success"><i class="bi bi-plus me-1"></i>Create</a>
   </div>
 </div>
 
@@ -10,13 +11,15 @@
   <div class="card-body p-0">
     <table class="table table-hover mb-0">
       <thead>
-        <tr><th>ID</th><th>Product ID</th><th>Points</th><th>Store Price</th><th>Active</th><th>Actions</th></tr>
+        <tr><th>ID</th><th>Product ID</th><th>Apple SKU</th><th>Google SKU</th><th>Points</th><th>Store Price</th><th>Active</th><th>Actions</th></tr>
       </thead>
       <tbody>
         <% bundles.forEach(b => { %>
           <tr>
             <td><%= b.id %></td>
             <td><%= b.productId %></td>
+            <td><%= b.appleProductId || '-' %></td>
+            <td><%= b.googleProductId || '-' %></td>
             <td><%= b.points %></td>
             <td>$<%= Number(b.priceUsd).toFixed(2) %></td>
             <td>
@@ -30,7 +33,7 @@
           </tr>
         <% }) %>
         <% if (bundles.length === 0) { %>
-          <tr><td colspan="6" class="text-center text-muted py-3">No bundles.</td></tr>
+          <tr><td colspan="8" class="text-center text-muted py-3">No bundles.</td></tr>
         <% } %>
       </tbody>
     </table>

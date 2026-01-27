@@ -24,4 +24,6 @@ router.post('/shop/custom/quick-buy', checkAuth, shop.quickBuyFromPreview);
 
 router.get('/shop/wardrobe', checkAuth, shop.getWardrobeInventory);
 
+router.get('/shop/catalog', checkAuth, shop.getCatalog);
+
 module.exports = router;

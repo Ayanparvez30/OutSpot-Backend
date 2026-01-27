@@ -18,6 +18,16 @@
               <input type="number" name="hours" class="form-control" value="<%= product ? product.hours : 1 %>" required>
             </div>
           </div>
+          <div class="row mb-3">
+            <div class="col">
+              <label class="form-label">Apple Product ID</label>
+              <input type="text" name="appleProductId" class="form-control" value="<%= product && product.appleProductId ? product.appleProductId : '' %>" placeholder="com.outspot.mult_2x_1h">
+            </div>
+            <div class="col">
+              <label class="form-label">Google Product ID</label>
+              <input type="text" name="googleProductId" class="form-control" value="<%= product && product.googleProductId ? product.googleProductId : '' %>" placeholder="com.outspot.mult_2x_1h">
+            </div>
+          </div>
           <div class="d-flex gap-2">
             <button type="submit" class="btn btn-primary"><%= product ? 'Update' : 'Create' %></button>
             <a href="/admin/points/multipliers" class="btn btn-secondary">Cancel</a>

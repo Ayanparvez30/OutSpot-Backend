@@ -28,19 +28,25 @@ exports.createMultiplierForm = (req, res) => {
 
 exports.createMultiplier = async (req, res) => {
   try {
-    const { productId, factor, hours } = req.body;
+    const { productId, factor, hours, appleProductId, googleProductId } = req.body;
     await prisma.multiplierProduct.create({
       data: {
         productId,
         factor: parseFloat(factor),
         hours: parseInt(hours),
+        appleProductId: appleProductId || null,
+        googleProductId: googleProductId || null,
       },
     });
     req.flash('success', 'Multiplier product created.');
     res.redirect('/admin/points/multipliers');
   } catch (error) {
     console.error('Create multiplier error:', error);
-    req.flash('error', 'Failed to create multiplier.');
+    if (error.code === 'P2002') {
+      req.flash('error', 'A product ID is already in use.');
+    } else {
+      req.flash('error', 'Failed to create multiplier.');
+    }
     res.redirect('/admin/points/multipliers/create');
   }
 };
@@ -66,20 +72,26 @@ exports.editMultiplierForm = async (req, res) => {
 
 exports.updateMultiplier = async (req, res) => {
   try {
-    const { productId, factor, hours } = req.body;
+    const { productId, factor, hours, appleProductId, googleProductId } = req.body;
     await prisma.multiplierProduct.update({
       where: { id: parseInt(req.params.id) },
       data: {
         productId,
         factor: parseFloat(factor),
         hours: parseInt(hours),
+        appleProductId: appleProductId || null,
+        googleProductId: googleProductId || null,
       },
     });
     req.flash('success', 'Multiplier product updated.');
     res.redirect('/admin/points/multipliers');
   } catch (error) {
     console.error('Update multiplier error:', error);
-    req.flash('error', 'Failed to update multiplier.');
+    if (error.code === 'P2002') {
+      req.flash('error', 'A product ID is already in use.');
+    } else {
+      req.flash('error', 'Failed to update multiplier.');
+    }
     res.redirect(`/admin/points/multipliers/${req.params.id}/edit`);
   }
 };
@@ -140,6 +152,40 @@ exports.listBundles = async (req, res) => {
   }
 };
 
+exports.createBundleForm = (req, res) => {
+  res.render('admin/pages/points/bundle-form', {
+    layout: 'admin/layouts/main',
+    title: 'Create Bundle',
+    bundle: null,
+  });
+};
+
+exports.createBundle = async (req, res) => {
+  try {
+    const { productId, points, isActive, appleProductId, googleProductId } = req.body;
+    await prisma.pointBundleProduct.create({
+      data: {
+        productId,
+        points: parseInt(points),
+        priceUsd: 0,
+        isActive: isActive === 'on',
+        appleProductId: appleProductId || null,
+        googleProductId: googleProductId || null,
+      },
+    });
+    req.flash('success', 'Bundle created.');
+    res.redirect('/admin/points/bundles');
+  } catch (error) {
+    console.error('Create bundle error:', error);
+    if (error.code === 'P2002') {
+      req.flash('error', 'A product ID is already in use.');
+    } else {
+      req.flash('error', 'Failed to create bundle.');
+    }
+    res.redirect('/admin/points/bundles/create');
+  }
+};
+
 exports.editBundleForm = async (req, res) => {
   try {
     const bundle = await prisma.pointBundleProduct.findUnique({ where: { id: parseInt(req.params.id) } });
@@ -161,20 +207,26 @@ exports.editBundleForm = async (req, res) => {
 
 exports.updateBundle = async (req, res) => {
   try {
-    const { productId, points, isActive } = req.body;
+    const { productId, points, isActive, appleProductId, googleProductId } = req.body;
     await prisma.pointBundleProduct.update({
       where: { id: parseInt(req.params.id) },
       data: {
         productId,
         points: parseInt(points),
         isActive: isActive === 'on',
+        appleProductId: appleProductId || null,
+        googleProductId: googleProductId || null,
       },
     });
     req.flash('success', 'Bundle updated.');
     res.redirect('/admin/points/bundles');
   } catch (error) {
     console.error('Update bundle error:', error);
-    req.flash('error', 'Failed to update bundle.');
+    if (error.code === 'P2002') {
+      req.flash('error', 'A product ID is already in use.');
+    } else {
+      req.flash('error', 'Failed to update bundle.');
+    }
     res.redirect(`/admin/points/bundles/${req.params.id}/edit`);
   }
 };
