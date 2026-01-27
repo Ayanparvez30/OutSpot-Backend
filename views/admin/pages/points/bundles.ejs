@@ -1,0 +1,38 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <span class="text-muted"><%= bundles.length %> bundles</span>
+  <div class="d-flex gap-2">
+    <a href="/admin/points/multipliers" class="btn btn-sm btn-outline-secondary">Multipliers</a>
+    <a href="/admin/points/purchases" class="btn btn-sm btn-outline-secondary">Purchases</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>ID</th><th>Product ID</th><th>Points</th><th>Store Price</th><th>Active</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        <% bundles.forEach(b => { %>
+          <tr>
+            <td><%= b.id %></td>
+            <td><%= b.productId %></td>
+            <td><%= b.points %></td>
+            <td>$<%= Number(b.priceUsd).toFixed(2) %></td>
+            <td>
+              <% if (b.isActive) { %>
+                <span class="badge bg-success">Active</span>
+              <% } else { %>
+                <span class="badge bg-secondary">Inactive</span>
+              <% } %>
+            </td>
+            <td><a href="/admin/points/bundles/<%= b.id %>/edit" class="btn btn-sm btn-outline-primary">Edit</a></td>
+          </tr>
+        <% }) %>
+        <% if (bundles.length === 0) { %>
+          <tr><td colspan="6" class="text-center text-muted py-3">No bundles.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>

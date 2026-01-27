@@ -1,0 +1,56 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <span class="text-muted"><%= total %> users total</span>
+  </div>
+  <div class="d-flex gap-2">
+    <form method="GET" action="/admin/users" class="d-flex gap-2">
+      <input type="text" name="q" class="form-control form-control-sm" placeholder="Search users..." value="<%= search %>" style="width:220px">
+      <button class="btn btn-sm btn-primary">Search</button>
+    </form>
+    <a href="/admin/users/export/csv" class="btn btn-sm btn-outline-secondary"><i class="bi bi-download me-1"></i>Export CSV</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr>
+          <th>ID</th>
+          <th>Username</th>
+          <th>Email</th>
+          <th>Name</th>
+          <th>Points</th>
+          <th>Status</th>
+          <th>Joined</th>
+        </tr>
+      </thead>
+      <tbody>
+        <% users.forEach(u => { %>
+          <tr>
+            <td><%= u.id %></td>
+            <td><a href="/admin/users/<%= u.id %>"><%= u.username %></a></td>
+            <td><%= u.email || '-' %></td>
+            <td><%= [u.firstName, u.lastName].filter(Boolean).join(' ') || '-' %></td>
+            <td><%= u.totalPoints %></td>
+            <td>
+              <% if (u.isBanned) { %>
+                <span class="badge bg-danger">Banned</span>
+              <% } else if (!u.isActive) { %>
+                <span class="badge bg-secondary">Inactive</span>
+              <% } else { %>
+                <span class="badge bg-success">Active</span>
+              <% } %>
+            </td>
+            <td><%= u.createdAt.toLocaleDateString() %></td>
+          </tr>
+        <% }) %>
+        <% if (users.length === 0) { %>
+          <tr><td colspan="7" class="text-center text-muted py-3">No users found.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>

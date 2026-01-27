@@ -1,0 +1,31 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h5>Points Ledger for <a href="/admin/users/<%= user.id %>"><%= user.username %></a> (<%= user.totalPoints %> total)</h5>
+  <span class="text-muted"><%= total %> entries</span>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>Base</th><th>Multiplier</th><th>Final</th><th>Reason</th><th>Ref ID</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        <% entries.forEach(e => { %>
+          <tr>
+            <td><%= e.basePoints %></td>
+            <td><%= e.appliedMultiplier %>x</td>
+            <td><strong class="<%= e.finalPoints >= 0 ? 'text-success' : 'text-danger' %>"><%= e.finalPoints %></strong></td>
+            <td><%= e.reason || '-' %></td>
+            <td><%= e.refId || '-' %></td>
+            <td><%= e.createdAt.toLocaleString() %></td>
+          </tr>
+        <% }) %>
+        <% if (entries.length === 0) { %>
+          <tr><td colspan="6" class="text-center text-muted py-3">No entries.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>

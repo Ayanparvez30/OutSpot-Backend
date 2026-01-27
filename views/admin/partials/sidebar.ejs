@@ -1,0 +1,53 @@
+<% const currentPath = typeof req !== 'undefined' ? req.originalUrl : ''; %>
+<nav class="admin-sidebar bg-dark text-white p-3">
+  <div class="sidebar-brand mb-4">
+    <h5 class="fw-bold mb-0">Outspot Admin</h5>
+  </div>
+  <ul class="nav flex-column">
+    <li class="nav-item">
+      <a class="nav-link text-white <%= currentPath.includes('/admin/dashboard') ? 'active' : '' %>" href="/admin/dashboard">
+        <i class="bi bi-speedometer2 me-2"></i>Dashboard
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link text-white <%= currentPath.includes('/admin/users') ? 'active' : '' %>" href="/admin/users">
+        <i class="bi bi-people me-2"></i>Users
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link text-white <%= currentPath.includes('/admin/communities') ? 'active' : '' %>" href="/admin/communities">
+        <i class="bi bi-building me-2"></i>Communities
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link text-white <%= currentPath.startsWith('/admin/friends') ? 'active' : '' %>" href="/admin/friends">
+        <i class="bi bi-person-plus me-2"></i>Friends & Blocks
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link text-white <%= currentPath.includes('/admin/challenges') ? 'active' : '' %>" href="/admin/challenges">
+        <i class="bi bi-trophy me-2"></i>Challenges
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link text-white <%= currentPath.includes('/admin/shop') ? 'active' : '' %>" href="/admin/shop">
+        <i class="bi bi-shop me-2"></i>Shop & Inventory
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link text-white <%= currentPath.includes('/admin/points') ? 'active' : '' %>" href="/admin/points/multipliers">
+        <i class="bi bi-coin me-2"></i>Points & Monetization
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link text-white <%= currentPath.includes('/admin/reports') ? 'active' : '' %>" href="/admin/reports">
+        <i class="bi bi-flag me-2"></i>Reports & Safety
+      </a>
+    </li>
+    <li class="nav-item">
+      <a class="nav-link text-white <%= currentPath.includes('/admin/locations') ? 'active' : '' %>" href="/admin/locations">
+        <i class="bi bi-geo-alt me-2"></i>Locations
+      </a>
+    </li>
+  </ul>
+</nav>

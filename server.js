@@ -1,7 +1,11 @@
 const express = require('express');
 const http = require('http');
+const path = require('path');
 const cors = require('cors');
 const cron = require('node-cron');
+const session = require('express-session');
+const flash = require('connect-flash');
+const expressLayouts = require('express-ejs-layouts');
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
@@ -11,6 +15,33 @@ app.use(express.json());
 
 app.use('/uploads', express.static('uploads'));
 app.use('/pose', express.static('public/pose'));
+
+// --- Admin Panel Setup ---
+app.set('view engine', 'ejs');
+app.set('views', path.join(__dirname, 'views'));
+app.use(expressLayouts);
+app.set('layout', false); // Disable global layout; each render specifies its own
+
+app.use('/admin/assets', express.static(path.join(__dirname, 'public/admin')));
+
+app.use('/admin', session({
+  secret: process.env.ADMIN_SESSION_SECRET || 'outspot-admin-change-me',
+  resave: false,
+  saveUninitialized: false,
+  cookie: {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 8 * 60 * 60 * 1000,
+    sameSite: 'lax',
+  },
+}));
+app.use('/admin', flash());
+app.use('/admin', express.urlencoded({ extended: true }));
+app.use('/admin', (req, res, next) => {
+  res.locals.req = req;
+  next();
+});
+app.use('/admin', require('./routes/admin/index'));
 
 app.get('/health', (req, res) => res.json({ ok: true }));
 

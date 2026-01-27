@@ -1,0 +1,54 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex gap-2 align-items-center">
+    <span class="text-muted"><%= total %> blocks</span>
+    <a href="/admin/friends" class="btn btn-sm btn-outline-secondary"><i class="bi bi-arrow-left me-1"></i>Friendships</a>
+  </div>
+</div>
+
+<!-- Create block form -->
+<div class="card mb-3">
+  <div class="card-header"><strong>Create Block</strong></div>
+  <div class="card-body">
+    <form method="POST" action="/admin/friends/blocks/create" class="d-flex gap-2 align-items-end">
+      <div>
+        <label class="form-label">Blocker User ID</label>
+        <input type="number" name="blockerId" class="form-control form-control-sm" required style="width:120px">
+      </div>
+      <div>
+        <label class="form-label">Blocked User ID</label>
+        <input type="number" name="blockedId" class="form-control form-control-sm" required style="width:120px">
+      </div>
+      <button class="btn btn-sm btn-danger">Block</button>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>ID</th><th>Blocker</th><th>Blocked</th><th>Date</th><th>Action</th></tr>
+      </thead>
+      <tbody>
+        <% blocks.forEach(b => { %>
+          <tr>
+            <td><%= b.id %></td>
+            <td><a href="/admin/users/<%= b.blocker.id %>"><%= b.blocker.username %></a></td>
+            <td><a href="/admin/users/<%= b.blocked.id %>"><%= b.blocked.username %></a></td>
+            <td><%= b.blockedAt.toLocaleDateString() %></td>
+            <td>
+              <form method="POST" action="/admin/friends/blocks/<%= b.id %>/unblock" style="display:inline">
+                <button class="btn btn-sm btn-outline-success" data-confirm="Unblock this user?">Unblock</button>
+              </form>
+            </td>
+          </tr>
+        <% }) %>
+        <% if (blocks.length === 0) { %>
+          <tr><td colspan="5" class="text-center text-muted py-3">No blocks found.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>

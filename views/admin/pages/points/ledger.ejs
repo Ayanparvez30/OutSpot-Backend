@@ -1,0 +1,40 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div>
+    <span class="text-muted"><%= total %> entries</span>
+  </div>
+  <div class="d-flex gap-2">
+    <form method="GET" action="/admin/points/ledger" class="d-flex gap-2">
+      <input type="number" name="userId" class="form-control form-control-sm" placeholder="User ID" value="<%= userId %>" style="width:100px">
+      <input type="text" name="reason" class="form-control form-control-sm" placeholder="Reason" value="<%= reason %>" style="width:160px">
+      <button class="btn btn-sm btn-primary">Filter</button>
+      <a href="/admin/points/ledger" class="btn btn-sm btn-outline-secondary">Clear</a>
+    </form>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>User</th><th>Base</th><th>Multiplier</th><th>Final</th><th>Reason</th><th>Date</th></tr>
+      </thead>
+      <tbody>
+        <% entries.forEach(e => { %>
+          <tr>
+            <td><a href="/admin/users/<%= e.user.id %>"><%= e.user.username %></a></td>
+            <td><%= e.basePoints %></td>
+            <td><%= e.appliedMultiplier %>x</td>
+            <td><strong class="<%= e.finalPoints >= 0 ? 'text-success' : 'text-danger' %>"><%= e.finalPoints %></strong></td>
+            <td><%= e.reason || '-' %></td>
+            <td><%= e.createdAt.toLocaleString() %></td>
+          </tr>
+        <% }) %>
+        <% if (entries.length === 0) { %>
+          <tr><td colspan="6" class="text-center text-muted py-3">No entries found.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>

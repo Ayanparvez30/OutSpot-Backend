@@ -1,0 +1,13 @@
+<% const msgs = typeof messages !== 'undefined' ? messages : {}; %>
+<% if (msgs.success && msgs.success.length) { %>
+  <div class="alert alert-success alert-dismissible fade show mt-2" role="alert">
+    <%= msgs.success[0] %>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+<% } %>
+<% if (msgs.error && msgs.error.length) { %>
+  <div class="alert alert-danger alert-dismissible fade show mt-2" role="alert">
+    <%= msgs.error[0] %>
+    <button type="button" class="btn-close" data-bs-dismiss="alert"></button>
+  </div>
+<% } %>

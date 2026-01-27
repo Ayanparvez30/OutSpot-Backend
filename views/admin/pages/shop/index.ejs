@@ -1,0 +1,55 @@
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <div class="d-flex gap-2 align-items-center">
+    <span class="text-muted"><%= total %> items</span>
+    <a href="/admin/shop" class="btn btn-sm <%= !slotFilter ? 'btn-primary' : 'btn-outline-secondary' %>">All</a>
+    <% ['TOP','BOTTOM','SHOES','GLASSES','ACCESSORY'].forEach(s => { %>
+      <a href="/admin/shop?slot=<%= s %>" class="btn btn-sm <%= slotFilter === s ? 'btn-primary' : 'btn-outline-secondary' %>"><%= s %></a>
+    <% }) %>
+  </div>
+  <div class="d-flex gap-2">
+    <form method="GET" action="/admin/shop" class="d-flex gap-2">
+      <input type="text" name="q" class="form-control form-control-sm" placeholder="Search..." value="<%= search %>" style="width:180px">
+      <button class="btn btn-sm btn-primary">Search</button>
+    </form>
+    <a href="/admin/shop/create" class="btn btn-sm btn-success"><i class="bi bi-plus me-1"></i>Create</a>
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <table class="table table-hover mb-0">
+      <thead>
+        <tr><th>Image</th><th>Name</th><th>Brand</th><th>Slot</th><th>Store Price</th><th>Featured</th><th>Owners</th><th>Actions</th></tr>
+      </thead>
+      <tbody>
+        <% items.forEach(item => { %>
+          <tr>
+            <td><img src="<%= item.imageUrl %>" class="shop-img" alt="<%= item.name %>"></td>
+            <td><%= item.name %></td>
+            <td><%= item.brand || '-' %></td>
+            <td><%= item.slot %></td>
+            <td>$<%= Number(item.priceUsd).toFixed(2) %></td>
+            <td><%= item.isFeatured ? 'Yes' : '-' %></td>
+            <td><%= item._count.inventories %></td>
+            <td>
+              <div class="d-flex gap-1">
+                <a href="/admin/shop/<%= item.id %>/edit" class="btn btn-sm btn-outline-primary">Edit</a>
+                <form method="POST" action="/admin/shop/<%= item.id %>/feature" style="display:inline">
+                  <button class="btn btn-sm btn-outline-info"><%= item.isFeatured ? 'Unfeature' : 'Feature' %></button>
+                </form>
+                <form method="POST" action="/admin/shop/<%= item.id %>/delete" style="display:inline">
+                  <button class="btn btn-sm btn-outline-danger" data-confirm="Delete this item?">Delete</button>
+                </form>
+              </div>
+            </td>
+          </tr>
+        <% }) %>
+        <% if (items.length === 0) { %>
+          <tr><td colspan="8" class="text-center text-muted py-3">No items found.</td></tr>
+        <% } %>
+      </tbody>
+    </table>
+  </div>
+</div>
+
+<%- include('../../partials/pagination', { page, totalPages, baseUrl }) %>
