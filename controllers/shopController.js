@@ -373,7 +373,16 @@ exports.confirmIAPPurchase = async (req, res) => {
 
     // ------------------ MULTIPLIER ------------------
     if (type === 'multiplier') {
-      const mp = await prisma.multiplierProduct.findUnique({ where: { productId } });
+      // Platform-specific lookup with legacy fallback
+      let mp = null;
+      if (platform === 'apple') {
+        mp = await prisma.multiplierProduct.findUnique({ where: { appleProductId: productId } });
+      } else if (platform === 'google') {
+        mp = await prisma.multiplierProduct.findUnique({ where: { googleProductId: productId } });
+      }
+      if (!mp) {
+        mp = await prisma.multiplierProduct.findUnique({ where: { productId } });
+      }
       if (!mp) return res.status(404).json({ success: false, message: 'Product not found' });
 
       const now = new Date();
@@ -542,7 +551,7 @@ exports.listPointBundles = async (_req, res) => {
     const rows = await prisma.pointBundleProduct.findMany({
       where: { isActive: true },
       orderBy: [{ points: 'asc' }],
-      select: { productId: true, points: true, priceUsd: true }
+      select: { productId: true, points: true, priceUsd: true, appleProductId: true, googleProductId: true }
     });
     res.json({ success: true, data: rows });
   } catch (e) {
@@ -553,11 +562,20 @@ exports.listPointBundles = async (_req, res) => {
 
 exports.purchasePointBundle = async (req, res) => {
   const userId = req.authData.id;
-  const { productId, receiptTxId } = req.body || {};
+  const { productId, receiptTxId, platform } = req.body || {};
   if (!productId) return res.status(400).json({ success: false, message: 'productId required' });
 
   try {
-    const bundle = await prisma.pointBundleProduct.findUnique({ where: { productId } });
+    // Platform-specific lookup with legacy fallback
+    let bundle = null;
+    if (platform === 'apple') {
+      bundle = await prisma.pointBundleProduct.findUnique({ where: { appleProductId: productId } });
+    } else if (platform === 'google') {
+      bundle = await prisma.pointBundleProduct.findUnique({ where: { googleProductId: productId } });
+    }
+    if (!bundle) {
+      bundle = await prisma.pointBundleProduct.findUnique({ where: { productId } });
+    }
     if (!bundle || !bundle.isActive) {
       return res.status(404).json({ success: false, message: 'Bundle not found' });
     }
@@ -618,5 +636,35 @@ exports.purchasePointBundle = async (req, res) => {
       return res.json({ success: true, message: 'Already processed (duplicate receipt)', data: {} });
     }
     res.status(500).json({ success: false, message: 'Purchase failed', error: e.message });
+  }
+};
+
+exports.getCatalog = async (_req, res) => {
+  try {
+    const items = await prisma.shopItem.findMany({
+      orderBy: [{ isFeatured: 'desc' }, { slot: 'asc' }, { name: 'asc' }],
+      select: {
+        id: true,
+        slot: true,
+        name: true,
+        brand: true,
+        imageUrl: true,
+        priceUsd: true,
+        payload: true,
+        isFeatured: true,
+        appleProductId: true,
+        googleProductId: true,
+      },
+    });
+
+    const grouped = items.reduce((acc, item) => {
+      if (!acc[item.slot]) acc[item.slot] = [];
+      acc[item.slot].push(item);
+      return acc;
+    }, {});
+
+    res.json({ success: true, data: { items, grouped, total: items.length } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to load catalog', error: e.message });
   }
 };

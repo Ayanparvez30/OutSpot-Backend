@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const uploadToS3 = require('../../utils/s3Upload');
 
 exports.listItems = async (req, res) => {
   try {
@@ -52,22 +53,34 @@ exports.createForm = (req, res) => {
 
 exports.createItem = async (req, res) => {
   try {
-    const { slot, name, brand, imageUrl, isFeatured, payload } = req.body;
+    const { slot, name, brand, imageUrl, isFeatured, payload, appleProductId, googleProductId } = req.body;
+
+    let finalImageUrl = imageUrl || '';
+    if (req.file) {
+      finalImageUrl = await uploadToS3(req.file, 'shop-items');
+    }
+
     await prisma.shopItem.create({
       data: {
         slot,
         name,
         brand: brand || null,
-        imageUrl: imageUrl || '',
+        imageUrl: finalImageUrl,
         isFeatured: isFeatured === 'on',
         payload: payload ? JSON.parse(payload) : null,
+        appleProductId: appleProductId || null,
+        googleProductId: googleProductId || null,
       },
     });
     req.flash('success', 'Shop item created.');
     res.redirect('/admin/shop');
   } catch (error) {
     console.error('Create shop item error:', error);
-    req.flash('error', 'Failed to create item.');
+    if (error.code === 'P2002') {
+      req.flash('error', 'A product ID is already in use by another item.');
+    } else {
+      req.flash('error', 'Failed to create item.');
+    }
     res.redirect('/admin/shop/create');
   }
 };
@@ -94,22 +107,36 @@ exports.editForm = async (req, res) => {
 exports.updateItem = async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { slot, name, brand, imageUrl, isFeatured, payload } = req.body;
+    const { slot, name, brand, imageUrl, isFeatured, payload, appleProductId, googleProductId } = req.body;
+
+    let finalImageUrl;
+    if (req.file) {
+      finalImageUrl = await uploadToS3(req.file, 'shop-items');
+    } else if (imageUrl) {
+      finalImageUrl = imageUrl;
+    }
+
     await prisma.shopItem.update({
       where: { id },
       data: {
         slot, name,
         brand: brand || null,
-        imageUrl: imageUrl || undefined,
+        imageUrl: finalImageUrl || undefined,
         isFeatured: isFeatured === 'on',
         payload: payload ? JSON.parse(payload) : null,
+        appleProductId: appleProductId || null,
+        googleProductId: googleProductId || null,
       },
     });
     req.flash('success', 'Item updated.');
     res.redirect('/admin/shop');
   } catch (error) {
     console.error('Update shop item error:', error);
-    req.flash('error', 'Failed to update item.');
+    if (error.code === 'P2002') {
+      req.flash('error', 'A product ID is already in use by another item.');
+    } else {
+      req.flash('error', 'Failed to update item.');
+    }
     res.redirect(`/admin/shop/${req.params.id}/edit`);
   }
 };

@@ -451,6 +451,8 @@ model ShopItem {
   // any renderer / style info for avatar
   payload   Json?     // e.g. { "shirt": "Blue Hawaiian" }
   isFeatured Boolean   @default(false)
+  appleProductId  String?   @unique   // App Store IAP SKU
+  googleProductId String?   @unique   // Play Store IAP SKU
 
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
@@ -478,6 +480,8 @@ model MultiplierProduct {
   factor    Float    // e.g. 1.5, 2, 2.5
   hours     Int      // 1, 12, etc.
   priceUsd  Decimal  @db.Decimal(10,2)
+  appleProductId  String?   @unique   // App Store IAP SKU
+  googleProductId String?   @unique   // Play Store IAP SKU
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -518,6 +522,8 @@ model PointBundleProduct {
   points    Int
   priceUsd  Decimal  @db.Decimal(10,2)
   isActive  Boolean  @default(true)
+  appleProductId  String?   @unique   // App Store IAP SKU
+  googleProductId String?   @unique   // Play Store IAP SKU
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
