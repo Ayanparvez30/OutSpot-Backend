@@ -53,7 +53,7 @@ exports.createForm = (req, res) => {
 
 exports.createItem = async (req, res) => {
   try {
-    const { slot, name, brand, imageUrl, isFeatured, payload, appleProductId, googleProductId } = req.body;
+    const { slot, name, brand, imageUrl, isFeatured, appleProductId, googleProductId } = req.body;
 
     let finalImageUrl = imageUrl || '';
     if (req.file) {
@@ -67,7 +67,6 @@ exports.createItem = async (req, res) => {
         brand: brand || null,
         imageUrl: finalImageUrl,
         isFeatured: isFeatured === 'on',
-        payload: payload ? JSON.parse(payload) : null,
         appleProductId: appleProductId || null,
         googleProductId: googleProductId || null,
       },
@@ -107,7 +106,7 @@ exports.editForm = async (req, res) => {
 exports.updateItem = async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { slot, name, brand, imageUrl, isFeatured, payload, appleProductId, googleProductId } = req.body;
+    const { slot, name, brand, imageUrl, isFeatured, appleProductId, googleProductId } = req.body;
 
     let finalImageUrl;
     if (req.file) {
@@ -123,7 +122,6 @@ exports.updateItem = async (req, res) => {
         brand: brand || null,
         imageUrl: finalImageUrl || undefined,
         isFeatured: isFeatured === 'on',
-        payload: payload ? JSON.parse(payload) : null,
         appleProductId: appleProductId || null,
         googleProductId: googleProductId || null,
       },
