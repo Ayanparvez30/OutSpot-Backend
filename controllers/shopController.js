@@ -551,7 +551,7 @@ exports.listPointBundles = async (_req, res) => {
     const rows = await prisma.pointBundleProduct.findMany({
       where: { isActive: true },
       orderBy: [{ points: 'asc' }],
-      select: { productId: true, points: true, priceUsd: true, appleProductId: true, googleProductId: true }
+      select: { productId: true, points: true, appleProductId: true, googleProductId: true }
     });
     res.json({ success: true, data: rows });
   } catch (e) {
@@ -649,8 +649,6 @@ exports.getCatalog = async (_req, res) => {
         name: true,
         brand: true,
         imageUrl: true,
-        priceUsd: true,
-        payload: true,
         isFeatured: true,
         appleProductId: true,
         googleProductId: true,
