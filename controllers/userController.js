@@ -312,6 +312,7 @@ async function getProfile(req, res) {
         bio: true,
         bodyType: true,
         bodyShapeUrl: true,
+        totalPoints: true,
         minime: { select: { avatarUrl: true }, where: { isSaved: true } }
       }
     });
