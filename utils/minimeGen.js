@@ -215,6 +215,34 @@ Return a single, centered full-body render.
 `.trim();
 }
 
+// ---------- fetch image as base64 ----------
+async function fetchImageAsBase64(url) {
+  try {
+    const res = await fetch(url);
+    if (!res.ok) return null;
+    const buffer = await res.arrayBuffer();
+    const base64 = Buffer.from(buffer).toString('base64');
+    const contentType = res.headers.get('content-type') || 'image/png';
+    return `data:${contentType};base64,${base64}`;
+  } catch (e) {
+    console.error(`Failed to fetch image from ${url}:`, e.message);
+    return null;
+  }
+}
+
+// ---------- collect outfit image URLs ----------
+function collectOutfitImageUrls(outfit) {
+  const urls = [];
+  const fields = ['shirt', 'pant', 'shoes', 'glasses', 'jewelry', 'bag', 'watch'];
+  for (const field of fields) {
+    const val = outfit[field];
+    if (val && isHttpUrl(val)) {
+      urls.push({ field, url: val });
+    }
+  }
+  return urls;
+}
+
 // ---------- image upload ----------
 async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
   const item = imageResponse?.data?.[0];
@@ -298,12 +326,50 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     hairHint,
   });
 
-  const imageResponse = await openai.images.generate({
-    model: 'gpt-image-1',
-    prompt,
-    size: '1024x1536',
-    background: 'transparent',
-  });
+  // Collect clothing reference images (URLs)
+  const outfitUrls = collectOutfitImageUrls(outfitForModel);
+
+  let imageResponse;
+
+  if (outfitUrls.length > 0) {
+    // Fetch clothing images as base64 for reference
+    const referenceImages = [];
+    for (const { field, url } of outfitUrls) {
+      const base64Data = await fetchImageAsBase64(url);
+      if (base64Data) {
+        referenceImages.push(base64Data);
+        console.log(`✓ Loaded ${field} reference image`);
+      }
+    }
+
+    if (referenceImages.length > 0) {
+      // Use images.edit() with reference images for high fidelity clothing match
+      console.log(`Using images.edit() with ${referenceImages.length} reference image(s)`);
+      imageResponse = await openai.images.edit({
+        model: 'gpt-image-1',
+        image: referenceImages,
+        prompt,
+        size: '1024x1536',
+        input_fidelity: 'high',
+      });
+    } else {
+      // Fallback to generate if reference fetch failed
+      imageResponse = await openai.images.generate({
+        model: 'gpt-image-1',
+        prompt,
+        size: '1024x1536',
+        background: 'transparent',
+      });
+    }
+  } else {
+    // No reference images, use standard generation
+    imageResponse = await openai.images.generate({
+      model: 'gpt-image-1',
+      prompt,
+      size: '1024x1536',
+      background: 'transparent',
+    });
+  }
 
   const uploadedImageUrl = await uploadOpenAIImageResult(
     imageResponse,

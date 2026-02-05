@@ -42,7 +42,8 @@ exports.previewCustomOutfit = async (req, res) => {
     });
   }
 
-  // পছন্দের স্লটে প্রিভিউ ভ্যালু বসাও (payload > imageUrl > name)
+  // Store imageUrl for image reference in AI generation
+  // Priority: payload > imageUrl > name > fallback
   const data = {};
   switch (slot) {
     case 'TOP':       data.shirt   = payload?.shirt   || imageUrl || name || 'Custom Top'; break;
@@ -52,13 +53,13 @@ exports.previewCustomOutfit = async (req, res) => {
 case 'ACCESSORY': {
   if (payload?.bag) {
     data.bag = payload.bag;
-  } 
+  }
   else if (payload?.watch) {
-    data.watch = payload.watch; // ✅ NEW
-  } 
+    data.watch = payload.watch;
+  }
   else if (payload?.jewelry) {
     data.jewelry = payload.jewelry;
-  } 
+  }
   else {
     data.jewelry = imageUrl || name || 'Custom Accessory';
   }
