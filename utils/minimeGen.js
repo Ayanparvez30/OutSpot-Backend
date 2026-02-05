@@ -1,7 +1,7 @@
 // utils/minimeGen.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { OpenAI } = require('openai');
+const { OpenAI, toFile } = require('openai');
 const uploadToS3 = require('../utils/s3Upload');
 
 // ---------- helpers ----------
@@ -215,15 +215,13 @@ Return a single, centered full-body render.
 `.trim();
 }
 
-// ---------- fetch image as base64 ----------
-async function fetchImageAsBase64(url) {
+// ---------- fetch image as buffer ----------
+async function fetchImageAsBuffer(url) {
   try {
     const res = await fetch(url);
     if (!res.ok) return null;
-    const buffer = await res.arrayBuffer();
-    const base64 = Buffer.from(buffer).toString('base64');
-    const contentType = res.headers.get('content-type') || 'image/png';
-    return `data:${contentType};base64,${base64}`;
+    const arrayBuffer = await res.arrayBuffer();
+    return Buffer.from(arrayBuffer);
   } catch (e) {
     console.error(`Failed to fetch image from ${url}:`, e.message);
     return null;
@@ -329,16 +327,29 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
   // Collect clothing reference images (URLs)
   const outfitUrls = collectOutfitImageUrls(outfitForModel);
 
+  console.log('\n========== MINIME GENERATION ==========');
+  console.log('INPUT IMAGE URLs:');
+  outfitUrls.forEach(({ field, url }) => {
+    console.log(`  [${field}] ${url}`);
+  });
+  if (outfitUrls.length === 0) {
+    console.log('  (no image URLs - using text descriptions)');
+  }
+
   let imageResponse;
 
   if (outfitUrls.length > 0) {
-    // Fetch clothing images as base64 for reference
+    // Fetch clothing images as buffers for reference
     const referenceImages = [];
     for (const { field, url } of outfitUrls) {
-      const base64Data = await fetchImageAsBase64(url);
-      if (base64Data) {
-        referenceImages.push(base64Data);
-        console.log(`✓ Loaded ${field} reference image`);
+      const buffer = await fetchImageAsBuffer(url);
+      if (buffer) {
+        // Convert buffer to File object for OpenAI API
+        const file = await toFile(buffer, `${field}.png`, { type: 'image/png' });
+        referenceImages.push(file);
+        console.log(`✓ Fetched ${field}: ${url.substring(0, 80)}...`);
+      } else {
+        console.log(`✗ Failed to fetch ${field}: ${url}`);
       }
     }
 
@@ -350,7 +361,6 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
         image: referenceImages,
         prompt,
         size: '1024x1536',
-        input_fidelity: 'high',
       });
     } else {
       // Fallback to generate if reference fetch failed
@@ -375,6 +385,10 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     imageResponse,
     `minime-${userId}-${Date.now()}`
   );
+
+  console.log('\nOUTPUT IMAGE URL (Preview):');
+  console.log(`  ${uploadedImageUrl}`);
+  console.log('========================================\n');
 
   const updated = await prisma.minime.update({
     where: { id: mm.id },
