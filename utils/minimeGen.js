@@ -182,7 +182,7 @@ ${facialHairLines}
 - Camera: straight-on, full-body. Subject fully contained in frame.
 - Keep ~10–12% empty space above the head and below the shoe soles.
 - Both feet visible, standing on a flat plane. No cropping anywhere.
-- Background: plain white (or transparent if API parameter is given).
+- Background: TRANSPARENT (no background at all). Only render the character, nothing behind.
 - Lighting: soft, even, no harsh shadows.
 - Hair: copy the same style and texture from the face reference${hairHint?.style ? `; keep style ~ ${hairHint.style}` : ''}${hairHint?.color ? `; color ~ ${hairHint.color}` : ''}.
 
@@ -361,6 +361,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
         image: referenceImages,
         prompt,
         size: '1024x1536',
+        background: 'transparent',
       });
     } else {
       // Fallback to generate if reference fetch failed
