@@ -627,10 +627,16 @@ async function getUserStatsByUserId (req, res){
       },
     });
 
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { bodyType: true },
+    });
+
     return res.json({
       success: true,
       data: {
         userId,
+        bodyType: user?.bodyType || null,
         spotsVisited,
         friends: friendsCount,
         groups: groupsCount,
