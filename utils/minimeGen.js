@@ -2,6 +2,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { OpenAI, toFile } = require('openai');
+const sharp = require('sharp');
 const uploadToS3 = require('../utils/s3Upload');
 
 // ---------- helpers ----------
@@ -241,25 +242,45 @@ function collectOutfitImageUrls(outfit) {
   return urls;
 }
 
+// ---------- compress image ----------
+async function compressForMobile(rawBuffer) {
+  const compressed = await sharp(rawBuffer)
+    .resize(768, 1152, { fit: 'inside', withoutEnlargement: true })
+    .sharpen({ sigma: 0.5 })          // counteract downscale blur
+    .webp({
+      quality: 85,
+      alphaQuality: 95,               // clean transparent edges
+      effort: 6,                       // max compression effort (slow encode, same decode)
+      smartSubsample: true,            // better color detail
+    })
+    .toBuffer();
+
+  const originalKB = (rawBuffer.length / 1024).toFixed(0);
+  const compressedKB = (compressed.length / 1024).toFixed(0);
+  console.log(`  Image compressed: ${originalKB} KB → ${compressedKB} KB (webp 768×1152)`);
+
+  return compressed;
+}
+
 // ---------- image upload ----------
 async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
   const item = imageResponse?.data?.[0];
   if (!item) throw new Error('OpenAI image response empty');
 
+  let rawBuffer;
   if (item.url) {
     const res = await fetch(item.url);
     if (!res.ok) throw new Error(`Failed to fetch image from ${item.url}`);
-    const buffer = await res.arrayBuffer();
-    const file = { originalname: `${keyPrefix}.png`, buffer: Buffer.from(buffer), mimetype: 'image/png' };
-    return await uploadToS3(file, 'minimes');
+    rawBuffer = Buffer.from(await res.arrayBuffer());
+  } else if (item.b64_json) {
+    rawBuffer = Buffer.from(item.b64_json, 'base64');
+  } else {
+    throw new Error('No url or b64_json in OpenAI image response');
   }
 
-  if (item.b64_json) {
-    const buffer = Buffer.from(item.b64_json, 'base64');
-    const file = { originalname: `${keyPrefix}.png`, buffer, mimetype: 'image/png' };
-    return await uploadToS3(file, 'minimes');
-  }
-  throw new Error('No url or b64_json in OpenAI image response');
+  const compressed = await compressForMobile(rawBuffer);
+  const file = { originalname: `${keyPrefix}.webp`, buffer: compressed, mimetype: 'image/webp' };
+  return await uploadToS3(file, 'minimes');
 }
 
 // ---------- main ----------
