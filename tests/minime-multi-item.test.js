@@ -8,7 +8,7 @@ const bcrypt = require('bcrypt');
 const http = require('http');
 
 const prisma = new PrismaClient();
-const BASE = 'http://localhost:3000';
+const BASE = process.env.BASE_URL || 'http://localhost:3001';
 
 function api(method, path, body = null, token = null) {
   return new Promise((resolve, reject) => {
