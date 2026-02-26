@@ -1,3 +1,6 @@
+<%
+  const isFreeItem = item ? (!item.appleProductId && !item.googleProductId) : false;
+%>
 <div class="row justify-content-center">
   <div class="col-md-6">
     <div class="card">
@@ -6,14 +9,22 @@
       </div>
       <div class="card-body">
         <form method="POST" action="<%= item ? `/admin/shop/${item.id}/edit` : '/admin/shop/create' %>" enctype="multipart/form-data">
-          <div class="mb-3">
-            <label class="form-label">Name</label>
-            <input type="text" name="name" class="form-control" value="<%= item ? item.name : '' %>" required>
+
+          <div class="mb-3 form-check">
+            <input type="checkbox" name="isFree" class="form-check-input" id="isFree"
+                   <%= isFreeItem ? 'checked' : '' %>>
+            <label class="form-check-label" for="isFree"><strong>Free Item</strong> (no IAP required)</label>
           </div>
+
           <div class="mb-3">
-            <label class="form-label">Brand</label>
-            <input type="text" name="brand" class="form-control" value="<%= item && item.brand ? item.brand : '' %>">
+            <label class="form-label">Slot</label>
+            <select name="slot" class="form-select" required>
+              <% ['TOP','BOTTOM','SHOES','GLASSES','ACCESSORY'].forEach(s => { %>
+                <option value="<%= s %>" <%= item && item.slot === s ? 'selected' : '' %>><%= s %></option>
+              <% }) %>
+            </select>
           </div>
+
           <div class="mb-3">
             <label class="form-label">Image Upload</label>
             <input type="file" name="imageFile" class="form-control" accept="image/*">
@@ -26,28 +37,32 @@
               <img src="<%= item.imageUrl %>" class="shop-img mt-2" alt="preview" style="max-height:100px">
             <% } %>
           </div>
-          <div class="mb-3">
-            <label class="form-label">Slot</label>
-            <select name="slot" class="form-select" required>
-              <% ['TOP','BOTTOM','SHOES','GLASSES','ACCESSORY'].forEach(s => { %>
-                <option value="<%= s %>" <%= item && item.slot === s ? 'selected' : '' %>><%= s %></option>
-              <% }) %>
-            </select>
-          </div>
-          <div class="row mb-3">
-            <div class="col">
-              <label class="form-label">Apple Product ID</label>
-              <input type="text" name="appleProductId" class="form-control" value="<%= item && item.appleProductId ? item.appleProductId : '' %>" placeholder="com.outspot.item_123">
+
+          <div id="paidFields">
+            <div class="mb-3">
+              <label class="form-label">Name</label>
+              <input type="text" name="name" class="form-control" value="<%= item ? item.name : '' %>" id="nameField">
             </div>
-            <div class="col">
-              <label class="form-label">Google Product ID</label>
-              <input type="text" name="googleProductId" class="form-control" value="<%= item && item.googleProductId ? item.googleProductId : '' %>" placeholder="com.outspot.item_123">
+            <div class="mb-3">
+              <label class="form-label">Brand</label>
+              <input type="text" name="brand" class="form-control" value="<%= item && item.brand ? item.brand : '' %>">
+            </div>
+            <div class="row mb-3">
+              <div class="col">
+                <label class="form-label">Apple Product ID</label>
+                <input type="text" name="appleProductId" class="form-control" value="<%= item && item.appleProductId ? item.appleProductId : '' %>" placeholder="com.outspot.item_123">
+              </div>
+              <div class="col">
+                <label class="form-label">Google Product ID</label>
+                <input type="text" name="googleProductId" class="form-control" value="<%= item && item.googleProductId ? item.googleProductId : '' %>" placeholder="com.outspot.item_123">
+              </div>
+            </div>
+            <div class="mb-3 form-check">
+              <input type="checkbox" name="isFeatured" class="form-check-input" id="isFeatured" <%= item && item.isFeatured ? 'checked' : '' %>>
+              <label class="form-check-label" for="isFeatured">Featured</label>
             </div>
           </div>
-          <div class="mb-3 form-check">
-            <input type="checkbox" name="isFeatured" class="form-check-input" id="isFeatured" <%= item && item.isFeatured ? 'checked' : '' %>>
-            <label class="form-check-label" for="isFeatured">Featured</label>
-          </div>
+
           <div class="d-flex gap-2">
             <button type="submit" class="btn btn-primary"><%= item ? 'Update' : 'Create' %></button>
             <a href="/admin/shop" class="btn btn-secondary">Cancel</a>
@@ -57,3 +72,22 @@
     </div>
   </div>
 </div>
+
+<script>
+  const isFreeCheckbox = document.getElementById('isFree');
+  const paidFields = document.getElementById('paidFields');
+  const nameField = document.getElementById('nameField');
+
+  function toggleFields() {
+    if (isFreeCheckbox.checked) {
+      paidFields.style.display = 'none';
+      nameField.removeAttribute('required');
+    } else {
+      paidFields.style.display = '';
+      nameField.setAttribute('required', 'required');
+    }
+  }
+
+  isFreeCheckbox.addEventListener('change', toggleFields);
+  toggleFields();
+</script>

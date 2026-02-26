@@ -94,6 +94,7 @@ model Minime {
   lipstick  String?
   jewelry   String?
   bag       String?
+  watch     String?
   isSaved   Boolean  @default(false)
   isDraft   Boolean  @default(false)
   createdAt DateTime @default(now())
