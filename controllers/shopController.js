@@ -3,7 +3,17 @@ const prisma = new PrismaClient();
 const { verifyApple, verifyGoogle } = require('../utils/iapVerify');
 const { applyClothingToCurrentMinime } = require('../utils/minimeLoadout');
 const { renderCurrentMinime } = require('../utils/minimeGen');
-const VALID_SLOTS = ['TOP','BOTTOM','SHOES','GLASSES','ACCESSORY'];
+const VALID_SLOTS = ['TOP','BOTTOM','SHOES','GLASSES','ACCESSORY','WATCH','MAKEUP','PURSE','ORNAMENT'];
+
+// Slot mapping per gender for catalog filtering
+const MASCULINE_SLOTS = ['TOP', 'BOTTOM', 'SHOES', 'GLASSES', 'WATCH'];
+const FEMININE_SLOTS  = ['TOP', 'BOTTOM', 'SHOES', 'GLASSES', 'MAKEUP', 'PURSE', 'ORNAMENT'];
+
+// Map slot → Minime field (for equip/preview)
+const SLOT_TO_FIELD = {
+  TOP: 'shirt', BOTTOM: 'pant', SHOES: 'shoes', GLASSES: 'glasses',
+  WATCH: 'watch', MAKEUP: 'lipstick', PURSE: 'bag', ORNAMENT: 'jewelry',
+};
 
 
 exports.previewCustomOutfit = async (req, res) => {
@@ -50,21 +60,18 @@ exports.previewCustomOutfit = async (req, res) => {
     case 'BOTTOM':    data.pant    = payload?.pant    || imageUrl || name || 'Custom Bottom'; break;
     case 'SHOES':     data.shoes   = payload?.shoes   || imageUrl || name || 'Custom Shoes'; break;
     case 'GLASSES':   data.glasses = payload?.glasses || imageUrl || name || 'Custom Glasses'; break;
-case 'ACCESSORY': {
-  if (payload?.bag) {
-    data.bag = payload.bag;
-  }
-  else if (payload?.watch) {
-    data.watch = payload.watch;
-  }
-  else if (payload?.jewelry) {
-    data.jewelry = payload.jewelry;
-  }
-  else {
-    data.jewelry = imageUrl || name || 'Custom Accessory';
-  }
-  break;
-}
+    case 'WATCH':     data.watch   = payload?.watch   || imageUrl || name || 'Custom Watch'; break;
+    case 'MAKEUP':    data.lipstick = payload?.lipstick || imageUrl || name || 'Custom Makeup'; break;
+    case 'PURSE':     data.bag     = payload?.bag     || imageUrl || name || 'Custom Purse'; break;
+    case 'ORNAMENT':  data.jewelry = payload?.jewelry || imageUrl || name || 'Custom Ornament'; break;
+    case 'ACCESSORY': {
+      // legacy slot — guess field from payload keys
+      if (payload?.bag)     { data.bag = payload.bag; }
+      else if (payload?.watch)   { data.watch = payload.watch; }
+      else if (payload?.jewelry) { data.jewelry = payload.jewelry; }
+      else { data.jewelry = imageUrl || name || 'Custom Accessory'; }
+      break;
+    }
 
   }
 
@@ -669,26 +676,20 @@ exports.getCatalog = async (_req, res) => {
 };
 
 // Free items only (both IAP IDs null) — for outfit selection screen
-// Optional ?gender=masculine|feminine to filter gender-tagged accessories
+// Required ?gender=masculine|feminine — filters slots by gender
 exports.getCatalogFree = async (req, res) => {
   try {
-    const gender = req.query.gender; // 'masculine' | 'feminine' | undefined
-
-    const where = {
-      appleProductId: null,
-      googleProductId: null,
-    };
-
-    // If gender provided, exclude items tagged for the OTHER gender
-    if (gender) {
-      where.OR = [
-        { gender: null },   // unisex items (shown to everyone)
-        { gender: gender },  // items matching this gender
-      ];
-    }
+    const gender = req.query.gender; // 'masculine' | 'feminine'
+    const allowedSlots = gender === 'feminine' ? FEMININE_SLOTS
+                       : gender === 'masculine' ? MASCULINE_SLOTS
+                       : [...new Set([...MASCULINE_SLOTS, ...FEMININE_SLOTS])];
 
     const items = await prisma.shopItem.findMany({
-      where,
+      where: {
+        appleProductId: null,
+        googleProductId: null,
+        slot: { in: allowedSlots },
+      },
       orderBy: [{ slot: 'asc' }, { createdAt: 'desc' }],
       select: { id: true, slot: true, imageUrl: true },
     });
@@ -706,10 +707,19 @@ exports.getCatalogFree = async (req, res) => {
 };
 
 // Paid items only (at least one IAP ID set) — for the shop/store
-exports.getCatalogPaid = async (_req, res) => {
+// Optional ?gender=masculine|feminine — filters slots by gender
+exports.getCatalogPaid = async (req, res) => {
   try {
+    const gender = req.query.gender;
+    const allowedSlots = gender === 'feminine' ? FEMININE_SLOTS
+                       : gender === 'masculine' ? MASCULINE_SLOTS
+                       : [...new Set([...MASCULINE_SLOTS, ...FEMININE_SLOTS])];
+
     const items = await prisma.shopItem.findMany({
-      where: { OR: [{ appleProductId: { not: null } }, { googleProductId: { not: null } }] },
+      where: {
+        OR: [{ appleProductId: { not: null } }, { googleProductId: { not: null } }],
+        slot: { in: allowedSlots },
+      },
       orderBy: [{ isFeatured: 'desc' }, { slot: 'asc' }, { name: 'asc' }],
       select: {
         id: true, slot: true, name: true, brand: true, imageUrl: true,

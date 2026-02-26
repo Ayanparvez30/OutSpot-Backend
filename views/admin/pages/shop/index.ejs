@@ -2,7 +2,7 @@
   <div class="d-flex gap-2 align-items-center">
     <span class="text-muted"><%= total %> items</span>
     <a href="/admin/shop" class="btn btn-sm <%= !slotFilter ? 'btn-primary' : 'btn-outline-secondary' %>">All</a>
-    <% ['TOP','BOTTOM','SHOES','GLASSES','ACCESSORY'].forEach(s => { %>
+    <% ['TOP','BOTTOM','SHOES','GLASSES','WATCH','MAKEUP','PURSE','ORNAMENT','ACCESSORY'].forEach(s => { %>
       <a href="/admin/shop?slot=<%= s %>" class="btn btn-sm <%= slotFilter === s ? 'btn-primary' : 'btn-outline-secondary' %>"><%= s %></a>
     <% }) %>
   </div>
@@ -36,12 +36,7 @@
                 <span class="badge bg-warning text-dark">Paid</span>
               <% } %>
             </td>
-            <td>
-              <%= item.slot %>
-              <% if (item.slot === 'ACCESSORY' && item.gender) { %>
-                <br><span class="badge bg-<%= item.gender === 'masculine' ? 'primary' : 'danger' %>" style="font-size:0.65em"><%= item.gender === 'masculine' ? '♂' : '♀' %> <%= item.gender %></span>
-              <% } %>
-            </td>
+            <td><%= item.slot %></td>
             <td><%= item.isFeatured ? 'Yes' : '-' %></td>
             <td><%= item._count.inventories %></td>
             <td>
