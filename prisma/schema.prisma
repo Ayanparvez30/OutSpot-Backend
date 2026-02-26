@@ -439,7 +439,11 @@ enum ShopSlot {
   BOTTOM
   SHOES
   GLASSES
-  ACCESSORY
+  ACCESSORY   // legacy — keep for existing paid items
+  WATCH       // masculine accessory
+  MAKEUP      // feminine accessory → lipstick
+  PURSE       // feminine accessory → bag
+  ORNAMENT    // feminine accessory → jewelry
 }
 
 model BodyShape {
