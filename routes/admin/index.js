@@ -15,6 +15,7 @@ router.use('/friends', require('./friendRoutes'));
 router.use('/challenges', require('./challengeRoutes'));
 router.use('/shop', require('./shopRoutes'));
 router.use('/premades', require('./premadeRoutes'));
+router.use('/body-shapes', require('./bodyShapeRoutes'));
 router.use('/points', require('./pointsRoutes'));
 router.use('/reports', require('./reportRoutes'));
 router.use('/locations', require('./locationRoutes'));

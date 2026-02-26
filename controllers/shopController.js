@@ -669,10 +669,26 @@ exports.getCatalog = async (_req, res) => {
 };
 
 // Free items only (both IAP IDs null) — for outfit selection screen
-exports.getCatalogFree = async (_req, res) => {
+// Optional ?gender=masculine|feminine to filter gender-tagged accessories
+exports.getCatalogFree = async (req, res) => {
   try {
+    const gender = req.query.gender; // 'masculine' | 'feminine' | undefined
+
+    const where = {
+      appleProductId: null,
+      googleProductId: null,
+    };
+
+    // If gender provided, exclude items tagged for the OTHER gender
+    if (gender) {
+      where.OR = [
+        { gender: null },   // unisex items (shown to everyone)
+        { gender: gender },  // items matching this gender
+      ];
+    }
+
     const items = await prisma.shopItem.findMany({
-      where: { appleProductId: null, googleProductId: null },
+      where,
       orderBy: [{ slot: 'asc' }, { createdAt: 'desc' }],
       select: { id: true, slot: true, imageUrl: true },
     });

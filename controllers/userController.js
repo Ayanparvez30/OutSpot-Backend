@@ -52,16 +52,26 @@ async function saveProfile(req, res) {
     const { firstName, lastName, bio, bodyType, bodyShapeUrl } = req.body;
     const userId = req.authData.id;
 
-    if (!firstName || !lastName || !bodyType || !bodyShapeUrl) {
-      return response.response_with_code(res, 400, 'Missing required fields');
+    // Build update data from provided fields only (partial updates OK)
+    const data = {};
+    if (firstName !== undefined) data.firstName = firstName;
+    if (lastName !== undefined) data.lastName = lastName;
+    if (bio !== undefined) data.bio = bio;
+    if (bodyType !== undefined) {
+      if (!validBodyTypes.includes(bodyType)) {
+        return response.response_with_code(res, 400, 'Invalid body type');
+      }
+      data.bodyType = bodyType;
     }
-    if (!validBodyTypes.includes(bodyType)) {
-      return response.response_with_code(res, 400, 'Invalid body type');
+    if (bodyShapeUrl !== undefined) data.bodyShapeUrl = bodyShapeUrl;
+
+    if (Object.keys(data).length === 0) {
+      return response.response_with_code(res, 400, 'No fields to update');
     }
 
     const updatedUser = await prisma.user.update({
       where: { id: userId },
-      data: { firstName, lastName, bio, bodyType, bodyShapeUrl }
+      data,
     });
 
     return response.true_status(res, updatedUser, 'Profile saved');
@@ -70,6 +80,21 @@ async function saveProfile(req, res) {
     return response.response_with_code(res, 500, 'Server error');
   }
 }
+// LIST BODY SHAPES (for Flutter)
+async function listBodyShapes(req, res) {
+  try {
+    const shapes = await prisma.bodyShape.findMany({
+      where: { isActive: true },
+      select: { id: true, gender: true, height: true, weight: true, imageUrl: true },
+      orderBy: [{ gender: 'asc' }, { weight: 'asc' }, { height: 'asc' }],
+    });
+    return response.true_status(res, shapes, 'Body shapes loaded');
+  } catch (err) {
+    console.error('listBodyShapes error:', err);
+    return response.response_with_code(res, 500, 'Failed to load body shapes');
+  }
+}
+
 // LIST PREMADE AVATARS (for Flutter)
 async function listPremadeAvatars(req, res) {
   try {
@@ -157,7 +182,7 @@ async function uploadAvatarWithMulter(req, res) {
 async function generateMinime(req, res) {
   try {
     const userId = req.authData.id;
-    const { premadeId, shirt, pant, shoes, glasses, lipstick, jewelry, bag, watch } = req.body || {};
+    const { premadeId, bodyType, bodyShapeUrl, shirt, pant, shoes, glasses, lipstick, jewelry, bag, watch } = req.body || {};
 
     // Resolve face reference: premadeId (new) > existing selfieUrl
     let faceRef;
@@ -201,7 +226,11 @@ async function generateMinime(req, res) {
       },
     });
 
-    const rendered = await renderCurrentMinime(userId);
+    const opts = {};
+    if (bodyType) opts.bodyType = bodyType;
+    if (bodyShapeUrl) opts.bodyShapeUrl = bodyShapeUrl;
+
+    const rendered = await renderCurrentMinime(userId, opts);
 
     return response.true_status(res, rendered, 'MiniMe draft generated');
   } catch (error) {
@@ -214,6 +243,7 @@ async function generateMinime(req, res) {
 async function regenerateMinime(req, res) {
   try {
     const userId = req.authData.id;
+    const { bodyType, bodyShapeUrl } = req.body || {};
 
     const lastAny = await prisma.minime.findFirst({
       where: { userId },
@@ -258,7 +288,10 @@ async function regenerateMinime(req, res) {
       });
     }
 
-    const rendered = await renderCurrentMinime(userId, { targetMinimeId: draft.id });
+    const opts = { targetMinimeId: draft.id };
+    if (bodyType) opts.bodyType = bodyType;
+    if (bodyShapeUrl) opts.bodyShapeUrl = bodyShapeUrl;
+    const rendered = await renderCurrentMinime(userId, opts);
 
     return response.true_status(res, rendered, 'MiniMe regenerated (face reference preserved)');
   } catch (err) {
@@ -802,6 +835,7 @@ async function getMiniMeLockerByUserId(req, res) {
 }
 
 module.exports = {
+  listBodyShapes,
   listPremadeAvatars,
   saveProfile,
   uploadAvatarWithMulter,

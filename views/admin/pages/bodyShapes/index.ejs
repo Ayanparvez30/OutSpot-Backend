@@ -1,0 +1,64 @@
+<%- include('../../partials/flash') %>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Body Shapes (<%= items.length %>/24)</h4>
+  <a href="/admin/body-shapes/create" class="btn btn-primary btn-sm">+ Add Body Shape</a>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <% if (items.length === 0) { %>
+      <p class="text-muted text-center py-4">No body shapes yet. Add one above.</p>
+    <% } else { %>
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th style="width:80px">Image</th>
+            <th>Code</th>
+            <th>Gender</th>
+            <th>Height</th>
+            <th>Weight</th>
+            <th>Active</th>
+            <th style="width:150px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% items.forEach(item => { %>
+            <%
+              const code = (item.gender === 'masculine' ? 'M' : 'F') + item.weight + item.height;
+              const heightLabel = { S: 'Short', M: 'Medium', L: 'Large/Tall' }[item.height] || item.height;
+            %>
+            <tr>
+              <td>
+                <div style="width:50px;height:75px;border-radius:6px;background:#f0f0f0;overflow:hidden;position:relative;">
+                  <img src="<%= item.imageUrl %>" alt="<%= code %>" loading="lazy"
+                       style="width:100%;height:100%;object-fit:cover;">
+                </div>
+              </td>
+              <td class="align-middle"><strong><%= code %></strong></td>
+              <td class="align-middle">
+                <span class="badge bg-<%= item.gender === 'masculine' ? 'primary' : 'danger' %>"><%= item.gender %></span>
+              </td>
+              <td class="align-middle"><%= heightLabel %></td>
+              <td class="align-middle"><%= item.weight %></td>
+              <td class="align-middle">
+                <% if (item.isActive) { %>
+                  <span class="badge bg-success">Active</span>
+                <% } else { %>
+                  <span class="badge bg-secondary">Inactive</span>
+                <% } %>
+              </td>
+              <td class="align-middle">
+                <a href="/admin/body-shapes/<%= item.id %>/edit" class="btn btn-sm btn-outline-primary">Edit</a>
+                <form method="POST" action="/admin/body-shapes/<%= item.id %>/delete" class="d-inline"
+                      onsubmit="return confirm('Delete this body shape?')">
+                  <button class="btn btn-sm btn-outline-danger">Delete</button>
+                </form>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+  </div>
+</div>
