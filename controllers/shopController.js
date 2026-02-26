@@ -667,3 +667,48 @@ exports.getCatalog = async (_req, res) => {
     res.status(500).json({ success: false, message: 'Failed to load catalog', error: e.message });
   }
 };
+
+// Free items only (both IAP IDs null) — for outfit selection screen
+exports.getCatalogFree = async (_req, res) => {
+  try {
+    const items = await prisma.shopItem.findMany({
+      where: { appleProductId: null, googleProductId: null },
+      orderBy: [{ slot: 'asc' }, { createdAt: 'desc' }],
+      select: { id: true, slot: true, imageUrl: true },
+    });
+
+    const grouped = items.reduce((acc, item) => {
+      if (!acc[item.slot]) acc[item.slot] = [];
+      acc[item.slot].push(item);
+      return acc;
+    }, {});
+
+    res.json({ success: true, data: { grouped, total: items.length } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to load free catalog', error: e.message });
+  }
+};
+
+// Paid items only (at least one IAP ID set) — for the shop/store
+exports.getCatalogPaid = async (_req, res) => {
+  try {
+    const items = await prisma.shopItem.findMany({
+      where: { OR: [{ appleProductId: { not: null } }, { googleProductId: { not: null } }] },
+      orderBy: [{ isFeatured: 'desc' }, { slot: 'asc' }, { name: 'asc' }],
+      select: {
+        id: true, slot: true, name: true, brand: true, imageUrl: true,
+        isFeatured: true, appleProductId: true, googleProductId: true,
+      },
+    });
+
+    const grouped = items.reduce((acc, item) => {
+      if (!acc[item.slot]) acc[item.slot] = [];
+      acc[item.slot].push(item);
+      return acc;
+    }, {});
+
+    res.json({ success: true, data: { items, grouped, total: items.length } });
+  } catch (e) {
+    res.status(500).json({ success: false, message: 'Failed to load paid catalog', error: e.message });
+  }
+};

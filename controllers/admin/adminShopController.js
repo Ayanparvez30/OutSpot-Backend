@@ -53,25 +53,30 @@ exports.createForm = (req, res) => {
 
 exports.createItem = async (req, res) => {
   try {
-    const { slot, name, brand, imageUrl, isFeatured, appleProductId, googleProductId } = req.body;
+    const { slot, name, brand, imageUrl, isFeatured, isFree, appleProductId, googleProductId } = req.body;
+    const free = isFree === 'on';
 
     let finalImageUrl = imageUrl || '';
     if (req.file) {
       finalImageUrl = await uploadToS3(req.file, 'shop-items');
     }
 
+    const finalName = free
+      ? `free-${slot}-${Date.now()}`
+      : (name || 'Untitled');
+
     await prisma.shopItem.create({
       data: {
         slot,
-        name,
-        brand: brand || null,
+        name: finalName,
+        brand: free ? null : (brand || null),
         imageUrl: finalImageUrl,
-        isFeatured: isFeatured === 'on',
-        appleProductId: appleProductId || null,
-        googleProductId: googleProductId || null,
+        isFeatured: free ? false : (isFeatured === 'on'),
+        appleProductId: free ? null : (appleProductId || null),
+        googleProductId: free ? null : (googleProductId || null),
       },
     });
-    req.flash('success', 'Shop item created.');
+    req.flash('success', free ? 'Free item created.' : 'Shop item created.');
     res.redirect('/admin/shop');
   } catch (error) {
     console.error('Create shop item error:', error);
@@ -106,7 +111,8 @@ exports.editForm = async (req, res) => {
 exports.updateItem = async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { slot, name, brand, imageUrl, isFeatured, appleProductId, googleProductId } = req.body;
+    const { slot, name, brand, imageUrl, isFeatured, isFree, appleProductId, googleProductId } = req.body;
+    const free = isFree === 'on';
 
     let finalImageUrl;
     if (req.file) {
@@ -115,15 +121,21 @@ exports.updateItem = async (req, res) => {
       finalImageUrl = imageUrl;
     }
 
+    const existing = await prisma.shopItem.findUnique({ where: { id }, select: { name: true } });
+    const finalName = free
+      ? (existing?.name?.startsWith('free-') ? existing.name : `free-${slot}-${Date.now()}`)
+      : (name || 'Untitled');
+
     await prisma.shopItem.update({
       where: { id },
       data: {
-        slot, name,
-        brand: brand || null,
+        slot,
+        name: finalName,
+        brand: free ? null : (brand || null),
         imageUrl: finalImageUrl || undefined,
-        isFeatured: isFeatured === 'on',
-        appleProductId: appleProductId || null,
-        googleProductId: googleProductId || null,
+        isFeatured: free ? false : (isFeatured === 'on'),
+        appleProductId: free ? null : (appleProductId || null),
+        googleProductId: free ? null : (googleProductId || null),
       },
     });
     req.flash('success', 'Item updated.');

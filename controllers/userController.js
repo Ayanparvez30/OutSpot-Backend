@@ -157,13 +157,25 @@ async function uploadAvatarWithMulter(req, res) {
 async function generateMinime(req, res) {
   try {
     const userId = req.authData.id;
-    const { shirt, pant, shoes, glasses, lipstick, jewelry, bag } = req.body || {};
+    const { premadeId, shirt, pant, shoes, glasses, lipstick, jewelry, bag, watch } = req.body || {};
 
-    const last = await prisma.minime.findFirst({
-      where: { userId },
-      orderBy: { createdAt: 'desc' },
-    });
-    const faceRef = last?.selfieUrl || null;
+    // Resolve face reference: premadeId (new) > existing selfieUrl
+    let faceRef;
+    if (premadeId) {
+      const premade = await prisma.premadeAvatar.findUnique({
+        where: { id: parseInt(premadeId, 10) },
+      });
+      if (!premade || !premade.isActive) {
+        return response.response_with_code(res, 400, 'Premade avatar not found or inactive');
+      }
+      faceRef = premade.imageUrl;
+    } else {
+      const last = await prisma.minime.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+      });
+      faceRef = last?.selfieUrl || null;
+    }
 
     if (!faceRef) {
       return response.response_with_code(res, 400,
@@ -175,20 +187,20 @@ async function generateMinime(req, res) {
     const draft = await prisma.minime.create({
       data: {
         userId,
-        shirt,
-        pant,
-        shoes,
-        glasses,
-        lipstick,
-        jewelry,
-        bag,
-        selfieUrl: faceRef,  
+        shirt: shirt || null,
+        pant: pant || null,
+        shoes: shoes || null,
+        glasses: glasses || null,
+        lipstick: lipstick || null,
+        jewelry: jewelry || null,
+        bag: bag || null,
+        watch: watch || null,
+        selfieUrl: faceRef,
         isSaved: false,
         isDraft: true,
       },
     });
 
-    // 🔹 4) Render
     const rendered = await renderCurrentMinime(userId);
 
     return response.true_status(res, rendered, 'MiniMe draft generated');
@@ -232,7 +244,8 @@ async function regenerateMinime(req, res) {
           lipstick: seed.lipstick ?? null,
           jewelry: seed.jewelry ?? null,
           bag: seed.bag ?? null,
-          selfieUrl: faceRef,           
+          watch: seed.watch ?? null,
+          selfieUrl: faceRef,
           isSaved: false,
           isDraft: true
         }
