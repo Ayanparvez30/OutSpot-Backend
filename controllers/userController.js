@@ -6,6 +6,7 @@ const { addPointsWithMultiplier } = require('../utils/points');
 const { OpenAI } = require('openai');
 const path = require('path');
 const multer = require('multer');
+const sharp = require('sharp');
 const response = require('../functions/response');
 const uploadToS3 = require('../utils/s3Upload');
 const { renderCurrentMinime } = require('../utils/minimeGen');
@@ -69,22 +70,52 @@ async function saveProfile(req, res) {
     return response.response_with_code(res, 500, 'Server error');
   }
 }
+// LIST PREMADE AVATARS (for Flutter)
+async function listPremadeAvatars(req, res) {
+  try {
+    const premades = await prisma.premadeAvatar.findMany({
+      where: { isActive: true },
+      orderBy: [{ sortOrder: 'asc' }, { createdAt: 'desc' }],
+      select: { id: true, label: true, gender: true, imageUrl: true },
+    });
+    return response.true_status(res, premades, 'Premade avatars loaded');
+  } catch (err) {
+    console.error('listPremadeAvatars error:', err);
+    return response.response_with_code(res, 500, 'Failed to load premades');
+  }
+}
+
 // AVATAR UPLOAD
 async function uploadAvatarWithMulter(req, res) {
   try {
     const userId = req.authData.id;
 
-    // ----- (A) Premade avatar by URL  -----
+    // Clear old drafts
+    await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
+
+    // ----- (A) Premade avatar by ID (new approach) -----
+    if (req.body.premadeId) {
+      const premade = await prisma.premadeAvatar.findUnique({
+        where: { id: parseInt(req.body.premadeId, 10) },
+      });
+      if (!premade || !premade.isActive) {
+        return response.response_with_code(res, 404, 'Premade avatar not found');
+      }
+
+      const minime = await prisma.minime.create({
+        data: { userId, selfieUrl: premade.imageUrl, isSaved: false, isDraft: true }
+      });
+
+      return response.true_status(res, minime, 'MiniMe face set from premade avatar');
+    }
+
+    // ----- (A2) Legacy: Premade avatar by URL -----
     if (req.body.premadeUrl) {
       const premadeUrl = String(req.body.premadeUrl).trim();
       if (!premadeUrl.startsWith('http')) {
         return response.response_with_code(res, 400, 'Invalid premade URL');
       }
 
-      // পুরোনো ড্রাফট ক্লিয়ার
-      await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
-
-      // ✅ premade URL কে selfieUrl হিসেবে সেভ করি → এটি হবে STRICT face reference
       const minime = await prisma.minime.create({
         data: { userId, selfieUrl: premadeUrl, isSaved: false, isDraft: true }
       });
@@ -92,27 +123,31 @@ async function uploadAvatarWithMulter(req, res) {
       return response.true_status(res, minime, 'MiniMe face set from premade URL');
     }
 
-    // ----- (B) File upload (selfie or gallery) -----
+    // ----- (B) File upload (selfie) — ALWAYS stored as selfieUrl -----
     const file = req.files?.[0];
     if (!file) return response.response_with_code(res, 400, 'No image uploaded');
 
-    const s3Url = await uploadToS3(file, 'avatars');
+    // Compress selfie before uploading to S3
+    const originalKB = (file.buffer.length / 1024).toFixed(0);
+    const compressed = await sharp(file.buffer)
+      .resize(768, 1152, { fit: 'inside', withoutEnlargement: true })
+      .sharpen({ sigma: 0.5 })
+      .webp({ quality: 85, alphaQuality: 95, effort: 6, smartSubsample: true })
+      .toBuffer();
+    const compressedKB = (compressed.length / 1024).toFixed(0);
+    console.log(`[SELFIE] Compressed: ${originalKB} KB → ${compressedKB} KB (webp)`);
 
-    await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
-
-   
-    const data = {
-      userId,
-      isSaved: false,
-      isDraft: true,
-      ...(file.fieldname?.toLowerCase() === 'selfie'
-        ? { selfieUrl: s3Url }         
-        : { avatarUrl: s3Url }          
-      ),
+    const compressedFile = {
+      originalname: file.originalname.replace(/\.[^.]+$/, '.webp'),
+      buffer: compressed,
+      mimetype: 'image/webp',
     };
+    const s3Url = await uploadToS3(compressedFile, 'avatars');
 
-    const minime = await prisma.minime.create({ data });
-    return response.true_status(res, minime, 'MiniMe source uploaded');
+    const minime = await prisma.minime.create({
+      data: { userId, selfieUrl: s3Url, isSaved: false, isDraft: true }
+    });
+    return response.true_status(res, minime, 'MiniMe selfie uploaded');
   } catch (err) {
     console.error('Upload error:', err);
     return response.response_with_code(res, 500, 'Upload failed');
@@ -129,6 +164,11 @@ async function generateMinime(req, res) {
       orderBy: { createdAt: 'desc' },
     });
     const faceRef = last?.selfieUrl || null;
+
+    if (!faceRef) {
+      return response.response_with_code(res, 400,
+        'No selfie found. Please upload a selfie or select a premade avatar first.');
+    }
 
     await prisma.minime.deleteMany({ where: { userId, isSaved: false, isDraft: true } });
 
@@ -167,8 +207,12 @@ async function regenerateMinime(req, res) {
       where: { userId },
       orderBy: { createdAt: 'desc' }
     });
-    const faceRef = lastAny?.selfieUrl || null; 
+    const faceRef = lastAny?.selfieUrl || null;
 
+    if (!faceRef) {
+      return response.response_with_code(res, 400,
+        'No selfie found. Please upload a selfie or select a premade avatar first.');
+    }
 
     let draft = await prisma.minime.findFirst({
       where: { userId, isDraft: true, isSaved: false },
@@ -745,7 +789,7 @@ async function getMiniMeLockerByUserId(req, res) {
 }
 
 module.exports = {
-
+  listPremadeAvatars,
   saveProfile,
   uploadAvatarWithMulter,
   getMiniMeLockerByUserId,

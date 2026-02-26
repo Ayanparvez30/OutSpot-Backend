@@ -66,6 +66,8 @@ router.get(
   userController.getMiniMeLockerByUserId
 );
 
+router.get('/minime/premades', checkAuth, userController.listPremadeAvatars);
+
 router.post(
   '/minime/upload-avatar',
   checkAuth,
