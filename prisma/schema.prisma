@@ -573,3 +573,14 @@ model AdminUser {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model PremadeAvatar {
+  id        Int      @id @default(autoincrement())
+  label     String
+  gender    String                        // "male" | "female"
+  imageUrl  String   @db.Text
+  sortOrder Int      @default(0)
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}

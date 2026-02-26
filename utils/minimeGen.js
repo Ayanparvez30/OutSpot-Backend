@@ -178,7 +178,7 @@ Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 # HARD CONSTRAINTS
 - STRICT body shape reference: ${bodyShapeUrl}
 - STRICT facial likeness from: ${faceUrl}
-- Skin tone: COPY EXACTLY from the face reference image.${skinToneHint ? ` Target undertone → ${skinToneHint}.` : ''}
+- FACE & ETHNICITY: The face reference image is the SOLE and ABSOLUTE source for ALL facial features, skin color, ethnicity, and racial characteristics. COPY EXACTLY — same skin tone, same undertone, same ethnic features, same face structure, same nose shape, same lip shape, same eye shape.${skinToneHint ? ` Target undertone → ${skinToneHint}.` : ''}
 ${facialHairLines}
 - Camera: straight-on, full-body. Subject fully contained in frame.
 - Keep ~10–12% empty space above the head and below the shoe soles.
@@ -208,6 +208,9 @@ ${accessoriesLines(o, isFeminine)}
 - Do NOT add pendants/lockets/charms to necklaces unless explicitly specified.
 - Do NOT add earrings unless the jewelry explicitly contains "earring".
 - Do NOT lighten the skin or change undertone relative to the face reference.
+- Do NOT change the ethnicity or racial features from the face reference. An Indian face must produce an Indian avatar, an African face must produce an African avatar, etc.
+- Do NOT blend or average facial features with the body shape reference. The body shape is ONLY for proportions and pose — ALL facial features and skin color come EXCLUSIVELY from the face reference.
+- Do NOT substitute features from a different ethnic group.
 ${(!facialHair || facialHair === 'none')
   ? `- Do NOT add any beard, moustache, goatee or stubble.`
   : `- Do NOT ignore the facial hair instruction; render it clearly and correctly.`}
@@ -290,26 +293,52 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
   if (!user?.bodyShapeUrl) throw new Error('Missing body shape');
 
-  // get/create working draft
-  let mm = await prisma.minime.findFirst({
-    where: { userId, isDraft: true, isSaved: false },
-    orderBy: { createdAt: 'desc' },
-  });
+  // get working draft — honor targetMinimeId if provided
+  let mm;
+  if (opts.targetMinimeId) {
+    mm = await prisma.minime.findUnique({ where: { id: opts.targetMinimeId } });
+  }
+  if (!mm) {
+    mm = await prisma.minime.findFirst({
+      where: { userId, isDraft: true, isSaved: false },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
   if (!mm) {
     mm = await prisma.minime.create({ data: { userId, isSaved: false, isDraft: true } });
   }
 
   const isFeminine = user.bodyType === 'feminine';
 
-  // ✅ premade/faceUrl from frontend wins
-  const faceReference =
-    (opts.faceUrl && isHttpUrl(opts.faceUrl)) ? opts.faceUrl :
-    (mm.selfieUrl && isHttpUrl(mm.selfieUrl)) ? mm.selfieUrl :
-    (mm.avatarUrl && isHttpUrl(mm.avatarUrl)) ? mm.avatarUrl :
-    user.bodyShapeUrl;
+  // Face reference: ONLY use actual selfie/premade — NEVER fall back to generated avatar or body shape
+  let faceReference = null;
+  let faceRefSource = 'none';
 
-  if (!isHttpUrl(faceReference)) {
-    throw new Error('Missing/invalid face reference; upload a selfie or select a premade first');
+  if (opts.faceUrl && isHttpUrl(opts.faceUrl)) {
+    faceReference = opts.faceUrl;
+    faceRefSource = 'opts.faceUrl';
+  } else if (mm.selfieUrl && isHttpUrl(mm.selfieUrl)) {
+    faceReference = mm.selfieUrl;
+    faceRefSource = 'mm.selfieUrl (current draft)';
+  } else {
+    // Search ALL user's MiniMe records for any existing selfieUrl
+    const withSelfie = await prisma.minime.findFirst({
+      where: { userId, selfieUrl: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { selfieUrl: true },
+    });
+    if (withSelfie?.selfieUrl && isHttpUrl(withSelfie.selfieUrl)) {
+      faceReference = withSelfie.selfieUrl;
+      faceRefSource = 'previous MiniMe selfieUrl';
+      // Backfill to current draft so future renders don't need to search again
+      await prisma.minime.update({ where: { id: mm.id }, data: { selfieUrl: faceReference } });
+    }
+  }
+
+  console.log(`[FACE REF] userId=${userId} source="${faceRefSource}" url=${faceReference || 'NULL'}`);
+
+  if (!faceReference) {
+    throw new Error('No selfie/premade found. Upload a selfie or select a premade avatar first.');
   }
 
   // parse hints from premade url
@@ -320,7 +349,8 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     : (opts.facialHair && String(opts.facialHair).trim())
       || meta.facialHair
       || 'none';
-  const skinToneHint = opts.skinTone || meta.skinTone;
+  // Only use explicit frontend skin tone override — never premade filename metadata
+  const skinToneHint = opts.skinTone || null;
   const hairHint = meta.hair;
 
   // outfit resolve (opts override DB)
@@ -359,42 +389,44 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
 
   let imageResponse;
 
-  if (outfitUrls.length > 0) {
-    // Fetch clothing images as buffers for reference
-    const referenceImages = [];
-    for (const { field, url } of outfitUrls) {
-      const buffer = await fetchImageAsBuffer(url);
-      if (buffer) {
-        // Convert buffer to File object for OpenAI API
-        const file = await toFile(buffer, `${field}.png`, { type: 'image/png' });
-        referenceImages.push(file);
-        console.log(`✓ Fetched ${field}: ${url.substring(0, 80)}...`);
-      } else {
-        console.log(`✗ Failed to fetch ${field}: ${url}`);
-      }
-    }
+  // ALWAYS include the face/selfie as the FIRST reference image
+  // This gives OpenAI direct visual data for the face — not just a URL in text
+  const referenceImages = [];
 
-    if (referenceImages.length > 0) {
-      // Use images.edit() with reference images for high fidelity clothing match
-      console.log(`Using images.edit() with ${referenceImages.length} reference image(s)`);
-      imageResponse = await openai.images.edit({
-        model: 'gpt-image-1',
-        image: referenceImages,
-        prompt,
-        size: '1024x1536',
-        background: 'transparent',
-      });
-    } else {
-      // Fallback to generate if reference fetch failed
-      imageResponse = await openai.images.generate({
-        model: 'gpt-image-1',
-        prompt,
-        size: '1024x1536',
-        background: 'transparent',
-      });
-    }
+  // 1) Face reference image — MOST IMPORTANT
+  const faceBuffer = await fetchImageAsBuffer(faceReference);
+  if (faceBuffer) {
+    const faceFile = await toFile(faceBuffer, 'face-reference.png', { type: 'image/png' });
+    referenceImages.push(faceFile);
+    console.log(`✓ Fetched FACE reference: ${faceReference.substring(0, 80)}...`);
   } else {
-    // No reference images, use standard generation
+    console.warn(`✗ Failed to fetch face reference: ${faceReference} — generation may lack facial accuracy`);
+  }
+
+  // 2) Clothing reference images
+  for (const { field, url } of outfitUrls) {
+    const buffer = await fetchImageAsBuffer(url);
+    if (buffer) {
+      const file = await toFile(buffer, `${field}.png`, { type: 'image/png' });
+      referenceImages.push(file);
+      console.log(`✓ Fetched ${field}: ${url.substring(0, 80)}...`);
+    } else {
+      console.log(`✗ Failed to fetch ${field}: ${url}`);
+    }
+  }
+
+  if (referenceImages.length > 0) {
+    console.log(`Using images.edit() with ${referenceImages.length} reference image(s) [face + ${referenceImages.length - 1} outfit]`);
+    imageResponse = await openai.images.edit({
+      model: 'gpt-image-1',
+      image: referenceImages,
+      prompt,
+      size: '1024x1536',
+      background: 'transparent',
+    });
+  } else {
+    // Fallback to generate only if ALL fetches failed
+    console.warn('No reference images fetched — using text-only generation');
     imageResponse = await openai.images.generate({
       model: 'gpt-image-1',
       prompt,

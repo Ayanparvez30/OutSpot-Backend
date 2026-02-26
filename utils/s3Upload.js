@@ -18,7 +18,8 @@ const uploadToS3 = async (file, folder = "uploads") => {
     Bucket: process.env.S3_BUCKET_NAME,
     Key: fileName,
     Body: file.buffer,
-    ContentType: file.mimetype
+    ContentType: file.mimetype,
+    CacheControl: 'public, max-age=31536000, immutable',
   };
 
   await s3.send(new PutObjectCommand(params));

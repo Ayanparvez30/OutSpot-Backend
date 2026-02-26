@@ -1,0 +1,61 @@
+<%- include('../../partials/flash') %>
+
+<div class="d-flex justify-content-between align-items-center mb-3">
+  <h4 class="mb-0">Premade Avatars</h4>
+  <a href="/admin/premades/create" class="btn btn-primary btn-sm">+ Add Premade</a>
+</div>
+
+<div class="card">
+  <div class="card-body p-0">
+    <% if (items.length === 0) { %>
+      <p class="text-muted text-center py-4">No premade avatars yet. Add one above.</p>
+    <% } else { %>
+      <table class="table table-hover mb-0">
+        <thead>
+          <tr>
+            <th style="width:80px">Image</th>
+            <th>Label</th>
+            <th>Gender</th>
+            <th>Order</th>
+            <th>Active</th>
+            <th style="width:150px">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <% items.forEach(item => { %>
+            <tr>
+              <td>
+                <div style="width:60px;height:60px;border-radius:8px;background:#f0f0f0;overflow:hidden;position:relative;">
+                  <img src="<%= item.imageUrl %>" alt="<%= item.label %>" loading="lazy"
+                       style="width:100%;height:100%;object-fit:cover;"
+                       onerror="this.style.display='none';this.nextElementSibling.style.display='flex';"
+                       onload="this.nextElementSibling.style.display='none';">
+                  <span style="display:flex;align-items:center;justify-content:center;width:100%;height:100%;position:absolute;top:0;left:0;font-size:10px;color:#999;">Loading...</span>
+                </div>
+              </td>
+              <td class="align-middle"><%= item.label %></td>
+              <td class="align-middle">
+                <span class="badge bg-<%= item.gender === 'male' ? 'primary' : 'danger' %>"><%= item.gender %></span>
+              </td>
+              <td class="align-middle"><%= item.sortOrder %></td>
+              <td class="align-middle">
+                <% if (item.isActive) { %>
+                  <span class="badge bg-success">Active</span>
+                <% } else { %>
+                  <span class="badge bg-secondary">Inactive</span>
+                <% } %>
+              </td>
+              <td class="align-middle">
+                <a href="/admin/premades/<%= item.id %>/edit" class="btn btn-sm btn-outline-primary">Edit</a>
+                <form method="POST" action="/admin/premades/<%= item.id %>/delete" class="d-inline"
+                      onsubmit="return confirm('Delete this premade avatar?')">
+                  <button class="btn btn-sm btn-outline-danger">Delete</button>
+                </form>
+              </td>
+            </tr>
+          <% }) %>
+        </tbody>
+      </table>
+    <% } %>
+  </div>
+</div>

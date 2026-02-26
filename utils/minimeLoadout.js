@@ -12,8 +12,14 @@ exports.applyClothingToCurrentMinime = async (userId, item) => {
     orderBy: { createdAt: 'desc' }
   });
   if (!mm) {
+    // Carry over selfieUrl from any previous MiniMe so face reference is never lost
+    const prev = await prisma.minime.findFirst({
+      where: { userId, selfieUrl: { not: null } },
+      orderBy: { createdAt: 'desc' },
+      select: { selfieUrl: true },
+    });
     mm = await prisma.minime.create({
-      data: { userId, isSaved: false, isDraft: true }
+      data: { userId, selfieUrl: prev?.selfieUrl || null, isSaved: false, isDraft: true }
     });
   }
 
