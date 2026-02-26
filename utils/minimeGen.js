@@ -291,7 +291,13 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 exports.renderCurrentMinime = async (userId, opts = {}) => {
   const user = await prisma.user.findUnique({ where: { id: userId } });
-  if (!user?.bodyShapeUrl) throw new Error('Missing body shape');
+
+  // Body shape: use override from opts if provided, else fall back to user profile
+  const effectiveBodyShapeUrl = opts.bodyShapeUrl || user?.bodyShapeUrl;
+  if (!effectiveBodyShapeUrl) throw new Error('Missing body shape');
+
+  // Body type: use override from opts if provided, else fall back to user profile
+  const effectiveBodyType = opts.bodyType || user?.bodyType;
 
   // get working draft — honor targetMinimeId if provided
   let mm;
@@ -308,7 +314,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     mm = await prisma.minime.create({ data: { userId, isSaved: false, isDraft: true } });
   }
 
-  const isFeminine = user.bodyType === 'feminine';
+  const isFeminine = effectiveBodyType === 'feminine';
 
   // Face reference: ONLY use actual selfie/premade — NEVER fall back to generated avatar or body shape
   let faceReference = null;
@@ -366,7 +372,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
   });
 
   const prompt = buildMinimePrompt({
-    bodyShapeUrl: user.bodyShapeUrl,
+    bodyShapeUrl: effectiveBodyShapeUrl,
     faceUrl: faceReference,
     isFeminine,
     outfit: outfitForModel,

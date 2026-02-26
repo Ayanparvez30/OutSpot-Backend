@@ -68,6 +68,7 @@ router.get(
 );
 
 router.get('/minime/premades', checkAuth, userController.listPremadeAvatars);
+router.get('/body-shapes', checkAuth, userController.listBodyShapes);
 
 router.post(
   '/minime/upload-avatar',

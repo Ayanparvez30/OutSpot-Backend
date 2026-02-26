@@ -18,10 +18,19 @@
 
           <div class="mb-3">
             <label class="form-label">Slot</label>
-            <select name="slot" class="form-select" required>
+            <select name="slot" class="form-select" required id="slotSelect">
               <% ['TOP','BOTTOM','SHOES','GLASSES','ACCESSORY'].forEach(s => { %>
                 <option value="<%= s %>" <%= item && item.slot === s ? 'selected' : '' %>><%= s %></option>
               <% }) %>
+            </select>
+          </div>
+
+          <div class="mb-3" id="genderField">
+            <label class="form-label">Gender <small class="text-muted">(for accessories only)</small></label>
+            <select name="gender" class="form-select">
+              <option value="" <%= !item || !item.gender ? 'selected' : '' %>>Both (unisex)</option>
+              <option value="masculine" <%= item && item.gender === 'masculine' ? 'selected' : '' %>>Masculine (watches)</option>
+              <option value="feminine" <%= item && item.gender === 'feminine' ? 'selected' : '' %>>Feminine (bracelets/necklaces)</option>
             </select>
           </div>
 
@@ -77,6 +86,8 @@
   const isFreeCheckbox = document.getElementById('isFree');
   const paidFields = document.getElementById('paidFields');
   const nameField = document.getElementById('nameField');
+  const slotSelect = document.getElementById('slotSelect');
+  const genderField = document.getElementById('genderField');
 
   function toggleFields() {
     if (isFreeCheckbox.checked) {
@@ -86,8 +97,11 @@
       paidFields.style.display = '';
       nameField.setAttribute('required', 'required');
     }
+    // Gender dropdown only visible for ACCESSORY slot
+    genderField.style.display = slotSelect.value === 'ACCESSORY' ? '' : 'none';
   }
 
   isFreeCheckbox.addEventListener('change', toggleFields);
+  slotSelect.addEventListener('change', toggleFields);
   toggleFields();
 </script>

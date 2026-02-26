@@ -1,0 +1,70 @@
+<%- include('../../partials/flash') %>
+
+<div class="row justify-content-center">
+  <div class="col-md-6">
+    <div class="card">
+      <div class="card-header">
+        <strong><%= item ? 'Edit Body Shape' : 'Add Body Shape' %></strong>
+      </div>
+      <div class="card-body">
+        <form method="POST"
+              action="<%= item ? `/admin/body-shapes/${item.id}/edit` : '/admin/body-shapes/create' %>"
+              enctype="multipart/form-data">
+
+          <div class="mb-3">
+            <label class="form-label">Gender</label>
+            <select name="gender" class="form-select" required>
+              <option value="masculine" <%= item && item.gender === 'masculine' ? 'selected' : '' %>>Masculine</option>
+              <option value="feminine" <%= item && item.gender === 'feminine' ? 'selected' : '' %>>Feminine</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Height</label>
+            <select name="height" class="form-select" required>
+              <option value="S" <%= item && item.height === 'S' ? 'selected' : '' %>>S - Short</option>
+              <option value="M" <%= item && item.height === 'M' ? 'selected' : '' %>>M - Medium</option>
+              <option value="L" <%= item && item.height === 'L' ? 'selected' : '' %>>L - Large/Tall</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Weight</label>
+            <select name="weight" class="form-select" required>
+              <option value="1" <%= item && item.weight === 1 ? 'selected' : '' %>>1 - Slim</option>
+              <option value="2" <%= item && item.weight === 2 ? 'selected' : '' %>>2 - Average</option>
+              <option value="3" <%= item && item.weight === 3 ? 'selected' : '' %>>3 - Heavy</option>
+              <option value="4" <%= item && item.weight === 4 ? 'selected' : '' %>>4 - Plus</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Body Shape Image</label>
+            <input type="file" name="imageFile" class="form-control" accept="image/*"
+                   <%= item ? '' : 'required' %>>
+            <% if (item && item.imageUrl) { %>
+              <div class="mt-2">
+                <img src="<%= item.imageUrl %>" alt="current"
+                     style="max-height:150px;border-radius:8px;background:#f0f0f0;">
+                <small class="d-block text-muted mt-1">Current image (upload new to replace)</small>
+              </div>
+            <% } %>
+          </div>
+
+          <% if (item) { %>
+            <div class="mb-3 form-check">
+              <input type="checkbox" name="isActive" class="form-check-input" id="isActive"
+                     <%= item.isActive ? 'checked' : '' %>>
+              <label class="form-check-label" for="isActive">Active (visible to users)</label>
+            </div>
+          <% } %>
+
+          <div class="d-flex gap-2">
+            <button type="submit" class="btn btn-primary"><%= item ? 'Update' : 'Create' %></button>
+            <a href="/admin/body-shapes" class="btn btn-secondary">Cancel</a>
+          </div>
+        </form>
+      </div>
+    </div>
+  </div>
+</div>

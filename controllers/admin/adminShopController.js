@@ -53,7 +53,7 @@ exports.createForm = (req, res) => {
 
 exports.createItem = async (req, res) => {
   try {
-    const { slot, name, brand, imageUrl, isFeatured, isFree, appleProductId, googleProductId } = req.body;
+    const { slot, name, brand, imageUrl, isFeatured, isFree, gender, appleProductId, googleProductId } = req.body;
     const free = isFree === 'on';
 
     let finalImageUrl = imageUrl || '';
@@ -72,6 +72,7 @@ exports.createItem = async (req, res) => {
         brand: free ? null : (brand || null),
         imageUrl: finalImageUrl,
         isFeatured: free ? false : (isFeatured === 'on'),
+        gender: slot === 'ACCESSORY' && gender ? gender : null,
         appleProductId: free ? null : (appleProductId || null),
         googleProductId: free ? null : (googleProductId || null),
       },
@@ -111,7 +112,7 @@ exports.editForm = async (req, res) => {
 exports.updateItem = async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { slot, name, brand, imageUrl, isFeatured, isFree, appleProductId, googleProductId } = req.body;
+    const { slot, name, brand, imageUrl, isFeatured, isFree, gender, appleProductId, googleProductId } = req.body;
     const free = isFree === 'on';
 
     let finalImageUrl;
@@ -134,6 +135,7 @@ exports.updateItem = async (req, res) => {
         brand: free ? null : (brand || null),
         imageUrl: finalImageUrl || undefined,
         isFeatured: free ? false : (isFeatured === 'on'),
+        gender: slot === 'ACCESSORY' && gender ? gender : null,
         appleProductId: free ? null : (appleProductId || null),
         googleProductId: free ? null : (googleProductId || null),
       },

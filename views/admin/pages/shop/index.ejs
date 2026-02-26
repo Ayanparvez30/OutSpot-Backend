@@ -36,7 +36,12 @@
                 <span class="badge bg-warning text-dark">Paid</span>
               <% } %>
             </td>
-            <td><%= item.slot %></td>
+            <td>
+              <%= item.slot %>
+              <% if (item.slot === 'ACCESSORY' && item.gender) { %>
+                <br><span class="badge bg-<%= item.gender === 'masculine' ? 'primary' : 'danger' %>" style="font-size:0.65em"><%= item.gender === 'masculine' ? '♂' : '♀' %> <%= item.gender %></span>
+              <% } %>
+            </td>
             <td><%= item.isFeatured ? 'Yes' : '-' %></td>
             <td><%= item._count.inventories %></td>
             <td>

@@ -442,6 +442,19 @@ enum ShopSlot {
   ACCESSORY
 }
 
+model BodyShape {
+  id        Int      @id @default(autoincrement())
+  gender    String                  // 'masculine' | 'feminine'
+  height    String                  // 'S' | 'M' | 'L'
+  weight    Int                     // 1-4
+  imageUrl  String   @db.Text
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([gender, height, weight])
+}
+
 model ShopItem {
   id        Int       @id @default(autoincrement())
   slot      ShopSlot
@@ -452,6 +465,7 @@ model ShopItem {
   // any renderer / style info for avatar
   payload   Json?     // e.g. { "shirt": "Blue Hawaiian" }
   isFeatured Boolean   @default(false)
+  gender    String?   // 'masculine' | 'feminine' | null (null = both)
   appleProductId  String?   @unique   // App Store IAP SKU
   googleProductId String?   @unique   // Play Store IAP SKU
 
