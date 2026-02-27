@@ -316,13 +316,17 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
 
   const isFeminine = effectiveBodyType === 'feminine';
 
-  // Face reference: ONLY use actual selfie/premade — NEVER fall back to generated avatar or body shape
+  // Face reference priority: opts.faceUrl > User.selfieUrl (canonical) > draft selfieUrl > any Minime selfieUrl
   let faceReference = null;
   let faceRefSource = 'none';
 
   if (opts.faceUrl && isHttpUrl(opts.faceUrl)) {
     faceReference = opts.faceUrl;
     faceRefSource = 'opts.faceUrl';
+  } else if (user?.selfieUrl && isHttpUrl(user.selfieUrl)) {
+    // Canonical selfie on User profile — always preferred (never lost by draft deletion)
+    faceReference = user.selfieUrl;
+    faceRefSource = 'User.selfieUrl (canonical)';
   } else if (mm.selfieUrl && isHttpUrl(mm.selfieUrl)) {
     faceReference = mm.selfieUrl;
     faceRefSource = 'mm.selfieUrl (current draft)';
@@ -386,11 +390,12 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
 
   console.log('\n========== MINIME GENERATION ==========');
   console.log('INPUT IMAGE URLs:');
+  console.log(`  [bodyShape] ${effectiveBodyShapeUrl || 'NONE'}`);
   outfitUrls.forEach(({ field, url }) => {
     console.log(`  [${field}] ${url}`);
   });
   if (outfitUrls.length === 0) {
-    console.log('  (no image URLs - using text descriptions)');
+    console.log('  (no outfit image URLs - using text descriptions)');
   }
 
   let imageResponse;
@@ -409,7 +414,19 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
     console.warn(`✗ Failed to fetch face reference: ${faceReference} — generation may lack facial accuracy`);
   }
 
-  // 2) Clothing reference images
+  // 2) Body shape reference image — for proportions
+  if (effectiveBodyShapeUrl && isHttpUrl(effectiveBodyShapeUrl)) {
+    const bodyBuffer = await fetchImageAsBuffer(effectiveBodyShapeUrl);
+    if (bodyBuffer) {
+      const bodyFile = await toFile(bodyBuffer, 'body-shape.png', { type: 'image/png' });
+      referenceImages.push(bodyFile);
+      console.log(`✓ Fetched BODY SHAPE: ${effectiveBodyShapeUrl.substring(0, 80)}...`);
+    } else {
+      console.warn(`✗ Failed to fetch body shape: ${effectiveBodyShapeUrl}`);
+    }
+  }
+
+  // 3) Clothing reference images
   for (const { field, url } of outfitUrls) {
     const buffer = await fetchImageAsBuffer(url);
     if (buffer) {
@@ -422,7 +439,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
   }
 
   if (referenceImages.length > 0) {
-    console.log(`Using images.edit() with ${referenceImages.length} reference image(s) [face + ${referenceImages.length - 1} outfit]`);
+    console.log(`Using images.edit() with ${referenceImages.length} reference image(s) [face + body + outfit]`);
     imageResponse = await openai.images.edit({
       model: 'gpt-image-1',
       image: referenceImages,
