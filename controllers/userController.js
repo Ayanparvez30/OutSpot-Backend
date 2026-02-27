@@ -169,6 +169,9 @@ async function uploadAvatarWithMulter(req, res) {
     };
     const s3Url = await uploadToS3(compressedFile, 'avatars');
 
+    // Persist canonical selfie on User so it's never lost when drafts are deleted
+    await prisma.user.update({ where: { id: userId }, data: { selfieUrl: s3Url } });
+
     const minime = await prisma.minime.create({
       data: { userId, selfieUrl: s3Url, isSaved: false, isDraft: true }
     });
@@ -184,9 +187,14 @@ async function generateMinime(req, res) {
     const userId = req.authData.id;
     const { premadeId, bodyType, bodyShapeUrl, shirt, pant, shoes, glasses, lipstick, jewelry, bag, watch } = req.body || {};
 
-    // Resolve face reference: premadeId (new) > existing selfieUrl
+    // Resolve face reference: User.selfieUrl (real face) > premadeId > last Minime selfieUrl
+    const userRecord = await prisma.user.findUnique({ where: { id: userId }, select: { selfieUrl: true } });
     let faceRef;
-    if (premadeId) {
+
+    if (userRecord?.selfieUrl) {
+      // Always prefer the canonical selfie (real face) if available
+      faceRef = userRecord.selfieUrl;
+    } else if (premadeId) {
       const premade = await prisma.premadeAvatar.findUnique({
         where: { id: parseInt(premadeId, 10) },
       });
@@ -245,11 +253,17 @@ async function regenerateMinime(req, res) {
     const userId = req.authData.id;
     const { bodyType, bodyShapeUrl } = req.body || {};
 
-    const lastAny = await prisma.minime.findFirst({
-      where: { userId },
-      orderBy: { createdAt: 'desc' }
-    });
-    const faceRef = lastAny?.selfieUrl || null;
+    // Prefer canonical selfie from User profile, then fall back to last Minime
+    const userRecord = await prisma.user.findUnique({ where: { id: userId }, select: { selfieUrl: true } });
+    let faceRef = userRecord?.selfieUrl || null;
+
+    if (!faceRef) {
+      const lastAny = await prisma.minime.findFirst({
+        where: { userId },
+        orderBy: { createdAt: 'desc' }
+      });
+      faceRef = lastAny?.selfieUrl || null;
+    }
 
     if (!faceRef) {
       return response.response_with_code(res, 400,

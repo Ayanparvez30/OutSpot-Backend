@@ -26,6 +26,7 @@ model User {
   bio              String?
   bodyType         String?
   bodyShapeUrl     String?
+  selfieUrl        String?   @db.Text  // canonical selfie — never lost when drafts are deleted
   communities      CommunityMember[]
   syncedContacts   ContactSync[]
     // 👇 Referral fields
