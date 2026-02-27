@@ -155,7 +155,25 @@ ${isFeminine ? `- Lipstick: ${lips}
 
 
 
-function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit, facialHair, skinToneHint, hairHint }) {
+// Map weight (1-4) and height (S/M/L) to explicit body descriptions
+function describeBodyShape(weight, height) {
+  const weightDesc = {
+    1: { build: 'very slim and thin', detail: 'narrow shoulders, thin arms, flat stomach, thin legs, petite/lean frame' },
+    2: { build: 'average/moderate', detail: 'normal shoulder width, lightly toned arms, flat-to-slight stomach, average legs' },
+    3: { build: 'slightly heavy/curvy', detail: 'broader shoulders, thicker arms, noticeable belly, fuller thighs and legs' },
+    4: { build: 'heavy/plus-size', detail: 'wide shoulders, thick arms, round belly, wide hips, thick legs, large frame' },
+  };
+  const heightDesc = {
+    S: { label: 'short', ratio: 'shorter than average, compact proportions' },
+    M: { label: 'medium/average', ratio: 'average height, standard proportions' },
+    L: { label: 'tall', ratio: 'taller than average, elongated proportions' },
+  };
+  const w = weightDesc[weight] || weightDesc[2];
+  const h = heightDesc[height] || heightDesc['M'];
+  return { weightBuild: w.build, weightDetail: w.detail, heightLabel: h.label, heightRatio: h.ratio };
+}
+
+function buildMinimePrompt({ isFeminine, outfit, facialHair, skinToneHint, hairHint, bodyWeight, bodyHeight }) {
   const o = outfit || {};
   const noGlasses = !o.glasses;
 
@@ -172,20 +190,36 @@ function buildMinimePrompt({ bodyShapeUrl, faceUrl, isFeminine, outfit, facialHa
     ? `- Facial hair: none; keep CLEAN-SHAVEN with no moustache and no stubble.`
     : `- Facial hair: ${facialHair}; ADD as specified even if the face reference is clean-shaven; keep neat and match hair color.`;
 
+  // Build explicit body shape description from metadata
+  const bodyDesc = describeBodyShape(bodyWeight, bodyHeight);
+  const bodyShapeSection = `
+# BODY SHAPE — THIS IS THE HIGHEST PRIORITY CONSTRAINT
+One of the reference images is a body shape silhouette. The character's body MUST match it EXACTLY.
+- Build: ${bodyDesc.weightBuild} (weight level ${bodyWeight || '?'} out of 4)
+- Body details: ${bodyDesc.weightDetail}
+- Height: ${bodyDesc.heightLabel} (${bodyDesc.heightRatio})
+- Match the EXACT waist width, hip width, arm thickness, leg thickness, torso length, and overall body mass from the body shape reference image.
+- The body shape silhouette defines proportions ONLY — do NOT copy its skin color or face.
+- Do NOT make the character fatter or thinner than the body shape reference.
+- Do NOT default to an average/medium build — follow the reference PRECISELY.`.trim();
+
   return `
 Generate a full-body, front-facing 3D cartoon avatar (clean Pixar-like).
 
-# HARD CONSTRAINTS
-- STRICT body shape reference: ${bodyShapeUrl}
-- STRICT facial likeness from: ${faceUrl}
+${bodyShapeSection}
+
+# FACE CONSTRAINTS
+- STRICT facial likeness from the face/selfie reference image.
 - FACE & ETHNICITY: The face reference image is the SOLE and ABSOLUTE source for ALL facial features, skin color, ethnicity, and racial characteristics. COPY EXACTLY — same skin tone, same undertone, same ethnic features, same face structure, same nose shape, same lip shape, same eye shape.${skinToneHint ? ` Target undertone → ${skinToneHint}.` : ''}
 ${facialHairLines}
+- Hair: copy the same style and texture from the face reference${hairHint?.style ? `; keep style ~ ${hairHint.style}` : ''}${hairHint?.color ? `; color ~ ${hairHint.color}` : ''}.
+
+# CAMERA & FRAMING
 - Camera: straight-on, full-body. Subject fully contained in frame.
 - Keep ~10–12% empty space above the head and below the shoe soles.
 - Both feet visible, standing on a flat plane. No cropping anywhere.
 - Background: TRANSPARENT (no background at all). Only render the character, nothing behind.
 - Lighting: soft, even, no harsh shadows.
-- Hair: copy the same style and texture from the face reference${hairHint?.style ? `; keep style ~ ${hairHint.style}` : ''}${hairHint?.color ? `; color ~ ${hairHint.color}` : ''}.
 
 # OUTFIT (match EXACTLY; http(s) = strict visual refs)
 - Shirt/top: ${o.shirt || 'basic solid color t-shirt'}
@@ -194,16 +228,16 @@ ${facialHairLines}
 ${glassesLine}
 ${accessoriesLines(o, isFeminine)}
 
-
 # COMPOSITION & STYLE
 - Neutral pose, arms relaxed by sides, single character only.
 - Clean edges, smooth materials, vivid but realistic colors.
-- Maintain the proportions of the provided body shape; do not exaggerate head size.
+- Maintain the proportions of the body shape reference; do not exaggerate head size.
 - No extra props, text, or background objects.
 
 # NEGATIVE INSTRUCTIONS
 - Do NOT crop hair or shoes.
 - Do NOT turn the body away; keep front-facing.
+- Do NOT ignore the body shape — a weight-1 character must be THIN, not average or chubby.
 - Do NOT change accessory colors; use the specified color or the image reference color exactly.
 - Do NOT add pendants/lockets/charms to necklaces unless explicitly specified.
 - Do NOT add earrings unless the jewelry explicitly contains "earring".
@@ -375,14 +409,28 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
       watch:    opts.watch    ?? mm.watch,
   });
 
+  // Look up body shape metadata for explicit prompt instructions
+  let bodyWeight = null, bodyHeight = null;
+  const bodyShapeRecord = await prisma.bodyShape.findFirst({
+    where: { imageUrl: effectiveBodyShapeUrl },
+    select: { weight: true, height: true },
+  });
+  if (bodyShapeRecord) {
+    bodyWeight = bodyShapeRecord.weight;
+    bodyHeight = bodyShapeRecord.height;
+    console.log(`[BODY SHAPE] weight=${bodyWeight} height=${bodyHeight}`);
+  } else {
+    console.warn(`[BODY SHAPE] No DB record found for URL — using image reference only`);
+  }
+
   const prompt = buildMinimePrompt({
-    bodyShapeUrl: effectiveBodyShapeUrl,
-    faceUrl: faceReference,
     isFeminine,
     outfit: outfitForModel,
     facialHair,
     skinToneHint,
     hairHint,
+    bodyWeight,
+    bodyHeight,
   });
 
   // Collect clothing reference images (URLs)
