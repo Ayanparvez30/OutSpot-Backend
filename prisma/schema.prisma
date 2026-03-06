@@ -251,10 +251,11 @@ model Chat {
 
   messages  Message[]
   imageUrl    String?
+  disappearingSeconds Int?   // null = off; seconds until messages expire (e.g. 86400 = 24h)
   updatedAt DateTime  @updatedAt
   createdAt DateTime  @default(now())
 
-    
+
   createdById Int?
   createdBy   User? @relation(fields: [createdById], references: [id])
 }
@@ -267,8 +268,12 @@ model Message {
   chat     Chat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
   chatId   Int
   imageUrl String?
+  isSystem  Boolean  @default(false) // system alert messages (e.g. "disappearing messages turned on")
+  expiresAt DateTime?                // null = permanent; set when chat has disappearingSeconds
 
   createdAt DateTime @default(now())
+
+  @@index([expiresAt])  // fast cleanup query
 }
 
 

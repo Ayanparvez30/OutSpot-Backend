@@ -70,5 +70,9 @@ router.get('/chats/search', checkAuth, chatController.searchChats);
 
 router.post('/chats/messages', checkAuth, chatController.sendTextMessage);
 
+// Disappearing messages
+router.put('/chats/:chatId/disappearing', checkAuth, chatController.setDisappearingMessages);
+router.get('/chats/:chatId/disappearing', checkAuth, chatController.getDisappearingMessages);
+
 module.exports = router;
 

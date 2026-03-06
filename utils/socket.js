@@ -263,12 +263,19 @@ function initSocket(server) {
           }
         }
 
+        // Calculate expiresAt if chat has disappearing messages enabled
+        let expiresAt = null;
+        if (chat.disappearingSeconds) {
+          expiresAt = new Date(Date.now() + chat.disappearingSeconds * 1000);
+        }
+
         const message = await prisma.message.create({
           data: {
             chatId,
             senderId,
             content: content || null,
-            imageUrl: imageUrl || null
+            imageUrl: imageUrl || null,
+            expiresAt,
           },
           include: {
             sender: {
@@ -303,6 +310,8 @@ function initSocket(server) {
           id: message.id,
           content: message.content,
           imageUrl: message.imageUrl,
+          isSystem: message.isSystem || false,
+          expiresAt: message.expiresAt || null,
           sender: {
             id: message.sender.id,
             username: message.sender.username,

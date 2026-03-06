@@ -64,7 +64,7 @@ function normCityLabel(city) {
 }
 
 async function getOrCreateGlobalChatByCity(cityLabel) {
-  const label = normCityLabel(cityLabel) || "All USA";
+  const label = normCityLabel(cityLabel) || "Global Chat";
   const name = `Global Chat - ${label}`;
 
   let chat = await prisma.chat.findFirst({
@@ -128,8 +128,8 @@ exports.getGlobalChatId = async (req, res) => {
     return res.json({
       success: true,
       chatId: chat.id,
-      name: normCityLabel(chat.name) || city || "All USA",
-      city: city || "All USA",
+      name: normCityLabel(chat.name) || city || "Global Chat",
+      city: city || "Global Chat",
       isLocked: chat.isLocked,
       memberCount,
       latestMessage: last ? {
@@ -362,7 +362,7 @@ exports.getGlobalChatRooms = async (req, res) => {
       const latestMsg = r.messages?.[0] || null;
       const item = {
         chatId: r.id,
-        name: city || "All USA",
+        name: city || "Global Chat",
         city,
         isLocked: r.isLocked,
         updatedAt: r.updatedAt,
@@ -925,8 +925,12 @@ exports.getMessages = async (req, res) => {
   const { chatId } = req.params;
 
   try {
+    const now = new Date();
     const messages = await prisma.message.findMany({
-      where: { chatId: parseInt(chatId, 10) },
+      where: {
+        chatId: parseInt(chatId, 10),
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
       include: {
         sender: {
           select: {
@@ -955,6 +959,8 @@ exports.getMessages = async (req, res) => {
       id: m.id,
       content: m.content,
       imageUrl: m.imageUrl,
+      isSystem: m.isSystem || false,
+      expiresAt: m.expiresAt || null,
       createdAt: m.createdAt,
       chatId: m.chatId,
       sender: {
@@ -986,8 +992,12 @@ exports.getMessagesPaginated = async (req, res) => {
   const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
   try {
+    const now = new Date();
     const messages = await prisma.message.findMany({
-      where: { chatId: parseInt(chatId, 10) },
+      where: {
+        chatId: parseInt(chatId, 10),
+        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+      },
       include: {
         sender: {
           select: {
@@ -1015,6 +1025,8 @@ exports.getMessagesPaginated = async (req, res) => {
       id: m.id,
       content: m.content,
       imageUrl: m.imageUrl,
+      isSystem: m.isSystem || false,
+      expiresAt: m.expiresAt || null,
       createdAt: m.createdAt,
       chatId: m.chatId,
       sender: {
@@ -1864,5 +1876,146 @@ const userChats = await prisma.chat.findMany({
   } catch (error) {
     console.error("Search chats error:", error);
     res.status(500).json({ error: "Failed to search chats" });
+  }
+};
+
+// ───────── Disappearing Messages ─────────
+
+const ALLOWED_DURATIONS = [0, 300, 3600, 86400, 604800]; // off, 5m, 1h, 24h, 7d
+
+exports.setDisappearingMessages = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const chatId = parseInt(req.params.chatId, 10);
+    const { seconds } = req.body; // 0 = off, or one of the allowed durations
+
+    if (!chatId || !Number.isInteger(chatId)) {
+      return res.status(400).json({ error: 'Valid chatId is required' });
+    }
+
+    if (!ALLOWED_DURATIONS.includes(seconds)) {
+      return res.status(400).json({
+        error: `Invalid duration. Allowed: ${ALLOWED_DURATIONS.join(', ')} (seconds)`,
+      });
+    }
+
+    // Verify user is a member of this chat
+    const membership = await prisma.userOnChat.findFirst({
+      where: { userId, chatId },
+    });
+    if (!membership) {
+      return res.status(403).json({ error: 'You are not a member of this chat' });
+    }
+
+    const newValue = seconds === 0 ? null : seconds;
+
+    await prisma.chat.update({
+      where: { id: chatId },
+      data: { disappearingSeconds: newValue },
+    });
+
+    // Build human-readable label
+    const label = seconds === 0
+      ? 'off'
+      : seconds < 3600
+        ? `${seconds / 60} minutes`
+        : seconds < 86400
+          ? `${seconds / 3600} hour${seconds / 3600 > 1 ? 's' : ''}`
+          : `${seconds / 86400} day${seconds / 86400 > 1 ? 's' : ''}`;
+
+    // Fetch sender name for the alert
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { firstName: true, lastName: true },
+    });
+    const senderName = `${user?.firstName || ''} ${user?.lastName || ''}`.trim() || 'Someone';
+
+    const alertContent = seconds === 0
+      ? `${senderName} turned off disappearing messages`
+      : `${senderName} set disappearing messages to ${label}`;
+
+    // Create system message alert
+    const systemMsg = await prisma.message.create({
+      data: {
+        chatId,
+        senderId: userId,
+        content: alertContent,
+        isSystem: true,
+        expiresAt: null, // system messages don't expire
+      },
+    });
+
+    await prisma.chat.update({
+      where: { id: chatId },
+      data: { updatedAt: new Date() },
+    });
+
+    // Emit socket events
+    try {
+      const io = require('../utils/socket').getIO();
+
+      // Alert all participants about the system message
+      io.to(`chat_${chatId}`).emit('newMessage', {
+        id: systemMsg.id,
+        content: alertContent,
+        imageUrl: null,
+        isSystem: true,
+        sender: { id: userId, firstName: user?.firstName, lastName: user?.lastName },
+        chatId,
+        createdAt: systemMsg.createdAt,
+      });
+
+      // Dedicated event so Flutter can update the chat settings UI
+      io.to(`chat_${chatId}`).emit('disappearingMessagesChanged', {
+        chatId,
+        disappearingSeconds: newValue,
+        changedBy: userId,
+        label,
+      });
+    } catch (socketErr) {
+      console.error('disappearingMessages socket error:', socketErr);
+    }
+
+    return res.json({
+      success: true,
+      disappearingSeconds: newValue,
+      label,
+      systemMessageId: systemMsg.id,
+    });
+  } catch (error) {
+    console.error('setDisappearingMessages error:', error);
+    return res.status(500).json({ error: 'Failed to update disappearing messages' });
+  }
+};
+
+exports.getDisappearingMessages = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const chatId = parseInt(req.params.chatId, 10);
+
+    if (!chatId || !Number.isInteger(chatId)) {
+      return res.status(400).json({ error: 'Valid chatId is required' });
+    }
+
+    const membership = await prisma.userOnChat.findFirst({
+      where: { userId, chatId },
+      select: { chatId: true },
+    });
+    if (!membership) {
+      return res.status(403).json({ error: 'You are not a member of this chat' });
+    }
+
+    const chat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { disappearingSeconds: true },
+    });
+
+    return res.json({
+      success: true,
+      disappearingSeconds: chat?.disappearingSeconds || null,
+    });
+  } catch (error) {
+    console.error('getDisappearingMessages error:', error);
+    return res.status(500).json({ error: 'Failed to fetch disappearing messages setting' });
   }
 };

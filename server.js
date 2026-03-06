@@ -109,6 +109,31 @@ cron.schedule(CRON_EXPR, async () => {
   }
 });
 
+// ---- Disappearing messages cleanup cron ----
+// Runs every minute in dev, every 5 minutes in prod
+const MSG_CLEANUP_CRON = process.env.NODE_ENV === 'development' ? '* * * * *' : '*/5 * * * *';
+cron.schedule(MSG_CLEANUP_CRON, async () => {
+  try {
+    const result = await prisma.message.deleteMany({
+      where: {
+        expiresAt: { not: null, lte: new Date() },
+      },
+    });
+    if (result.count > 0) {
+      console.log(`🗑️  Disappearing messages cleaned up: ${result.count}`);
+
+      // Notify connected clients so they can remove expired messages from UI
+      try {
+        const { getIO } = require('./utils/socket');
+        const io = getIO();
+        io.emit('messagesExpired', { count: result.count, at: new Date().toISOString() });
+      } catch (_) { /* socket not ready yet */ }
+    }
+  } catch (e) {
+    console.error('❌ Disappearing messages cron error:', e);
+  }
+});
+
 const server = http.createServer(app);
 const { initSocket } = require('./utils/socket');
 initSocket(server);
