@@ -1562,12 +1562,42 @@ exports.markChatAsRead = async (req, res) => {
       });
     } catch (socketErr) {
       console.error('Socket emission error:', socketErr);
-      // Don't fail the request if socket fails
     }
 
-    return res.json({ 
+    // View-once: schedule deletion 5s after recipient reads
+    const cid = parseInt(chatId, 10);
+    const chat = await prisma.chat.findUnique({
+      where: { id: cid },
+      select: { disappearingSeconds: true },
+    });
+    if (chat && chat.disappearingSeconds === 1) {
+      const viewOnceMessages = await prisma.message.findMany({
+        where: {
+          chatId: cid,
+          id: { lte: latestMessage.id },
+          isSystem: false,
+          expiresAt: null,
+          senderId: { not: currentUserId },
+        },
+        select: { id: true },
+      });
+      if (viewOnceMessages.length > 0) {
+        const msgIds = viewOnceMessages.map(m => m.id);
+        setTimeout(async () => {
+          try {
+            await prisma.message.deleteMany({ where: { id: { in: msgIds } } });
+            const io = require('../utils/socket').getIO();
+            io.to(`chat_${cid}`).emit('messagesDeleted', { chatId: cid, messageIds: msgIds });
+          } catch (e) {
+            console.error('View-once delete error:', e);
+          }
+        }, 5000);
+      }
+    }
+
+    return res.json({
       message: 'Chat marked as read',
-      chatId: parseInt(chatId, 10),
+      chatId: cid,
       lastSeenMessageId: latestMessage.id,
       success: true
     });
@@ -1886,8 +1916,8 @@ const userChats = await prisma.chat.findMany({
 
 // ───────── Disappearing Messages ─────────
 
-// 0=forever, 5=immediately, 300=5m, 900=15m, 1800=30m, 3600=1h, 10800=3h, 21600=6h
-const ALLOWED_DURATIONS = [0, 5, 300, 900, 1800, 3600, 10800, 21600];
+// 0=forever, 1=view-once (disappear 5s after read), 300=5m, 900=15m, 1800=30m, 3600=1h, 10800=3h, 21600=6h
+const ALLOWED_DURATIONS = [0, 1, 300, 900, 1800, 3600, 10800, 21600];
 
 exports.setDisappearingMessages = async (req, res) => {
   try {
@@ -1934,7 +1964,7 @@ exports.setDisappearingMessages = async (req, res) => {
 
     // Build human-readable label
     const LABELS = {
-      0: 'off', 5: 'immediately', 300: '5 minutes', 900: '15 minutes',
+      0: 'off', 1: 'immediately', 300: '5 minutes', 900: '15 minutes',
       1800: '30 minutes', 3600: '1 hour', 10800: '3 hours', 21600: '6 hours',
     };
     const label = LABELS[seconds] || `${seconds} seconds`;

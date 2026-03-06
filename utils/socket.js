@@ -267,8 +267,9 @@ function initSocket(server) {
         }
 
         // Calculate expiresAt if chat has disappearing messages enabled
+        // View-once (disappearingSeconds === 1): no timer at send; expires after recipient reads
         let expiresAt = null;
-        if (chat.disappearingSeconds) {
+        if (chat.disappearingSeconds && chat.disappearingSeconds !== 1) {
           expiresAt = new Date(Date.now() + chat.disappearingSeconds * 1000);
         }
 
@@ -483,6 +484,46 @@ function initSocket(server) {
           userId: uid,
           lastSeenMessageId: lastId,
         });
+
+        // View-once: delete read messages 5s after recipient views them
+        const chat = await prisma.chat.findUnique({
+          where: { id: cid },
+          select: { disappearingSeconds: true },
+        });
+
+        if (chat && chat.disappearingSeconds === 1) {
+          // Get non-system messages up to the read point that don't already have expiresAt
+          const viewOnceMessages = await prisma.message.findMany({
+            where: {
+              chatId: cid,
+              id: { lte: lastId },
+              isSystem: false,
+              expiresAt: null,
+              senderId: { not: uid }, // only messages FROM the other person
+            },
+            select: { id: true },
+          });
+
+          if (viewOnceMessages.length > 0) {
+            const msgIds = viewOnceMessages.map(m => m.id);
+
+            // Schedule deletion after 5 seconds
+            setTimeout(async () => {
+              try {
+                await prisma.message.deleteMany({
+                  where: { id: { in: msgIds } },
+                });
+
+                io.to(`chat_${cid}`).emit('messagesDeleted', {
+                  chatId: cid,
+                  messageIds: msgIds,
+                });
+              } catch (e) {
+                console.error('View-once delete error:', e);
+              }
+            }, 5000);
+          }
+        }
       } catch (error) {
         console.error('❌ Error in markMessageAsRead:', error);
         socket.emit('markMessageAsReadError', { error: 'Failed to mark messages as read' });
