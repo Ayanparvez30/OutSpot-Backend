@@ -366,6 +366,38 @@ function initSocket(server) {
       });
     });
 
+    // Delivery confirmation: client emits this when it receives a message
+    socket.on('messageDelivered', async ({ chatId, messageId }) => {
+      const uid = socket.data.userId;
+      const cid = parseInt(chatId, 10);
+      const mid = parseInt(messageId, 10);
+      if (!uid || !cid || !mid) return;
+
+      try {
+        // Only advance lastDeliveredMessageId forward (never backward)
+        const row = await prisma.userOnChat.findFirst({
+          where: { userId: uid, chatId: cid },
+          select: { lastDeliveredMessageId: true },
+        });
+        if (!row) return;
+        if (row.lastDeliveredMessageId && row.lastDeliveredMessageId >= mid) return;
+
+        await prisma.userOnChat.updateMany({
+          where: { userId: uid, chatId: cid },
+          data: { lastDeliveredMessageId: mid },
+        });
+
+        // Notify the chat so sender can update tick UI
+        io.to(`chat_${cid}`).emit('messageDelivered', {
+          chatId: cid,
+          userId: uid,
+          lastDeliveredMessageId: mid,
+        });
+      } catch (error) {
+        console.error('messageDelivered error:', error);
+      }
+    });
+
     socket.on('markMessageAsRead', async ({ chatId, userId, lastSeenMessageId }) => {
       const cid = parseInt(chatId, 10);
       const uid = parseInt(userId, 10);

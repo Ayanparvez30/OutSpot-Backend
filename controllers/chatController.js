@@ -911,7 +911,7 @@ exports.getMessages = async (req, res) => {
         },
         chat: {
           include: {
-            users: { select: { userId: true, lastSeenMessageId: true } },
+            users: { select: { userId: true, lastSeenMessageId: true, lastDeliveredMessageId: true } },
           },
         },
       },
@@ -933,6 +933,9 @@ exports.getMessages = async (req, res) => {
       },
       readBy: m.chat.users
         .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
+        .map(u => u.userId),
+      deliveredTo: m.chat.users
+        .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= m.id)
         .map(u => u.userId),
     }));
 
@@ -966,7 +969,7 @@ exports.getMessagesPaginated = async (req, res) => {
         },
         chat: {
           include: {
-            users: { select: { userId: true, lastSeenMessageId: true } },
+            users: { select: { userId: true, lastSeenMessageId: true, lastDeliveredMessageId: true } },
           },
         },
       },
@@ -990,6 +993,9 @@ exports.getMessagesPaginated = async (req, res) => {
       },
       readBy: m.chat.users
         .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
+        .map(u => u.userId),
+      deliveredTo: m.chat.users
+        .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= m.id)
         .map(u => u.userId),
     }));
 

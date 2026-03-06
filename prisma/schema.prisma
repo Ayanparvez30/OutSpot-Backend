@@ -296,7 +296,8 @@ model UserOnChat {
   // NEW ↓
   role     ChatRole @default(MEMBER)
   joinedAt DateTime @default(now())
-  lastSeenMessageId Int?
+  lastSeenMessageId      Int?
+  lastDeliveredMessageId Int?
 
   isMuted  Boolean  @default(false)
   mutedAt  DateTime?
