@@ -1907,6 +1907,18 @@ exports.setDisappearingMessages = async (req, res) => {
       return res.status(403).json({ error: 'You are not a member of this chat' });
     }
 
+    // Block disappearing messages on global chats and group chats
+    const chat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      select: { name: true, isGroup: true },
+    });
+    if (chat && isGlobalChatName(chat.name)) {
+      return res.status(400).json({ error: 'Disappearing messages are not available for global chats' });
+    }
+    if (chat && chat.isGroup) {
+      return res.status(400).json({ error: 'Disappearing messages are only available for personal conversations' });
+    }
+
     const newValue = seconds === 0 ? null : seconds;
 
     await prisma.chat.update({
