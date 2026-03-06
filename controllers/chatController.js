@@ -300,6 +300,24 @@ exports.getGlobalChatRooms = async (req, res) => {
   try {
     const q = String(req.query.q || "").trim();
 
+    // Ensure all launch cities exist in the DB (runs once per missing city)
+    const LAUNCH_CITIES = [
+      "Boston", "Chicago", "Dallas", "Florida", "Los Angeles",
+      "Miami", "New York", "Philadelphia", "Phoenix", "San Diego",
+    ];
+    for (const city of LAUNCH_CITIES) {
+      const name = `Global Chat - ${city}`;
+      const exists = await prisma.chat.findFirst({
+        where: { name, communityId: null, isCommunity: false },
+        select: { id: true },
+      });
+      if (!exists) {
+        await prisma.chat.create({
+          data: { name, isGroup: false, isCommunity: false, communityId: null },
+        });
+      }
+    }
+
     const where = {
       communityId: null,
       isCommunity: false,
@@ -360,7 +378,7 @@ exports.getGlobalChatRooms = async (req, res) => {
         } : null,
       };
 
-      // keep latest updated room for same city
+      // keep latest updated room for same city (dedupes dynamic + preloaded)
       const prev = map.get(city || "");
       if (!prev || new Date(item.updatedAt) > new Date(prev.updatedAt)) {
         map.set(city || "", item);
