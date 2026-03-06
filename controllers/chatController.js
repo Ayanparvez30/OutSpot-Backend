@@ -30,7 +30,15 @@ function isGlobalChatName(name) {
 }
 
 
-const NOT_GLOBAL_CHAT_WHERE = { NOT: { name: { startsWith: "Global Chat" } } };
+// NOTE: Plain `NOT: { name: { startsWith: "Global Chat" } }` silently
+// excludes rows where name IS NULL (SQL NULL semantics: NOT NULL → NULL → false).
+// Private chats have name=null, so we must explicitly include them.
+const NOT_GLOBAL_CHAT_WHERE = {
+  OR: [
+    { name: null },
+    { NOT: { name: { startsWith: "Global Chat" } } },
+  ],
+};
 
 const upload = multer({ dest: 'uploads/' });
 
@@ -430,7 +438,11 @@ exports.createPrivateChat = async (req, res) => {
   isGroup: false,
   isCommunity: false,
 
-  NOT: { name: { startsWith: "Global Chat" } },
+  // Include null-named private chats (NOT alone excludes NULLs in SQL)
+  OR: [
+    { name: null },
+    { NOT: { name: { startsWith: "Global Chat" } } },
+  ],
 
   AND: [
     { users: { some: { userId: currentUserId } } },
