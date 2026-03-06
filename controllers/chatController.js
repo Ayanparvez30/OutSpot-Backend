@@ -1678,10 +1678,12 @@ const chats = await prisma.chat.findMany({
           imageUrl: latestMessage.imageUrl,
           createdAt: latestMessage.createdAt,
           senderId: latestMessage.senderId,
-          // ✅ Add readBy array based on lastSeenMessageId
           readBy: chat.users
             .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
-            .map(u => u.userId)
+            .map(u => u.userId),
+          deliveredTo: chat.users
+            .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
+            .map(u => u.userId),
         } : null,
         totalMessages: chat._count.messages
       };
