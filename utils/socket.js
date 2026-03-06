@@ -82,6 +82,10 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
 
       if (isUserOnline(user.id)) continue;
 
+      // Always track delivery for offline users (message is in DB)
+      pushDeliveredUserIds.push(user.id);
+
+      // Skip FCM push if chat is muted for this user
       if (userOnChat.isMuted) continue;
 
       if (user.fcmToken) {
@@ -99,7 +103,6 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
 
         try {
           await admin.messaging().send(notificationPayload);
-          pushDeliveredUserIds.push(user.id);
         } catch (error) {
           console.error(`Failed to send push notification to user ${user.id}:`, error);
         }
