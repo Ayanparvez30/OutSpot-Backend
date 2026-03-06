@@ -890,13 +890,16 @@ const chats = await prisma.chat.findMany({
         };
       });
 
-      const unreadCount = unreadCountsMap.get(chat.id) || 0;
+      const currentUserOnChat = chat.users.find(u => u.userId === currentUserId);
+      const isMuted = currentUserOnChat?.isMuted || false;
+      const unreadCount = isMuted ? 0 : (unreadCountsMap.get(chat.id) || 0);
       const latestMessage = chat.messages.length > 0 ? chat.messages[0] : null;
 
-      return { 
-        ...chat, 
+      return {
+        ...chat,
         users: chatUsers,
         unreadCount,
+        isMuted,
         latestMessage: latestMessage ? {
           id: latestMessage.id,
           content: latestMessage.content,
@@ -1690,18 +1693,19 @@ const chats = await prisma.chat.findMany({
         };
       });
 
-      // ✅ Get accurate unread count
-      const unreadCount = unreadCountsMap.get(chat.id) || 0;
+      const currentUserOnChat = chat.users.find(u => u.userId === currentUserId);
+      const isMuted = currentUserOnChat?.isMuted || false;
+      const unreadCount = isMuted ? 0 : (unreadCountsMap.get(chat.id) || 0);
 
-      // ✅ Get latest message for preview with proper readBy information
-      const latestMessage = chat.messages.length > 0 
-        ? chat.messages[0] // Already ordered desc, so first is latest
+      const latestMessage = chat.messages.length > 0
+        ? chat.messages[0]
         : null;
 
-      return { 
-        ...chat, 
+      return {
+        ...chat,
         users: chatUsers,
         unreadCount,
+        isMuted,
         latestMessage: latestMessage ? {
           id: latestMessage.id,
           content: latestMessage.content,
@@ -1719,7 +1723,6 @@ const chats = await prisma.chat.findMany({
       };
     });
 
-    // 🚀 Filter out chats with unreadCount = 0
     const unreadChats = enrichedChats.filter(chat => chat.unreadCount > 0);
 
     res.json(unreadChats);
@@ -1830,7 +1833,9 @@ exports.getMyGroupChats = async (req, res) => {
         users: enrichedUsers,
         messages: latestMessage ? [latestMessage] : [],
         _count: { messages: chat._count.messages },
-        unreadCount: unreadCountsMap[chat.id] || 0,
+        unreadCount: (chat.users.find(u => u.userId === currentUserId)?.isMuted)
+          ? 0 : (unreadCountsMap[chat.id] || 0),
+        isMuted: chat.users.find(u => u.userId === currentUserId)?.isMuted || false,
         latestMessage: latestMessage ? { ...latestMessage, readBy, deliveredTo } : null,
         totalMessages: chat._count.messages,
       };
