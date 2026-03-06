@@ -157,6 +157,14 @@ function initSocket(server) {
       socket.emit('socket:ready', { userId });
     }
 
+    // Auto-join new chat rooms when notified by the server
+    socket.on('joinNewChat', (chatId) => {
+      const cid = parseInt(chatId, 10);
+      if (!cid || !Number.isInteger(cid)) return;
+      socket.join(`chat_${cid}`);
+      console.log(`🔵 User auto-joined new chat_${cid}`);
+    });
+
     // --------------- CHAT EVENTS ---------------
     socket.on('joinChat', (chatId) => {
       const cid = parseInt(chatId, 10);
@@ -288,7 +296,7 @@ function initSocket(server) {
           data: { lastSeenMessageId: message.id }
         });
 
-        io.to(`chat_${chatId}`).emit('newMessage', {
+        const msgPayload = {
           id: message.id,
           content: message.content,
           imageUrl: message.imageUrl,
@@ -301,9 +309,19 @@ function initSocket(server) {
           },
           chatId: message.chatId,
           createdAt: message.createdAt,
-        });
+        };
 
-        // ✅ push notifications
+        io.to(`chat_${chatId}`).emit('newMessage', msgPayload);
+
+        // Also emit to each recipient's personal room (handles newly
+        // created chats where the recipient hasn't joined the chat room)
+        for (const userOnChat of chat.users) {
+          if (userOnChat.userId !== senderId) {
+            io.to(`user:${userOnChat.userId}`).emit('newMessage', msgPayload);
+          }
+        }
+
+        // push notifications
         const sender = await prisma.user.findUnique({ where: { id: senderId } });
         if (sender) {
           sendPushNotificationToOfflineUsers(
@@ -384,4 +402,4 @@ function getIO() {
   return ioInstance;
 }
 
-module.exports = { initSocket, getIO };
+module.exports = { initSocket, getIO, sendPushToOfflineUsers: sendPushNotificationToOfflineUsers };

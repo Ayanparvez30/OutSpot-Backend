@@ -247,8 +247,39 @@ exports.sendTextMessage = async (req, res) => {
     try {
       const io = require("../utils/socket").getIO();
       io.to(`chat_${chatId}`).emit("newMessage", formatted);
+
+      // Also emit to each user's personal room (ensures delivery even if
+      // they haven't joined the chat room yet, e.g. newly created chats)
+      const chatWithUsers = await prisma.chat.findUnique({
+        where: { id: chatId },
+        select: { users: { select: { userId: true } } },
+      });
+      if (chatWithUsers) {
+        for (const u of chatWithUsers.users) {
+          if (u.userId !== userId) {
+            io.to(`user:${u.userId}`).emit("newMessage", formatted);
+          }
+        }
+      }
     } catch (socketErr) {
       console.error("sendTextMessage socket error:", socketErr);
+    }
+
+    // Push notifications for offline users
+    try {
+      const { sendPushToOfflineUsers } = require("../utils/socket");
+      const sender = await prisma.user.findUnique({ where: { id: userId } });
+      if (sender) {
+        sendPushToOfflineUsers(
+          chatId,
+          userId,
+          sender.firstName,
+          sender.lastName,
+          content || ""
+        );
+      }
+    } catch (pushErr) {
+      console.error("sendTextMessage push notification error:", pushErr);
     }
 
     return res.json({ success: true, message: formatted });
@@ -437,6 +468,17 @@ exports.createPrivateChat = async (req, res) => {
         },
       },
     });
+
+    // Notify all participants via socket so they auto-join the new chat room
+    try {
+      const io = require('../utils/socket').getIO();
+      const allUserIds = [currentUserId, ...UserId.map(Number)];
+      for (const uid of allUserIds) {
+        io.to(`user:${uid}`).emit('newChat', { chatId: chat.id });
+      }
+    } catch (socketErr) {
+      console.error('createPrivateChat socket notify error:', socketErr);
+    }
 
     return res.json({ message: 'Chat created', chatId: chat.id });
   } catch (error) {
