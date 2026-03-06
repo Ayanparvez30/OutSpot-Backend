@@ -64,6 +64,7 @@ async function smartPersistLocation(userId, latitude, longitude, threshold = 50)
 }
 
 async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstName, senderLastName, messageContent) {
+  const pushDeliveredUserIds = [];
   try {
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
@@ -72,7 +73,7 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
 
     if (!chat) {
       console.error('Chat not found for push notification');
-      return;
+      return pushDeliveredUserIds;
     }
 
     for (const userOnChat of chat.users) {
@@ -98,6 +99,7 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
 
         try {
           await admin.messaging().send(notificationPayload);
+          pushDeliveredUserIds.push(user.id);
         } catch (error) {
           console.error(`Failed to send push notification to user ${user.id}:`, error);
         }
@@ -106,6 +108,7 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
   } catch (error) {
     console.error('Error in sendPushNotificationToOfflineUsers:', error);
   }
+  return pushDeliveredUserIds;
 }
 
 function isUserOnline(userId) {
@@ -313,24 +316,77 @@ function initSocket(server) {
 
         io.to(`chat_${chatId}`).emit('newMessage', msgPayload);
 
+        // Collect who is online in the chat room
+        const chatRoom = io.sockets.adapter.rooms.get(`chat_${chatId}`);
+        const onlineInChatRoom = new Set();
+        if (chatRoom) {
+          for (const socketId of chatRoom) {
+            const s = io.sockets.sockets.get(socketId);
+            if (s?.data?.userId) onlineInChatRoom.add(s.data.userId);
+          }
+        }
+
+        // Auto-mark delivery for online recipients in the chat room
+        for (const uid of onlineInChatRoom) {
+          if (uid !== senderId) {
+            await prisma.userOnChat.updateMany({
+              where: { userId: uid, chatId },
+              data: { lastDeliveredMessageId: message.id },
+            });
+            io.to(`chat_${chatId}`).emit('messageDelivered', {
+              chatId,
+              userId: uid,
+              lastDeliveredMessageId: message.id,
+            });
+          }
+        }
+
         // Also emit to each recipient's personal room (handles newly
         // created chats where the recipient hasn't joined the chat room)
         for (const userOnChat of chat.users) {
           if (userOnChat.userId !== senderId) {
             io.to(`user:${userOnChat.userId}`).emit('newMessage', msgPayload);
+
+            // Mark delivery for online recipients not already handled above
+            if (!onlineInChatRoom.has(userOnChat.userId)) {
+              const personalRoom = io.sockets.adapter.rooms.get(`user:${userOnChat.userId}`);
+              if (personalRoom && personalRoom.size > 0) {
+                await prisma.userOnChat.updateMany({
+                  where: { userId: userOnChat.userId, chatId },
+                  data: { lastDeliveredMessageId: message.id },
+                });
+                io.to(`chat_${chatId}`).emit('messageDelivered', {
+                  chatId,
+                  userId: userOnChat.userId,
+                  lastDeliveredMessageId: message.id,
+                });
+              }
+            }
           }
         }
 
-        // push notifications
+        // push notifications + mark delivery for users who receive the push
         const sender = await prisma.user.findUnique({ where: { id: senderId } });
         if (sender) {
-          sendPushNotificationToOfflineUsers(
+          const pushDeliveredUserIds = await sendPushNotificationToOfflineUsers(
             chatId,
             senderId,
             sender.firstName,
             sender.lastName,
             content || ''
           );
+          // Mark delivery for offline users who got the push notification
+          for (const uid of pushDeliveredUserIds) {
+            await prisma.userOnChat.updateMany({
+              where: { userId: uid, chatId },
+              data: { lastDeliveredMessageId: message.id },
+            });
+            io.to(`chat_${chatId}`).emit('messageDelivered', {
+              chatId,
+              userId: uid,
+              lastDeliveredMessageId: message.id,
+            });
+          }
         }
       } catch (error) {
         console.error('❌ Error sending message:', error);
