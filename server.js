@@ -110,8 +110,8 @@ cron.schedule(CRON_EXPR, async () => {
 });
 
 // ---- Disappearing messages cleanup cron ----
-// Runs every minute in dev, every 5 minutes in prod
-const MSG_CLEANUP_CRON = process.env.NODE_ENV === 'development' ? '* * * * *' : '*/5 * * * *';
+// Runs every minute to ensure timely deletion
+const MSG_CLEANUP_CRON = '* * * * *';
 cron.schedule(MSG_CLEANUP_CRON, async () => {
   try {
     const result = await prisma.message.deleteMany({
