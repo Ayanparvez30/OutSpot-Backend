@@ -317,6 +317,9 @@ exports.getGlobalChatRooms = async (req, res) => {
         isLocked: true,
         updatedAt: true,
         _count: { select: { users: true } },
+        users: {
+          select: { userId: true, lastSeenMessageId: true, lastDeliveredMessageId: true },
+        },
         messages: {
           orderBy: { createdAt: "desc" },
           take: 1,
@@ -338,6 +341,7 @@ exports.getGlobalChatRooms = async (req, res) => {
     for (const r of roomsRaw) {
       const city = normCityLabel(r.name.replace(/^Global Chat\s*-\s*/i, "")) || null;
 
+      const latestMsg = r.messages?.[0] || null;
       const item = {
         chatId: r.id,
         name: r.name,
@@ -345,7 +349,15 @@ exports.getGlobalChatRooms = async (req, res) => {
         isLocked: r.isLocked,
         updatedAt: r.updatedAt,
         memberCount: r._count.users,
-        latestMessage: r.messages?.[0] || null,
+        latestMessage: latestMsg ? {
+          ...latestMsg,
+          readBy: r.users
+            .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMsg.id)
+            .map(u => u.userId),
+          deliveredTo: r.users
+            .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMsg.id)
+            .map(u => u.userId),
+        } : null,
       };
 
       // keep latest updated room for same city
@@ -875,7 +887,10 @@ const chats = await prisma.chat.findMany({
           senderId: latestMessage.senderId,
           readBy: chat.users
             .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
-            .map(u => u.userId)
+            .map(u => u.userId),
+          deliveredTo: chat.users
+            .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
+            .map(u => u.userId),
         } : null,
         totalMessages: chat._count.messages
       };
@@ -1759,9 +1774,13 @@ exports.getMyGroupChats = async (req, res) => {
       });
 
       let readBy = [];
+      let deliveredTo = [];
       if (latestMessage) {
         readBy = chat.users
           .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
+          .map(u => u.userId);
+        deliveredTo = chat.users
+          .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
           .map(u => u.userId);
       }
 
@@ -1780,7 +1799,7 @@ exports.getMyGroupChats = async (req, res) => {
         messages: latestMessage ? [latestMessage] : [],
         _count: { messages: chat._count.messages },
         unreadCount: unreadCountsMap[chat.id] || 0,
-        latestMessage: latestMessage ? { ...latestMessage, readBy } : null,
+        latestMessage: latestMessage ? { ...latestMessage, readBy, deliveredTo } : null,
         totalMessages: chat._count.messages,
       };
     });
