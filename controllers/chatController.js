@@ -128,7 +128,7 @@ exports.getGlobalChatId = async (req, res) => {
     return res.json({
       success: true,
       chatId: chat.id,
-      name: chat.name || "Global Chat",
+      name: normCityLabel(chat.name) || city || "All USA",
       city: city || "All USA",
       isLocked: chat.isLocked,
       memberCount,
@@ -344,7 +344,7 @@ exports.getGlobalChatRooms = async (req, res) => {
       const latestMsg = r.messages?.[0] || null;
       const item = {
         chatId: r.id,
-        name: r.name,
+        name: city || "All USA",
         city,
         isLocked: r.isLocked,
         updatedAt: r.updatedAt,
@@ -368,7 +368,7 @@ exports.getGlobalChatRooms = async (req, res) => {
     }
 
     const rooms = Array.from(map.values()).sort(
-      (a, b) => new Date(b.updatedAt) - new Date(a.updatedAt)
+      (a, b) => (a.name || "").localeCompare(b.name || "")
     );
 
     return res.json({ success: true, rooms });
