@@ -56,6 +56,10 @@ router.get('/chats/readStatus/:chatId', checkAuth, chatController.getChatReadSta
 router.put('/chats/lock/:chatId', checkAuth, chatController.lockGroupChat);
 router.put('/chats/unlock/:chatId', checkAuth, chatController.unlockGroupChat);
 
+// Disappearing messages (MUST be before the catch-all PUT /chats/:chatId)
+router.put('/chats/:chatId/disappearing', checkAuth, chatController.setDisappearingMessages);
+router.get('/chats/:chatId/disappearing', checkAuth, chatController.getDisappearingMessages);
+
 router.put(
   '/chats/:chatId',
   checkAuth,
@@ -65,14 +69,7 @@ router.put(
 // Add route for searching chats
 router.get('/chats/search', checkAuth, chatController.searchChats);
 
-
-
-
 router.post('/chats/messages', checkAuth, chatController.sendTextMessage);
-
-// Disappearing messages
-router.put('/chats/:chatId/disappearing', checkAuth, chatController.setDisappearingMessages);
-router.get('/chats/:chatId/disappearing', checkAuth, chatController.getDisappearingMessages);
 
 module.exports = router;
 
