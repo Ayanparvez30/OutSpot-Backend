@@ -267,9 +267,12 @@ function initSocket(server) {
         }
 
         // Calculate expiresAt if chat has disappearing messages enabled
-        // View-once (disappearingSeconds === 1): no timer at send; expires after recipient reads
+        // View-once (disappearingSeconds === 1): sentinel date, deleted 5s after recipient reads
+        const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
         let expiresAt = null;
-        if (chat.disappearingSeconds && chat.disappearingSeconds !== 1) {
+        if (chat.disappearingSeconds === 1) {
+          expiresAt = VIEW_ONCE_SENTINEL;
+        } else if (chat.disappearingSeconds) {
           expiresAt = new Date(Date.now() + chat.disappearingSeconds * 1000);
         }
 
@@ -492,14 +495,15 @@ function initSocket(server) {
         });
 
         if (chat && chat.disappearingSeconds === 1) {
-          // Get non-system messages up to the read point that don't already have expiresAt
+          const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
+          // Only target messages marked with the view-once sentinel
           const viewOnceMessages = await prisma.message.findMany({
             where: {
               chatId: cid,
               id: { lte: lastId },
               isSystem: false,
-              expiresAt: null,
-              senderId: { not: uid }, // only messages FROM the other person
+              expiresAt: VIEW_ONCE_SENTINEL,
+              senderId: { not: uid },
             },
             select: { id: true },
           });

@@ -1571,12 +1571,13 @@ exports.markChatAsRead = async (req, res) => {
       select: { disappearingSeconds: true },
     });
     if (chat && chat.disappearingSeconds === 1) {
+      const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
       const viewOnceMessages = await prisma.message.findMany({
         where: {
           chatId: cid,
           id: { lte: latestMessage.id },
           isSystem: false,
-          expiresAt: null,
+          expiresAt: VIEW_ONCE_SENTINEL,
           senderId: { not: currentUserId },
         },
         select: { id: true },
