@@ -1886,7 +1886,8 @@ const userChats = await prisma.chat.findMany({
 
 // ───────── Disappearing Messages ─────────
 
-const ALLOWED_DURATIONS = [0, 300, 3600, 86400, 604800]; // off, 5m, 1h, 24h, 7d
+// 0=forever, 5=immediately, 300=5m, 900=15m, 1800=30m, 3600=1h, 10800=3h, 21600=6h
+const ALLOWED_DURATIONS = [0, 5, 300, 900, 1800, 3600, 10800, 21600];
 
 exports.setDisappearingMessages = async (req, res) => {
   try {
@@ -1932,13 +1933,11 @@ exports.setDisappearingMessages = async (req, res) => {
     });
 
     // Build human-readable label
-    const label = seconds === 0
-      ? 'off'
-      : seconds < 3600
-        ? `${seconds / 60} minutes`
-        : seconds < 86400
-          ? `${seconds / 3600} hour${seconds / 3600 > 1 ? 's' : ''}`
-          : `${seconds / 86400} day${seconds / 86400 > 1 ? 's' : ''}`;
+    const LABELS = {
+      0: 'off', 5: 'immediately', 300: '5 minutes', 900: '15 minutes',
+      1800: '30 minutes', 3600: '1 hour', 10800: '3 hours', 21600: '6 hours',
+    };
+    const label = LABELS[seconds] || `${seconds} seconds`;
 
     // Fetch sender name for the alert
     const user = await prisma.user.findUnique({
