@@ -1199,17 +1199,29 @@ exports.getUserProfile = async (req, res) => {
   try {
     const isSelf = currentUserId === targetUserId;
 
-    // Check friendship status between current user and target user
+    // Check friendship status between current user and target user (any status)
     const friendship = await prisma.friendship.findFirst({
       where: {
-        status: "ACCEPTED",
         OR: [
           { requesterId: currentUserId, receiverId: targetUserId },
           { requesterId: targetUserId, receiverId: currentUserId },
         ],
       },
+      select: { id: true, status: true, requesterId: true },
     });
-    const isFriend = !!friendship;
+    const isFriend = friendship?.status === "ACCEPTED";
+
+    // Determine friendship status for the UI
+    let friendshipStatus = "NONE"; // no relationship
+    if (friendship) {
+      if (friendship.status === "ACCEPTED") {
+        friendshipStatus = "ACCEPTED";
+      } else if (friendship.status === "PENDING") {
+        friendshipStatus = friendship.requesterId === currentUserId
+          ? "PENDING_SENT"      // I sent the request
+          : "PENDING_RECEIVED"; // They sent me a request
+      }
+    }
 
     // Fetch user basic profile
     const user = await prisma.user.findUnique({
@@ -1385,6 +1397,9 @@ exports.getUserProfile = async (req, res) => {
       firstName: isSelf || isFriend ? user.firstName : null,
       lastName: isSelf || isFriend ? user.lastName : null,
       minime: user.minime,
+      isSelf,
+      isFriend,
+      friendshipStatus, // "NONE" | "ACCEPTED" | "PENDING_SENT" | "PENDING_RECEIVED"
       friendCount,
       spotsVisited,
       friends: friends,
