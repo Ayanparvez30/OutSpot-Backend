@@ -16,9 +16,12 @@ async function notifyUser(userId, type, title, description, data = {}) {
     const { actorId = null, ...restData } = data;
 
 
-    // 1) Save to DB (store actorId if provided)
+    // 1) Save to DB (store actorId + extra metadata)
     const notification = await prisma.notification.create({
-      data: { userId, type, title, description, actorId }
+      data: {
+        userId, type, title, description, actorId,
+        data: Object.keys(restData).length > 0 ? restData : undefined,
+      }
     });
 
     // 2) Set notificationRedDot to true for the user

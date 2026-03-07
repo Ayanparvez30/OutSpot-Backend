@@ -29,6 +29,27 @@ exports.resetNotificationRedDot = async (req, res) => {
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
+function enrichNotification(n) {
+  return {
+    id: n.id,
+    userId: n.userId,
+    actorId: n.actorId,
+    type: n.type,
+    title: n.title,
+    description: n.description,
+    isRead: n.isRead,
+    createdAt: n.createdAt,
+    avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null,
+    actorUsername: n.actor?.username || null,
+    actorFirstName: n.actor?.firstName || null,
+    actorLastName: n.actor?.lastName || null,
+    challengeId: n.data?.challengeId || null,
+    friendId: n.data?.friendId || n.actorId || null,
+    frequency: n.data?.frequency || null,
+    points: n.data?.points || null,
+  };
+}
+
 exports.getNotifications = async (req, res) => {
   try {
     const userId = req.authData.id;
@@ -74,21 +95,7 @@ exports.getNotifications = async (req, res) => {
       }
     });
 
-    const enriched = notifications.map(n => ({
-      id: n.id,
-      userId: n.userId,
-      actorId: n.actorId,
-      type: n.type,
-      title: n.title,
-      description: n.description,
-      isRead: n.isRead,
-      createdAt: n.createdAt,
-      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null,
-      actorUsername: n.actor?.username || null,
-      actorFirstName: n.actor?.firstName || null,
-      actorLastName: n.actor?.lastName || null,
-      challengeId: n.data?.challengeId || null
-    }));
+    const enriched = notifications.map(enrichNotification);
 
     res.status(200).json({
       success: true,
@@ -209,21 +216,7 @@ exports.getUnreadNotifications = async (req, res) => {
       }
     });
 
-    // Use the same enrichment format as your getNotifications function
-    const enriched = unreadNotifications.map(n => ({
-      id: n.id,
-      userId: n.userId,
-      actorId: n.actorId,
-      type: n.type,
-      title: n.title,
-      description: n.description,
-      isRead: n.isRead,
-      createdAt: n.createdAt,
-      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null,
-      actorUsername: n.actor?.username || null,
-      actorFirstName: n.actor?.firstName || null,
-      actorLastName: n.actor?.lastName || null,
-    }));
+    const enriched = unreadNotifications.map(enrichNotification);
 
     res.status(200).json({
       success: true,
@@ -272,20 +265,7 @@ exports.getFriendRequestNotifications = async (req, res) => {
       }
     });
 
-    const enriched = friendRequestNotifications.map(n => ({
-      id: n.id,
-      userId: n.userId,
-      actorId: n.actorId,
-      type: n.type,
-      title: n.title,
-      description: n.description,
-      isRead: n.isRead,
-      createdAt: n.createdAt,
-      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null,
-      actorUsername: n.actor?.username || null,
-      actorFirstName: n.actor?.firstName || null,
-      actorLastName: n.actor?.lastName || null,
-    }));
+    const enriched = friendRequestNotifications.map(enrichNotification);
 
     res.status(200).json({
       success: true,
@@ -335,20 +315,7 @@ exports.getFriendRequestsUnread = async (req, res) => {
       }
     });
 
-    const enriched = unreadFriendRequestNotifications.map(n => ({
-      id: n.id,
-      userId: n.userId,
-      actorId: n.actorId,
-      type: n.type,
-      title: n.title,
-      description: n.description,
-      isRead: n.isRead,
-      createdAt: n.createdAt,
-      avatarUrl: n.actor?.minime?.[0]?.avatarUrl || null,
-      actorUsername: n.actor?.username || null,
-      actorFirstName: n.actor?.firstName || null,
-      actorLastName: n.actor?.lastName || null,
-    }));
+    const enriched = unreadFriendRequestNotifications.map(enrichNotification);
 
     res.status(200).json({
       success: true,
@@ -381,15 +348,7 @@ exports.getChallengeNotifications = async (req, res) => {
       }
     });
 
-    const enriched = challengeNotifications.map(n => ({
-      id: n.id,
-      userId: n.userId,
-      type: n.type,
-      title: n.title,
-      description: n.description,
-      isRead: n.isRead,
-      createdAt: n.createdAt
-    }));
+    const enriched = challengeNotifications.map(enrichNotification);
 
     res.status(200).json({
       success: true,
@@ -423,15 +382,7 @@ exports.getChallengeNotificationsUnread = async (req, res) => {
       }
     });
 
-    const enriched = unreadChallengeNotifications.map(n => ({
-      id: n.id,
-      userId: n.userId,
-      type: n.type,
-      title: n.title,
-      description: n.description,
-      isRead: n.isRead,
-      createdAt: n.createdAt
-    }));
+    const enriched = unreadChallengeNotifications.map(enrichNotification);
 
     res.status(200).json({
       success: true,
