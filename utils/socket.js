@@ -96,7 +96,9 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
             body: messageContent || '',
           },
           data: {
+            type: 'CHAT_MESSAGE',
             chatId: String(chatId),
+            senderId: String(senderId),
             senderName: `${senderFirstName || ''} ${senderLastName || ''}`.trim(),
           },
         };

@@ -656,28 +656,13 @@ async function getUserStatsByUserId (req, res){
       return res.status(400).json({ success: false, message: "Invalid userId" });
     }
 
-    // ✅ Allow self
-    const isSelf = viewerId === userId;
-
-    // ✅ Allow only friends (ACCEPTED) if not self
-    if (!isSelf) {
-      const friendship = await prisma.friendship.findFirst({
-        where: {
-          status: "ACCEPTED",
-          OR: [
-            { requesterId: viewerId, receiverId: userId },
-            { requesterId: userId, receiverId: viewerId },
-          ],
-        },
-        select: { id: true },
-      });
-
-      if (!friendship) {
-        return res.status(403).json({
-          success: false,
-          message: "You can only view stats of your friends.",
-        });
-      }
+    // Check if target user exists
+    const targetUser = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { id: true },
+    });
+    if (!targetUser) {
+      return res.status(404).json({ success: false, message: "User not found" });
     }
 
     // --------- Stats ----------
