@@ -1403,7 +1403,7 @@ exports.getUserProfile = async (req, res) => {
       friendCount,
       spotsVisited,
       friends: friends,
-      communities: isSelf || isFriend ? communities.map((c) => c.community) : [],
+      communities: communities.map((c) => c.community),
       thisWeekPoints: isSelf || isFriend ? thisWeekPoints : null,
       bio: isSelf || isFriend ? user.bio : null,
       totalPoints: isSelf || isFriend ? user.totalPoints : null,
