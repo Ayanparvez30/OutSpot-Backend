@@ -47,6 +47,7 @@ router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
 router.post('/me/privacy', checkAuth, userController.updatePrivacy);
 // routes/userRoutes.js
 router.get("/users/:userId/stats", checkAuth, userController.getUserStatsByUserId);
+router.get("/users/:userId/visited-spots", checkAuth, userController.getUserVisitedSpots);
 
 router.get('/me/profile', checkAuth, userController.getProfile);
 

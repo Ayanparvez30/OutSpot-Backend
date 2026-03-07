@@ -1048,6 +1048,35 @@ exports.getFriendProfile = async (req, res) => {
       ? communities[0].imageUrl || ""
       : "";
 
+    // Spots visited count + recent visited spots
+    const uniqueVisitedPlaces = await prisma.locationPoint.findMany({
+      where: { userId: friendId, placeId: { not: null } },
+      distinct: ["placeId"],
+      select: { placeId: true },
+    });
+    const uniqueVisitedCoords = await prisma.locationPoint.findMany({
+      where: { userId: friendId, placeId: null, latitude: { not: null }, longitude: { not: null } },
+      distinct: ["latitude", "longitude"],
+      select: { latitude: true, longitude: true },
+    });
+    const spotsVisited = uniqueVisitedPlaces.length + uniqueVisitedCoords.length;
+
+    const recentVisitedSpots = await prisma.locationPoint.findMany({
+      where: { userId: friendId },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        placeId: true,
+        placeName: true,
+        latitude: true,
+        longitude: true,
+        mediaUrl: true,
+        points: true,
+        createdAt: true,
+      },
+    });
+
     // this friend's weekly points from ledger
     const thisWeekPoints = await getWeeklyPointsForUser(friendId);
 
@@ -1147,10 +1176,12 @@ exports.getFriendProfile = async (req, res) => {
         totalPoints: friend.totalPoints || 0,
         minime: friend.minime,
         friendCount,
+        spotsVisited,
         communities,
         recentCommunityImageUrl,
         thisWeekPoints,
         stories: friendStories,
+        recentVisitedSpots,
         friendFriends,
       },
     });
@@ -1289,6 +1320,35 @@ exports.getUserProfile = async (req, res) => {
       include: { community: true },
     });
 
+    // Spots visited count + recent visited spots
+    const upUniquePlaces = await prisma.locationPoint.findMany({
+      where: { userId: targetUserId, placeId: { not: null } },
+      distinct: ["placeId"],
+      select: { placeId: true },
+    });
+    const upUniqueCoords = await prisma.locationPoint.findMany({
+      where: { userId: targetUserId, placeId: null, latitude: { not: null }, longitude: { not: null } },
+      distinct: ["latitude", "longitude"],
+      select: { latitude: true, longitude: true },
+    });
+    const spotsVisited = upUniquePlaces.length + upUniqueCoords.length;
+
+    const recentVisitedSpots = await prisma.locationPoint.findMany({
+      where: { userId: targetUserId },
+      orderBy: { createdAt: "desc" },
+      take: 10,
+      select: {
+        id: true,
+        placeId: true,
+        placeName: true,
+        latitude: true,
+        longitude: true,
+        mediaUrl: true,
+        points: true,
+        createdAt: true,
+      },
+    });
+
     // Weekly points for target user
     let thisWeekPoints = null;
     if (isSelf || isFriend) {
@@ -1326,12 +1386,14 @@ exports.getUserProfile = async (req, res) => {
       lastName: isSelf || isFriend ? user.lastName : null,
       minime: user.minime,
       friendCount,
-  friends: friends,
+      spotsVisited,
+      friends: friends,
       communities: isSelf || isFriend ? communities.map((c) => c.community) : [],
       thisWeekPoints: isSelf || isFriend ? thisWeekPoints : null,
       bio: isSelf || isFriend ? user.bio : null,
       totalPoints: isSelf || isFriend ? user.totalPoints : null,
       stories,
+      recentVisitedSpots: isSelf || isFriend ? recentVisitedSpots : [],
       mostRecent,
     };
 

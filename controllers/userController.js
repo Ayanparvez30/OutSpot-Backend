@@ -701,28 +701,24 @@ async function getUserStatsByUserId (req, res){
       },
     });
 
-    // ✅ spots visited: unique placeId else distinct lat/lng
+    // spots visited: unique placeIds + unique coordinates from records without placeId
     let spotsVisited = 0;
 
-    const placeIdCount = await prisma.locationPoint.count({
+    // Count unique placeId-based visits
+    const uniquePlaces = await prisma.locationPoint.findMany({
       where: { userId, placeId: { not: null } },
+      distinct: ["placeId"],
+      select: { placeId: true },
     });
+    spotsVisited += uniquePlaces.length;
 
-    if (placeIdCount > 0) {
-      const uniquePlaces = await prisma.locationPoint.findMany({
-        where: { userId, placeId: { not: null } },
-        distinct: ["placeId"],
-        select: { placeId: true },
-      });
-      spotsVisited = uniquePlaces.length;
-    } else {
-      const uniqueCoords = await prisma.locationPoint.findMany({
-        where: { userId, latitude: { not: null }, longitude: { not: null } },
-        distinct: ["latitude", "longitude"],
-        select: { latitude: true, longitude: true },
-      });
-      spotsVisited = uniqueCoords.length;
-    }
+    // Also count unique coordinate-based visits that have NO placeId
+    const uniqueCoords = await prisma.locationPoint.findMany({
+      where: { userId, placeId: null, latitude: { not: null }, longitude: { not: null } },
+      distinct: ["latitude", "longitude"],
+      select: { latitude: true, longitude: true },
+    });
+    spotsVisited += uniqueCoords.length;
 
     const challengesCompleted = await prisma.pointsLedger.count({
       where: {
@@ -743,7 +739,7 @@ async function getUserStatsByUserId (req, res){
         bodyType: user?.bodyType || null,
         spotsVisited,
         friends: friendsCount,
-        groups: groupsCount,
+        community: groupsCount,
         challengesCompleted,
         myCommunity: myCommunity?.community || null,
       },
@@ -848,6 +844,70 @@ async function getMiniMeLockerByUserId(req, res) {
   }
 }
 
+async function getUserVisitedSpots(req, res) {
+  try {
+    const viewerId = req.authData.id;
+    const userId = parseInt(req.params.userId, 10);
+
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ success: false, message: "Invalid userId" });
+    }
+
+    // Allow self or friends only
+    if (viewerId !== userId) {
+      const friendship = await prisma.friendship.findFirst({
+        where: {
+          status: "ACCEPTED",
+          OR: [
+            { requesterId: viewerId, receiverId: userId },
+            { requesterId: userId, receiverId: viewerId },
+          ],
+        },
+        select: { id: true },
+      });
+      if (!friendship) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only view visited spots of your friends.",
+        });
+      }
+    }
+
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
+    const skip = (page - 1) * limit;
+
+    const [spots, total] = await Promise.all([
+      prisma.locationPoint.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        skip,
+        take: limit,
+        select: {
+          id: true,
+          placeId: true,
+          placeName: true,
+          latitude: true,
+          longitude: true,
+          mediaUrl: true,
+          points: true,
+          createdAt: true,
+        },
+      }),
+      prisma.locationPoint.count({ where: { userId } }),
+    ]);
+
+    return res.json({
+      success: true,
+      data: spots,
+      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+    });
+  } catch (err) {
+    console.error("getUserVisitedSpots error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
 module.exports = {
   listBodyShapes,
   listPremadeAvatars,
@@ -870,6 +930,7 @@ module.exports = {
   submitForPoints,
   getAchievementStatus,
 getUserStatsByUserId,
+  getUserVisitedSpots,
   // Account
   deleteAccount,
 };
