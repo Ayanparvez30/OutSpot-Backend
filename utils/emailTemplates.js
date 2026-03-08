@@ -1,10 +1,11 @@
 // utils/emailTemplates.js
 
-const BRAND_COLOR = '#FF6B35';
-const DARK_BG = '#1A1A2E';
-const CARD_BG = '#FFFFFF';
-const TEXT_COLOR = '#333333';
-const MUTED_COLOR = '#888888';
+const BRAND_COLOR = '#7B51F3';   // appBackground (main purple)
+const DARK_BG = '#1C011F';      // PrimaryColor (dark background)
+const CARD_BG = '#2D0731';      // fillcolor (card/container background)
+const TEXT_COLOR = '#F4F4F4';    // tex (primary text - light since dark theme)
+const MUTED_COLOR = '#95A4A7';  // grey (muted/secondary text)
+
 
 function baseLayout(content) {
   return `
