@@ -87,6 +87,8 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
           select: {
             id: true,
             username: true,
+            firstName: true,
+            lastName: true,
             minime: {
               where: { isSaved: true },
               orderBy: { updatedAt: 'desc' },
@@ -103,14 +105,23 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
         ? (minimeArr[0]?.avatarUrl || null)
         : null;
 
+    const buildFullName = (u) =>
+      [u?.firstName, u?.lastName].filter(Boolean).join(' ') || null;
+
     // 4) Build full leaderboard for users with >0 points
     const positiveRows = grouped
-      .map(g => ({
-        userId: g.userId,
-        username: userMap.get(g.userId)?.username || `user_${g.userId}`,
-        avatarUrl: firstAvatar(userMap.get(g.userId)?.minime) || null,
-        points: Number(g._sum.finalPoints || 0),
-      }))
+      .map(g => {
+        const u = userMap.get(g.userId);
+        return {
+          userId: g.userId,
+          username: u?.username || `user_${g.userId}`,
+          fullName: buildFullName(u),
+          firstName: u?.firstName || null,
+          lastName: u?.lastName || null,
+          avatarUrl: firstAvatar(u?.minime) || null,
+          points: Number(g._sum.finalPoints || 0),
+        };
+      })
       .filter(r => r.points > 0)
       .sort((a, b) => b.points - a.points);
 
@@ -136,6 +147,7 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
       const me = userMap.get(requesterId);
       const meUsername = me?.username || `user_${requesterId}`;
       const meAvatar = firstAvatar(me?.minime) || null;
+      const meFullName = buildFullName(me);
 
       // Place requester after all positive scorers (as "next rank") when points == 0
       // If everyone has 0 (i.e., leaderboard empty), requester gets rank 1 with 0 points.
@@ -143,6 +155,9 @@ exports.getWeeklyGlobalLeaderboard = async (req, res) => {
       myInfo = {
         userId: requesterId,
         username: meUsername,
+        fullName: meFullName,
+        firstName: me?.firstName || null,
+        lastName: me?.lastName || null,
         avatarUrl: meAvatar,
         points: myPoints, // likely 0
         rank: myPoints > 0 ? null : (leaderboard.length === 0 ? 1 : tailRank),
@@ -215,6 +230,8 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
       select: {
         id: true,
         username: true,
+        firstName: true,
+        lastName: true,
         minime: {
           where: { isSaved: true },
           orderBy: { updatedAt: 'desc' },
@@ -226,12 +243,18 @@ exports.getWeeklyCommunityLeaderboard = async (req, res) => {
     const userMap = new Map(users.map(u => [u.id, u]));
 
     const raw = grouped
-      .map(g => ({
-        userId: g.userId,
-        username: userMap.get(g.userId)?.username || `user_${g.userId}`,
-        avatarUrl: firstAvatar(userMap.get(g.userId)?.minime) || null,
-        points: g._sum.finalPoints || 0,
-      }))
+      .map(g => {
+        const u = userMap.get(g.userId);
+        return {
+          userId: g.userId,
+          username: u?.username || `user_${g.userId}`,
+          fullName: [u?.firstName, u?.lastName].filter(Boolean).join(' ') || null,
+          firstName: u?.firstName || null,
+          lastName: u?.lastName || null,
+          avatarUrl: firstAvatar(u?.minime) || null,
+          points: g._sum.finalPoints || 0,
+        };
+      })
       .filter(u => u.points > 0)
       .sort((a, b) => b.points - a.points);
 

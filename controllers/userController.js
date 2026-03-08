@@ -27,7 +27,7 @@ async function uploadToS3FromUrl(url, keyPrefix) {
     mimetype: 'image/png',
   };
   return await uploadToS3(file, 'minimes');
- }
+}
 
 
 const storage = multer.memoryStorage();
@@ -276,7 +276,7 @@ async function regenerateMinime(req, res) {
     });
 
     if (!draft) {
- 
+
       const seed = lastAny || {};
       draft = await prisma.minime.create({
         data: {
@@ -295,7 +295,7 @@ async function regenerateMinime(req, res) {
         }
       });
     } else if (!draft.selfieUrl && faceRef) {
-  
+
       await prisma.minime.update({
         where: { id: draft.id },
         data: { selfieUrl: faceRef }
@@ -500,7 +500,7 @@ async function getUserPoints(req, res) {
     const ledgerRows = await prisma.pointsLedger.findMany({
       where: { userId: targetUserId, createdAt: { gte: weekStart } },
       select: { finalPoints: true }
-     
+
     });
 
     const thisWeekPoints = ledgerRows.reduce((sum, r) => sum + (r.finalPoints || 0), 0);
@@ -587,7 +587,7 @@ const LEVEL_THRESHOLDS = [
 const getTitleForLevel = (level) => {
   if (level >= 20) return 'Legendary Explorer';
   if (level >= 10) return 'City Sniper';
-  if (level >= 5)  return 'Urban Explorer';
+  if (level >= 5) return 'Urban Explorer';
   return 'New Explorer';
 };
 
@@ -676,14 +676,14 @@ async function deleteAccount(req, res) {
 
     try {
       await admin.firestore().collection('users').doc(firebaseUid).delete();
-    } catch (_) {}
+    } catch (_) { }
     try {
       await admin.database().ref(`users/${firebaseUid}`).remove();
-    } catch (_) {}
+    } catch (_) { }
 
     // 3) Prisma DB
     await prisma.$transaction(async (tx) => {
-  
+
       await tx.user.delete({ where: { id: userId } });
     });
 
@@ -693,7 +693,7 @@ async function deleteAccount(req, res) {
     return res.status(500).json({ error: 'Failed to delete account' });
   }
 }
-async function getUserStatsByUserId (req, res){
+async function getUserStatsByUserId(req, res) {
   try {
     const viewerId = req.authData.id;
     const userId = parseInt(req.params.userId, 10);
@@ -960,7 +960,7 @@ module.exports = {
   getUserPoints,
   submitForPoints,
   getAchievementStatus,
-getUserStatsByUserId,
+  getUserStatsByUserId,
   getUserVisitedSpots,
   // Account
   deleteAccount,
