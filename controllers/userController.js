@@ -559,26 +559,55 @@ async function submitForPoints(req, res) {
 }
 
 
+// 20 levels, each with a cumulative points threshold
+// Tiers: New Explorer (1-4), Urban Explorer (5-9), City Sniper (10-19), Legendary Explorer (20)
+const LEVEL_THRESHOLDS = [
+  0,    // Level 1  — 0 pts
+  10,   // Level 2  — 10 pts
+  25,   // Level 3  — 25 pts
+  45,   // Level 4  — 45 pts
+  70,   // Level 5  — 70 pts
+  100,  // Level 6  — 100 pts
+  140,  // Level 7  — 140 pts
+  190,  // Level 8  — 190 pts
+  250,  // Level 9  — 250 pts
+  320,  // Level 10 — 320 pts
+  400,  // Level 11 — 400 pts
+  500,  // Level 12 — 500 pts
+  620,  // Level 13 — 620 pts
+  760,  // Level 14 — 760 pts
+  920,  // Level 15 — 920 pts
+  1100, // Level 16 — 1100 pts
+  1300, // Level 17 — 1300 pts
+  1550, // Level 18 — 1550 pts
+  1850, // Level 19 — 1850 pts
+  2200, // Level 20 — 2200 pts
+];
+
+const getTitleForLevel = (level) => {
+  if (level >= 20) return 'Legendary Explorer';
+  if (level >= 10) return 'City Sniper';
+  if (level >= 5)  return 'Urban Explorer';
+  return 'New Explorer';
+};
+
 const getLevelFromPoints = (points) => {
-  if (points >= 400) return { level: 20, title: 'Legendary Explorer' };
-  if (points >= 300) return { level: 19, title: 'City Sniper' };
-  if (points >= 250) return { level: 18, title: 'City Sniper' };
-  if (points >= 200) return { level: 15, title: 'City Sniper' };
-  if (points >= 150) return { level: 12, title: 'City Sniper' };
-  if (points >= 100) return { level: 10, title: 'City Sniper' };
-  if (points >= 75)  return { level: 8,  title: 'Urban Explorer' };
-  if (points >= 50)  return { level: 6,  title: 'Urban Explorer' };
-  if (points >= 25)  return { level: 4,  title: 'New Explorer' };
-  if (points >= 10)  return { level: 2,  title: 'New Explorer' };
-  return { level: 1, title: 'New Explorer' };
+  let level = 1;
+  for (let i = 1; i < LEVEL_THRESHOLDS.length; i++) {
+    if (points >= LEVEL_THRESHOLDS[i]) {
+      level = i + 1; // index 0 = level 1, index 1 = level 2, etc.
+    } else {
+      break;
+    }
+  }
+  return { level, title: getTitleForLevel(level) };
 };
 
 const getPointsForNextLevel = (currentPoints) => {
-  const thresholds = [0, 10, 25, 50, 75, 100, 150, 200, 250, 300, 400];
-  for (let i = 0; i < thresholds.length; i++) {
-    if (currentPoints < thresholds[i]) return thresholds[i] - currentPoints;
+  for (let i = 1; i < LEVEL_THRESHOLDS.length; i++) {
+    if (currentPoints < LEVEL_THRESHOLDS[i]) return LEVEL_THRESHOLDS[i] - currentPoints;
   }
-  return 0;
+  return 0; // max level reached
 };
 
 async function getAchievementStatus(req, res) {
@@ -595,11 +624,28 @@ async function getAchievementStatus(req, res) {
     const { level, title } = getLevelFromPoints(user.totalPoints);
     const remaining = getPointsForNextLevel(user.totalPoints);
 
+    // Current level threshold and next level threshold for progress bar
+    const currentLevelThreshold = LEVEL_THRESHOLDS[level - 1]; // points needed to reach current level
+    const nextLevelThreshold = level < 20 ? LEVEL_THRESHOLDS[level] : LEVEL_THRESHOLDS[19];
+    const pointsInCurrentLevel = user.totalPoints - currentLevelThreshold;
+    const pointsRequiredForNextLevel = nextLevelThreshold - currentLevelThreshold;
+    const progress = level >= 20 ? 1.0 : pointsInCurrentLevel / pointsRequiredForNextLevel;
+
     res.json({
       totalPoints: user.totalPoints,
       level,
+      maxLevel: 20,
       title,
-      pointsToNextLevel: remaining
+      pointsToNextLevel: remaining,
+      currentLevelThreshold,
+      nextLevelThreshold,
+      progress: Math.min(Math.max(progress, 0), 1), // clamped 0-1
+      tiers: [
+        { name: 'New Explorer', unlockLevel: 1 },
+        { name: 'Urban Explorer', unlockLevel: 5 },
+        { name: 'City Sniper', unlockLevel: 10 },
+        { name: 'Legendary Explorer', unlockLevel: 20 },
+      ],
     });
   } catch (error) {
     console.error('Get achievement error:', error);
