@@ -3,6 +3,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const sendEmail = require('../utils/sendEmail');
+const emailTemplates = require('../utils/emailTemplates');
 const { hashPassword, comparePassword, randomKey, generateOTP } = require('../utils/helper');
 const { verifyFirebaseIdToken } = require('../utils/firebaseVerify');
 const response = require('../functions/response');
@@ -153,11 +154,7 @@ if (nextPhone) {
           }
         });
 try {
-  await sendEmail(toEmail, 'Your OTP for Verification', `
-    <h1>Verification OTP</h1>
-    <p>Your OTP is: <strong>${otp}</strong></p>
-    <p>This OTP expires in 10 minutes.</p>
-  `);
+  await sendEmail(toEmail, 'Your OTP for Verification', emailTemplates.verificationOtp(otp));
 } catch (mailErr) {
   console.error('sendEmail failed (resend OTP):', mailErr);
   return response.response_with_code(
@@ -246,11 +243,7 @@ if (fullPhone) {
         });
 
    try {
-  await sendEmail(email, 'Your OTP for Email Verification', `
-    <h1>Email Verification</h1>
-    <p>Your OTP is: <strong>${otp}</strong></p>
-    <p>This OTP expires in 10 minutes.</p>
-  `);
+  await sendEmail(email, 'Your OTP for Email Verification', emailTemplates.verificationOtp(otp));
 } catch (mailErr) {
   console.error('sendEmail failed (email exists resend):', mailErr);
   return response.response_with_code(
@@ -467,11 +460,7 @@ if (fullPhone && !email) {
       });
 
 try {
-  await sendEmail(email, 'Verify Your Email', `
-    <h1>Email Verification</h1>
-    <p>Your OTP is: <strong>${otp}</strong></p>
-    <p>This OTP will expire in 10 minutes.</p>
-  `);
+  await sendEmail(email, 'Verify Your Email', emailTemplates.verificationOtp(otp));
 } catch (mailErr) {
   console.error('sendEmail failed (fresh signup OTP):', mailErr);
 
@@ -728,11 +717,16 @@ exports.resendOtp = async (req, res) => {
     });
 
     if (email) {
-      await sendEmail(email, 'Your new OTP for verification', `
-        <h1>Resend OTP</h1>
-        <p>Your new OTP is: <strong>${newOtp}</strong></p>
-        <p>This OTP will expire in 10 minutes.</p>
-      `);
+      try {
+        await sendEmail(email, 'Your New Verification Code', emailTemplates.resendOtp(newOtp));
+      } catch (mailErr) {
+        console.error('sendEmail failed (resendOtp):', mailErr);
+        return response.response_with_code(
+          res,
+          500,
+          'OTP email could not be sent. Please try again later.'
+        );
+      }
     } else {
       // integrate SMS provider here
       console.log(`OTP for phone ${fullPhone}: ${newOtp}`);
@@ -844,12 +838,16 @@ exports.forgotPasswordRequest = async (req, res) => {
 
     // Send OTP
     if (user.email) {
-      const html = `
-        <h1>Password Reset OTP</h1>
-        <p>Your OTP is: <strong>${otp}</strong></p>
-        <p>This OTP will expire in 10 minutes.</p>
-      `;
-      await sendEmail(user.email, 'Your OTP for Password Reset', html);
+      try {
+        await sendEmail(user.email, 'Your OTP for Password Reset', emailTemplates.passwordResetOtp(otp));
+      } catch (mailErr) {
+        console.error('sendEmail failed (forgotPassword):', mailErr);
+        return response.response_with_code(
+          res,
+          500,
+          'OTP email could not be sent. Please try again later.'
+        );
+      }
     } else if (user.phone) {
       console.log(`OTP for phone ${user.phone}: ${otp}`);
     }
