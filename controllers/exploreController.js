@@ -1,6 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { nearbyPage, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
+const { nearbyPage, nearbyAll, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
 const { addPointsWithMultiplier } = require('../utils/points');
 
 const toRad = d => (d * Math.PI) / 180;
