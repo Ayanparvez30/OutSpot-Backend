@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const { checkAuth } = require('../middlewares/authMiddleware');
 const {
-  getExploreHome,
   getCategoryPlaces,
   recordVisit,
   getPlaceDetail,
+  searchPlaces,
 
   // ✅ Restaurants
   getRestaurantCategories,
@@ -13,11 +13,11 @@ const {
   getTopTrendingWeekRestaurants
 } = require('../controllers/exploreController');
 
-// Footer Explore landing (category cards + "new" badges)
-router.get('/explore/home', checkAuth, getExploreHome);
-
-// Category list (Rooftop Bars ইত্যাদি)
+// Category list
 router.get('/explore/category/:key/places', checkAuth, getCategoryPlaces);
+
+// Manual search
+router.get('/explore/search', checkAuth, searchPlaces);
 
 // Optional detail
 router.get('/explore/place/:placeId', checkAuth, getPlaceDetail);

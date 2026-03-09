@@ -130,10 +130,32 @@ async function details(place_id) {
   return j.result;
 }
 
+async function textSearch({ query, lat, lng, radius = 5000 }) {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
+
+  const params = new URLSearchParams({
+    key,
+    query,
+    location: `${lat},${lng}`,
+    radius: String(radius),
+  });
+
+  const url = `${GMAPS_BASE}/textsearch/json?${params.toString()}`;
+  const r = await fetch(url);
+  const j = await r.json();
+
+  if (j.status !== 'OK' && j.status !== 'ZERO_RESULTS') {
+    throw new Error(`Places TextSearch error: ${j.status} ${j.error_message || ''}`);
+  }
+  return j.results || [];
+}
+
 module.exports = {
   nearby,
   nearbyPage,
   nearbyAll,
   details,
+  textSearch,
   photoUrlByRef,
 };

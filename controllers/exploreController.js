@@ -1,6 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { nearby, nearbyAll, details, photoUrlByRef } = require('../utils/googlePlaces');
+const { nearbyAll, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
 const { addPointsWithMultiplier } = require('../utils/points');
 
 const toRad = d => (d * Math.PI) / 180;
@@ -20,11 +20,11 @@ const NEARBY_WITHOUT_PLACEID= Number(process.env.EXPLORE_DUP_RADIUS_METERS      
 const DUP_WINDOW_HOURS      = Number(process.env.EXPLORE_DUP_WINDOW_HOURS        || 12);  // 12h window
 
 const CATEGORIES = [
-  { key: 'rooftop-bars',       title: 'Rooftop Bars',       icon: '🍹', keyword: 'rooftop bar',                        type: 'bar',               points: 4, imageKey: 'rooftop-bars' },
-  { key: 'outdoor-activities', title: 'Outdoor Activities', icon: '🌳', keyword: 'park OR hiking OR outdoor activity', type: 'tourist_attraction', points: 3, imageKey: 'outdoor-activities' },
-  { key: 'venue-events',       title: 'Venue Events',       icon: '🎤', keyword: 'concert venue OR live music',        type: 'night_club',        points: 4, imageKey: 'venue-events' },
-  { key: 'popular-restaurants',title: 'Popular Restaurants',icon: '🍽️', keyword: 'popular restaurant',                 type: 'restaurant',        points: 4, imageKey: 'popular-restaurants' },
-  { key: 'cafes',              title: 'Cafes',              icon: '☕', keyword: 'cafe',                               type: 'cafe',              points: 3, imageKey: 'cafes' },
+  { key: 'rooftop-bars',       title: 'Rooftop Bars',       icon: '🍹', keyword: 'rooftop bar',              type: null,          points: 4, imageKey: 'rooftop-bars' },
+  { key: 'outdoor-activities', title: 'Outdoor Activities', icon: '🌳', keyword: 'outdoor activities parks', type: null,          points: 3, imageKey: 'outdoor-activities' },
+  { key: 'venue-events',       title: 'Venue Events',       icon: '🎤', keyword: 'concert venue live music', type: null,          points: 4, imageKey: 'venue-events' },
+  { key: 'popular-restaurants',title: 'Popular Restaurants',icon: '🍽️', keyword: 'popular restaurant',       type: 'restaurant',  points: 4, imageKey: 'popular-restaurants' },
+  { key: 'cafes',              title: 'Cafes',              icon: '☕', keyword: 'cafe coffee shop',          type: 'cafe',        points: 3, imageKey: 'cafes' },
 ];
 
 
@@ -57,90 +57,6 @@ function openNowToStatus(openNow) {
 
 const getCategory = key => CATEGORIES.find(c => c.key === key);
 
-async function computeNewCounts({ userId, lat, lng, radius = 2500 }) {
-  const ttlMinutes = Number(
-    process.env.STORY_TTL_MINUTES || (process.env.NODE_ENV === 'development' ? 5 : 24 * 60)
-  );
-  const since = new Date(Date.now() - ttlMinutes * 60 * 1000);
-
-  // requester-এর communities
-  const myCommunities = await prisma.communityMember.findMany({
-    where: { userId }, select: { communityId: true }
-  });
-  const communityIds = myCommunities.map(c => c.communityId);
-
-  const friendOR = [
-    { friendRequestsSent:     { some: { receiverId: userId,  status: 'ACCEPTED' } } },
-    { friendRequestsReceived: { some: { requesterId: userId, status: 'ACCEPTED' } } }
-  ];
-  const notBlocked = {
-    NOT: [
-      { user: { blockedBy: { some: { blockerId: userId } } } },
-      { user: { blocks:    { some: { blockedId:  userId } } } }
-    ]
-  };
-
-  const recentStories = await prisma.story.findMany({
-    where: {
-      status: 'ACTIVE',
-      createdAt: { gte: since },
-      latitude: { not: null },
-      longitude: { not: null },
-      ...notBlocked,
-      OR: [
-        { userId },
-        { visibility: 'profile', user: { OR: friendOR } },
-        ...(communityIds.length ? [{ visibility: 'profile', user: { communities: { some: { communityId: { in: communityIds } } } } }] : [])
-      ]
-    },
-    select: { id: true, latitude: true, longitude: true }
-  });
-
-  const results = {};
-  for (const cat of CATEGORIES) {
-    const places = await nearby({ lat, lng, radius, keyword: cat.keyword, type: cat.type });
-    const top = places.slice(0, 10).map(p => ({
-      lat: p.geometry?.location?.lat, lng: p.geometry?.location?.lng
-    }));
-
-    let count = 0;
-    for (const s of recentStories) {
-      const here = { lat: s.latitude, lng: s.longitude };
-      if (top.some(p => p.lat && p.lng && haversineMeters(here, p) <= 120)) count++;
-    }
-    results[cat.key] = count;
-  }
-  return results;
-}
-
-exports.getExploreHome = async (req, res) => {
-  try {
-    const userId = req.authData.id;
-    const lat = parseFloat(req.query.lat);
-    const lng = parseFloat(req.query.lng);
-    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 2500;
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return res.status(400).json({ error: 'lat/lng required' });
-    }
-
-    const newCounts = await computeNewCounts({ userId, lat, lng, radius });
-const cards = CATEGORIES.map(c => ({
-  key: c.key,
-  title: c.title,
-  icon: c.icon,
-  imageKey: c.imageKey || c.key,
-  newCount: newCounts[c.key] || 0,
-  points: c.points
-}));
-
-
-    res.json({ categories: cards });
-  } catch (e) {
-    console.error('Explore home error', e);
-    res.status(500).json({ error: 'Failed to load explore' });
-  }
-};
-
 // GET /api/explore/category/:key/places?lat&lng&radius=2500
 exports.getCategoryPlaces = async (req, res) => {
   try {
@@ -155,7 +71,7 @@ exports.getCategoryPlaces = async (req, res) => {
       return res.status(400).json({ error: 'lat/lng required' });
     }
 
-    const places = await nearby({ lat, lng, radius, keyword: cat.keyword, type: cat.type });
+    const places = await nearbyAll({ lat, lng, radius, keyword: cat.keyword, type: cat.type, maxPages: 3 });
 
     const items = places.map(p => {
       const bestPhotoRef = p.photos?.[0]?.photo_reference || null;
@@ -347,6 +263,46 @@ exports.getPlaceDetail = async (req, res) => {
   } catch (e) {
     console.error('place detail error', e);
     res.status(500).json({ error: 'Failed to load place detail' });
+  }
+};
+
+// GET /api/explore/search?q=starbucks&lat=X&lng=Y&radius=5000
+exports.searchPlaces = async (req, res) => {
+  try {
+    const query = (req.query.q || '').trim();
+    if (!query || query.length < 2) {
+      return res.status(400).json({ error: 'Search query required (min 2 characters)' });
+    }
+
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 5000;
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: 'lat/lng required' });
+    }
+
+    const results = await textSearch({ query, lat, lng, radius });
+
+    const places = results.map(p => ({
+      placeId: p.place_id,
+      name: p.name,
+      address: p.formatted_address || p.vicinity || null,
+      photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 400),
+      points: 5,
+      distanceMeters: p.geometry?.location
+        ? haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng })
+        : null,
+      location: p.geometry?.location || null,
+      rating: p.rating || null,
+      userRatingsTotal: p.user_ratings_total || null,
+    }));
+
+    places.sort((a, b) => (a.distanceMeters || 99999) - (b.distanceMeters || 99999));
+
+    res.json({ query, places });
+  } catch (e) {
+    console.error('Search places error', e);
+    res.status(500).json({ error: 'Search failed' });
   }
 };
 
