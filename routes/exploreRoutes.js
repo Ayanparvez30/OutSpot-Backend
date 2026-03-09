@@ -3,6 +3,7 @@ const router = express.Router();
 const { checkAuth } = require('../middlewares/authMiddleware');
 const {
   getCategoryPlaces,
+  getCategoryMorePlaces,
   recordVisit,
   getPlaceDetail,
   searchPlaces,
@@ -13,8 +14,11 @@ const {
   getTopTrendingWeekRestaurants
 } = require('../controllers/exploreController');
 
-// Category list
+// Category list (first page, instant)
 router.get('/explore/category/:key/places', checkAuth, getCategoryPlaces);
+
+// Load more places (pagination)
+router.get('/explore/category/:key/more', checkAuth, getCategoryMorePlaces);
 
 // Manual search
 router.get('/explore/search', checkAuth, searchPlaces);

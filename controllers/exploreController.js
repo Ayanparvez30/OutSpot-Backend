@@ -1,6 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { nearbyAll, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
+const { nearbyPage, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
 const { addPointsWithMultiplier } = require('../utils/points');
 
 const toRad = d => (d * Math.PI) / 180;
@@ -57,6 +57,23 @@ function openNowToStatus(openNow) {
 
 const getCategory = key => CATEGORIES.find(c => c.key === key);
 
+// helper: map raw Google place to response object
+function mapPlace(p, lat, lng, points) {
+  return {
+    placeId: p.place_id,
+    name: p.name,
+    address: p.vicinity || p.formatted_address || null,
+    photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 400),
+    points,
+    distanceMeters: p.geometry?.location
+      ? haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng })
+      : null,
+    location: p.geometry?.location || null,
+    rating: p.rating || null,
+    userRatingsTotal: p.user_ratings_total || null,
+  };
+}
+
 // GET /api/explore/category/:key/places?lat&lng&radius=2500
 exports.getCategoryPlaces = async (req, res) => {
   try {
@@ -71,29 +88,48 @@ exports.getCategoryPlaces = async (req, res) => {
       return res.status(400).json({ error: 'lat/lng required' });
     }
 
-    const places = await nearbyAll({ lat, lng, radius, keyword: cat.keyword, type: cat.type, maxPages: 3 });
+    const page = await nearbyPage({ lat, lng, radius, keyword: cat.keyword, type: cat.type });
+    const items = (page.results || []).map(p => mapPlace(p, lat, lng, cat.points));
+    items.sort((a, b) => (a.distanceMeters || 0) - (b.distanceMeters || 0) || (b.rating || 0) - (a.rating || 0));
 
-    const items = places.map(p => {
-      const bestPhotoRef = p.photos?.[0]?.photo_reference || null;
-      return {
-        placeId: p.place_id,
-        name: p.name,
-        address: p.vicinity || p.formatted_address || null,
-        photoUrl: photoUrlByRef(bestPhotoRef, 400),
-        points: cat.points,
-        distanceMeters: haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng }),
-        location: { lat: p.geometry.location.lat, lng: p.geometry.location.lng },
-        rating: p.rating || null,
-        userRatingsTotal: p.user_ratings_total || null
-      };
+    res.json({
+      category: { key: cat.key, title: cat.title, points: cat.points },
+      places: items,
+      nextPageToken: page.next_page_token || null,
     });
-
-    items.sort((a, b) => a.distanceMeters - b.distanceMeters || (b.rating || 0) - (a.rating || 0));
-
-    res.json({ category: { key: cat.key, title: cat.title, points: cat.points }, places: items });
   } catch (e) {
     console.error('Category places error', e);
     res.status(500).json({ error: 'Failed to load places' });
+  }
+};
+
+// GET /api/explore/category/:key/more?pagetoken=X&lat&lng
+exports.getCategoryMorePlaces = async (req, res) => {
+  try {
+    const { key } = req.params;
+    const cat = getCategory(key);
+    if (!cat) return res.status(404).json({ error: 'Unknown category' });
+
+    const pagetoken = req.query.pagetoken;
+    if (!pagetoken) return res.status(400).json({ error: 'pagetoken required' });
+
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return res.status(400).json({ error: 'lat/lng required' });
+    }
+
+    const page = await nearbyPage({ pagetoken });
+    const items = (page.results || []).map(p => mapPlace(p, lat, lng, cat.points));
+    items.sort((a, b) => (a.distanceMeters || 0) - (b.distanceMeters || 0) || (b.rating || 0) - (a.rating || 0));
+
+    res.json({
+      places: items,
+      nextPageToken: page.next_page_token || null,
+    });
+  } catch (e) {
+    console.error('Category more places error', e);
+    res.status(500).json({ error: 'Failed to load more places' });
   }
 };
 exports.recordVisit = async (req, res) => {
