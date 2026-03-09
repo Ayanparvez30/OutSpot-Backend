@@ -94,7 +94,7 @@ async function getAssignedChallenge(prisma, userId, frequency, zone, now = new D
   const list = await prisma.challenge.findMany({ where: { frequency }, orderBy: { id: 'asc' } });
   if (!list.length) return { challenge: null, windowKey: null };
   const windowKey = frequency === 'DAILY' ? dateKeyInZone(now, zone) : weekKeyInZone(now, zone);
-  const seed = `${frequency}:${windowKey}:USER:${userId}`;
+  const seed = `${frequency}:${windowKey}`;
   const challenge = seededPick(list, seed);
 
   // Create notifications for assigned challenges if not already present
