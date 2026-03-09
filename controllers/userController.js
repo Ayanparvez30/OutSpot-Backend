@@ -524,6 +524,54 @@ async function submitForPoints(req, res) {
   if (!req.file) return res.status(400).json({ error: 'No media uploaded' });
 
   try {
+    // De-duplicate: same placeId or same coordinates within 12h window
+    const DUP_WINDOW_MS = 12 * 60 * 60 * 1000;
+    const since = new Date(Date.now() - DUP_WINDOW_MS);
+
+    if (placeId) {
+      const duplicate = await prisma.locationPoint.findFirst({
+        where: { userId, placeId: String(placeId).trim(), createdAt: { gte: since } },
+        select: { id: true, createdAt: true },
+      });
+      if (duplicate) {
+        return res.status(200).json({
+          awarded: false,
+          reason: 'duplicate-place-within-window',
+          message: 'You already submitted from this place recently. Try again later.',
+          windowHours: 12,
+          lastSubmitAt: duplicate.createdAt,
+        });
+      }
+    } else if (latitude && longitude) {
+      const lat = parseFloat(latitude);
+      const lng = parseFloat(longitude);
+      if (Number.isFinite(lat) && Number.isFinite(lng)) {
+        const recent = await prisma.locationPoint.findMany({
+          where: { userId, createdAt: { gte: since } },
+          select: { latitude: true, longitude: true, createdAt: true },
+        });
+        const toRad = d => (d * Math.PI) / 180;
+        const haversineM = (a, b) => {
+          const R = 6371000, dLat = toRad(b.lat - a.lat), dLng = toRad(b.lng - a.lng);
+          const A = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(a.lat)) * Math.cos(toRad(b.lat)) * Math.sin(dLng / 2) ** 2;
+          return 2 * R * Math.asin(Math.sqrt(A));
+        };
+        for (const lp of recent) {
+          if (lp.latitude == null || lp.longitude == null) continue;
+          if (haversineM({ lat, lng }, { lat: lp.latitude, lng: lp.longitude }) <= 50) {
+            return res.status(200).json({
+              awarded: false,
+              reason: 'duplicate-nearby-within-window',
+              message: 'You already submitted from this location recently. Try again later.',
+              windowHours: 12,
+              radiusMeters: 50,
+              lastSubmitAt: lp.createdAt,
+            });
+          }
+        }
+      }
+    }
+
     const mediaUrl = await uploadToS3(req.file, 'points');
     const basePoints = 5;
 
