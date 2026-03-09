@@ -287,7 +287,7 @@ async function compressForMobile(rawBuffer) {
     .webp({
       quality: 85,
       alphaQuality: 95,               // clean transparent edges
-      effort: 6,                       // max compression effort (slow encode, same decode)
+      effort: 4,                       // balanced compression (nearly same size, faster encode)
       smartSubsample: true,            // better color detail
     })
     .toBuffer();
@@ -324,7 +324,16 @@ async function uploadOpenAIImageResult(imageResponse, keyPrefix) {
 const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 exports.renderCurrentMinime = async (userId, opts = {}) => {
-  const user = await prisma.user.findUnique({ where: { id: userId } });
+  // Fetch user + draft minime in parallel (both independent DB queries)
+  const [user, existingDraft] = await Promise.all([
+    prisma.user.findUnique({ where: { id: userId } }),
+    opts.targetMinimeId
+      ? prisma.minime.findUnique({ where: { id: opts.targetMinimeId } })
+      : prisma.minime.findFirst({
+          where: { userId, isDraft: true, isSaved: false },
+          orderBy: { createdAt: 'desc' },
+        }),
+  ]);
 
   // Body shape: use override from opts if provided, else fall back to user profile
   const effectiveBodyShapeUrl = opts.bodyShapeUrl || user?.bodyShapeUrl;
@@ -333,22 +342,19 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
   // Body type: use override from opts if provided, else fall back to user profile
   const effectiveBodyType = opts.bodyType || user?.bodyType;
 
-  // get working draft — honor targetMinimeId if provided
-  let mm;
-  if (opts.targetMinimeId) {
-    mm = await prisma.minime.findUnique({ where: { id: opts.targetMinimeId } });
-  }
-  if (!mm) {
-    mm = await prisma.minime.findFirst({
-      where: { userId, isDraft: true, isSaved: false },
-      orderBy: { createdAt: 'desc' },
-    });
-  }
+  // Use existing draft or create new one
+  let mm = existingDraft;
   if (!mm) {
     mm = await prisma.minime.create({ data: { userId, isSaved: false, isDraft: true } });
   }
 
   const isFeminine = effectiveBodyType === 'feminine';
+
+  // Start body shape DB lookup early (runs in parallel with face resolution below)
+  const bodyShapePromise = prisma.bodyShape.findFirst({
+    where: { imageUrl: effectiveBodyShapeUrl },
+    select: { weight: true, height: true },
+  });
 
   // Face reference priority: opts.faceUrl > User.selfieUrl (canonical) > draft selfieUrl > any Minime selfieUrl
   let faceReference = null;
@@ -409,12 +415,9 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
       watch:    opts.watch    ?? mm.watch,
   });
 
-  // Look up body shape metadata for explicit prompt instructions
+  // Await body shape lookup (was started in parallel above)
   let bodyWeight = null, bodyHeight = null;
-  const bodyShapeRecord = await prisma.bodyShape.findFirst({
-    where: { imageUrl: effectiveBodyShapeUrl },
-    select: { weight: true, height: true },
-  });
+  const bodyShapeRecord = await bodyShapePromise;
   if (bodyShapeRecord) {
     bodyWeight = bodyShapeRecord.weight;
     bodyHeight = bodyShapeRecord.height;
@@ -448,43 +451,58 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
 
   let imageResponse;
 
-  // ALWAYS include the face/selfie as the FIRST reference image
-  // This gives OpenAI direct visual data for the face — not just a URL in text
-  const referenceImages = [];
+  // Fetch ALL reference images in parallel (face + body + outfit)
+  const fetchTasks = [];
 
-  // 1) Face reference image — MOST IMPORTANT
-  const faceBuffer = await fetchImageAsBuffer(faceReference);
-  if (faceBuffer) {
-    const faceFile = await toFile(faceBuffer, 'face-reference.png', { type: 'image/png' });
-    referenceImages.push(faceFile);
-    console.log(`✓ Fetched FACE reference: ${faceReference.substring(0, 80)}...`);
-  } else {
-    console.warn(`✗ Failed to fetch face reference: ${faceReference} — generation may lack facial accuracy`);
-  }
+  // 1) Face reference — MOST IMPORTANT
+  fetchTasks.push(
+    fetchImageAsBuffer(faceReference).then(async buf => {
+      if (buf) {
+        const file = await toFile(buf, 'face-reference.png', { type: 'image/png' });
+        console.log(`✓ Fetched FACE reference: ${faceReference.substring(0, 80)}...`);
+        return { order: 0, file };
+      }
+      console.warn(`✗ Failed to fetch face reference: ${faceReference} — generation may lack facial accuracy`);
+      return null;
+    })
+  );
 
-  // 2) Body shape reference image — for proportions
+  // 2) Body shape — for proportions
   if (effectiveBodyShapeUrl && isHttpUrl(effectiveBodyShapeUrl)) {
-    const bodyBuffer = await fetchImageAsBuffer(effectiveBodyShapeUrl);
-    if (bodyBuffer) {
-      const bodyFile = await toFile(bodyBuffer, 'body-shape.png', { type: 'image/png' });
-      referenceImages.push(bodyFile);
-      console.log(`✓ Fetched BODY SHAPE: ${effectiveBodyShapeUrl.substring(0, 80)}...`);
-    } else {
-      console.warn(`✗ Failed to fetch body shape: ${effectiveBodyShapeUrl}`);
-    }
+    fetchTasks.push(
+      fetchImageAsBuffer(effectiveBodyShapeUrl).then(async buf => {
+        if (buf) {
+          const file = await toFile(buf, 'body-shape.png', { type: 'image/png' });
+          console.log(`✓ Fetched BODY SHAPE: ${effectiveBodyShapeUrl.substring(0, 80)}...`);
+          return { order: 1, file };
+        }
+        console.warn(`✗ Failed to fetch body shape: ${effectiveBodyShapeUrl}`);
+        return null;
+      })
+    );
   }
 
   // 3) Clothing reference images
-  for (const { field, url } of outfitUrls) {
-    const buffer = await fetchImageAsBuffer(url);
-    if (buffer) {
-      const file = await toFile(buffer, `${field}.png`, { type: 'image/png' });
-      referenceImages.push(file);
-      console.log(`✓ Fetched ${field}: ${url.substring(0, 80)}...`);
-    } else {
-      console.log(`✗ Failed to fetch ${field}: ${url}`);
-    }
-  }
+  outfitUrls.forEach(({ field, url }, idx) => {
+    fetchTasks.push(
+      fetchImageAsBuffer(url).then(async buf => {
+        if (buf) {
+          const file = await toFile(buf, `${field}.png`, { type: 'image/png' });
+          console.log(`✓ Fetched ${field}: ${url.substring(0, 80)}...`);
+          return { order: 2 + idx, file };
+        }
+        console.log(`✗ Failed to fetch ${field}: ${url}`);
+        return null;
+      })
+    );
+  });
+
+  // Wait for all fetches to complete simultaneously
+  const results = await Promise.all(fetchTasks);
+  const referenceImages = results
+    .filter(Boolean)
+    .sort((a, b) => a.order - b.order)
+    .map(r => r.file);
 
   if (referenceImages.length > 0) {
     console.log(`Using images.edit() with ${referenceImages.length} reference image(s) [face + body + outfit]`);
