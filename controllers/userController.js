@@ -519,7 +519,7 @@ async function getUserPoints(req, res) {
 
 async function submitForPoints(req, res) {
   const userId = req.authData.id;
-  const { placeName, latitude, longitude } = req.body;
+  const { placeId, placeName, latitude, longitude } = req.body;
 
   if (!req.file) return res.status(400).json({ error: 'No media uploaded' });
 
@@ -527,11 +527,11 @@ async function submitForPoints(req, res) {
     const mediaUrl = await uploadToS3(req.file, 'points');
     const basePoints = 5;
 
-
     const lp = await prisma.locationPoint.create({
       data: {
         userId,
         mediaUrl,
+        placeId: placeId ? String(placeId).trim() : null,
         placeName,
         latitude: latitude ? parseFloat(latitude) : null,
         longitude: longitude ? parseFloat(longitude) : null,
