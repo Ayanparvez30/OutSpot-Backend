@@ -525,8 +525,19 @@ async function submitForPoints(req, res) {
 
   try {
     // De-duplicate: same placeId or same coordinates within 12h window
-    const DUP_WINDOW_MS = 12 * 60 * 60 * 1000;
+    const DUP_WINDOW_HOURS = 12;
+    const DUP_WINDOW_MS = DUP_WINDOW_HOURS * 60 * 60 * 1000;
     const since = new Date(Date.now() - DUP_WINDOW_MS);
+
+    const timeUntilRetry = (lastDate) => {
+      const retryAt = new Date(lastDate.getTime() + DUP_WINDOW_MS);
+      const diffMs = retryAt - Date.now();
+      if (diffMs <= 0) return 'now';
+      const hours = Math.floor(diffMs / (1000 * 60 * 60));
+      const mins = Math.ceil((diffMs % (1000 * 60 * 60)) / (1000 * 60));
+      if (hours > 0) return `${hours}h ${mins}m`;
+      return `${mins}m`;
+    };
 
     if (placeId) {
       const duplicate = await prisma.locationPoint.findFirst({
@@ -534,11 +545,13 @@ async function submitForPoints(req, res) {
         select: { id: true, createdAt: true },
       });
       if (duplicate) {
+        const retryIn = timeUntilRetry(duplicate.createdAt);
         return res.status(200).json({
           awarded: false,
           reason: 'duplicate-place-within-window',
-          message: 'You already submitted from this place recently. Try again later.',
-          windowHours: 12,
+          message: `You've already earned points at this spot. Visit again in ${retryIn} to earn more!`,
+          windowHours: DUP_WINDOW_HOURS,
+          retryIn,
           lastSubmitAt: duplicate.createdAt,
         });
       }
@@ -559,11 +572,13 @@ async function submitForPoints(req, res) {
         for (const lp of recent) {
           if (lp.latitude == null || lp.longitude == null) continue;
           if (haversineM({ lat, lng }, { lat: lp.latitude, lng: lp.longitude }) <= 50) {
+            const retryIn = timeUntilRetry(lp.createdAt);
             return res.status(200).json({
               awarded: false,
               reason: 'duplicate-nearby-within-window',
-              message: 'You already submitted from this location recently. Try again later.',
-              windowHours: 12,
+              message: `You've already earned points near this location. Try a new spot or come back in ${retryIn}!`,
+              windowHours: DUP_WINDOW_HOURS,
+              retryIn,
               radiusMeters: 50,
               lastSubmitAt: lp.createdAt,
             });

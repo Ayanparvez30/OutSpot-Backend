@@ -208,7 +208,7 @@ exports.recordVisit = async (req, res) => {
     // --------------------------
     // ✅ server-side place validate
     // --------------------------
-    const MAX_PLACE_DISTANCE_METERS = Number(process.env.MAX_PLACE_DISTANCE_METERS || 120);
+    const MAX_PLACE_DISTANCE_METERS = Number(process.env.MAX_PLACE_DISTANCE_METERS || 15);
 
     let placeLat = null;
     let placeLng = null;
@@ -239,11 +239,13 @@ exports.recordVisit = async (req, res) => {
     );
 
     if (distToPlace > MAX_PLACE_DISTANCE_METERS) {
+      const dist = Math.round(distToPlace);
       return res.status(403).json({
         awarded: false,
         reason: 'too-far-from-place',
+        message: `You need to be within ${MAX_PLACE_DISTANCE_METERS}m of this place to check in. You are currently ${dist}m away. Please get closer and try again.`,
         placeId,
-        distanceMeters: Math.round(distToPlace),
+        distanceMeters: dist,
         maxMeters: MAX_PLACE_DISTANCE_METERS,
       });
     }
