@@ -13,6 +13,7 @@ const {
   getRestaurantsByCategory,
   getTopTrendingWeekRestaurants
 } = require('../controllers/exploreController');
+const { getExplorePosts } = require('../controllers/mediaController');
 
 // Category list (first page, instant)
 router.get('/explore/category/:key/places', checkAuth, getCategoryPlaces);
@@ -22,6 +23,9 @@ router.get('/explore/category/:key/more', checkAuth, getCategoryMorePlaces);
 
 // Manual search
 router.get('/explore/search', checkAuth, searchPlaces);
+
+// Explore posts feed (friends first, then public)
+router.get('/explore/posts', checkAuth, getExplorePosts);
 
 // Optional detail
 router.get('/explore/place/:placeId', checkAuth, getPlaceDetail);

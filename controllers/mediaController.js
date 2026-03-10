@@ -715,7 +715,6 @@ exports.getStories = async (req, res) => {
           firstName: u.firstName,
           lastName: u.lastName,
           avatarUrl: firstAvatar(u.minime),
-          // optional: include current location if consumer needs it
           Location: u.Location,
         },
       };
@@ -1001,5 +1000,97 @@ exports.getMyStories = async (req, res) => {
   } catch (error) {
     console.error('getMyStories error:', error);
     return res.status(500).json({ error: 'Failed to fetch your stories' });
+  }
+};
+
+// ==================================================
+// getExplorePosts: explore feed — friends first, then public profiles
+// ==================================================
+exports.getExplorePosts = async (req, res) => {
+  const userId = req.authData.id;
+
+  try {
+    // 1) Friend IDs
+    const friendLinks = await prisma.friendship.findMany({
+      where: {
+        status: 'ACCEPTED',
+        OR: [{ requesterId: userId }, { receiverId: userId }],
+      },
+      select: { requesterId: true, receiverId: true },
+    });
+    const friendIds = new Set(
+      friendLinks.map(l => (l.requesterId === userId ? l.receiverId : l.requesterId))
+    );
+
+    // 2) Block exclusion
+    const notBlocked = {
+      NOT: [
+        { user: { blockedBy: { some: { blockerId: userId } } } },
+        { user: { blocks: { some: { blockedId: userId } } } },
+      ],
+    };
+
+    // 3) Query: friends' posts + public profile posts (visibility: profile, non-private users)
+    const stories = await prisma.story.findMany({
+      where: {
+        status: 'ACTIVE',
+        visibility: 'profile',
+        userId: { not: userId }, // exclude own posts
+        ...notBlocked,
+        OR: [
+          { userId: { in: [...friendIds] } },                      // friends
+          { user: { isProfilePrivate: false } },                   // public profiles
+        ],
+      },
+      include: {
+        user: {
+          select: {
+            id: true,
+            username: true,
+            firstName: true,
+            lastName: true,
+            minime: { where: { isSaved: true }, select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
+            Location: { select: { latitude: true, longitude: true } },
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // 4) Sort: friends first, then public — within each group by createdAt desc
+    const posts = stories.map((s) => {
+      const u = s.user;
+      return {
+        id: s.id,
+        mediaUrl: s.mediaUrl,
+        type: s.type,
+        visibility: s.visibility,
+        status: s.status,
+        createdAt: s.createdAt,
+        latitude: s.latitude,
+        longitude: s.longitude,
+        user: {
+          id: u.id,
+          username: u.username,
+          firstName: u.firstName,
+          lastName: u.lastName,
+          avatarUrl: firstAvatar(u.minime),
+          Location: u.Location,
+        },
+        isFriend: friendIds.has(u.id),
+      };
+    });
+
+    posts.sort((a, b) => {
+      const pa = a.isFriend ? 0 : 1;
+      const pb = b.isFriend ? 0 : 1;
+      if (pa !== pb) return pa - pb;
+      return new Date(b.createdAt) - new Date(a.createdAt);
+    });
+
+    res.json({ posts });
+  } catch (error) {
+    console.error('getExplorePosts error:', error);
+    res.status(500).json({ error: 'Failed to fetch explore posts' });
   }
 };
