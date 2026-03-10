@@ -575,6 +575,7 @@ exports.getVaultStories = async (req, res) => {
                 lastName: true,
                 username: true,
                 minime: {
+                  where: { isSaved: true },
                   select: { avatarUrl: true },
                   orderBy: { updatedAt: 'desc' },
                   take: 1,
@@ -696,7 +697,7 @@ exports.getStories = async (req, res) => {
             username: true,
             firstName: true,
             lastName: true,
-            minime: { select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
+            minime: { where: { isSaved: true }, select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
             Location: { select: { latitude: true, longitude: true } },
           },
         },
@@ -837,7 +838,7 @@ exports.getStoriesFeed = async (req, res) => {
             firstName: true,
             lastName: true,
             isProfilePrivate: true,
-            minime: { select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
+            minime: { where: { isSaved: true }, select: { avatarUrl: true }, take: 1, orderBy: { updatedAt: 'desc' } },
             Location: { select: { latitude: true, longitude: true } },
             // শুধু needCommunityOverlap হলে ওভারল্যাপিং কমিউনিটিস নেবো
             communities: needCommunityOverlap && myCommunityIds.length
@@ -974,7 +975,7 @@ exports.getMyStories = async (req, res) => {
             username: true,
             firstName: true,
             lastName: true,
-            minime: { select: { avatarUrl: true }, orderBy: { updatedAt: 'desc' }, take: 1 },
+            minime: { where: { isSaved: true }, select: { avatarUrl: true }, orderBy: { updatedAt: 'desc' }, take: 1 },
             Location: { select: { latitude: true, longitude: true } },
           },
         },
