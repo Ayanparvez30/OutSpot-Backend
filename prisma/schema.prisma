@@ -371,14 +371,18 @@ model Challenge {
 }
 
 model Submission {
-  id          Int       @id @default(autoincrement())
-  userId      Int
-  challengeId Int
-  mediaUrl    String
-  createdAt   DateTime  @default(now())
-  user        User      @relation(fields: [userId], references: [id])
-  challenge   Challenge @relation(fields: [challengeId], references: [id])
+  id                  Int       @id @default(autoincrement())
+  userId              Int
+  challengeId         Int
+  mediaUrl            String
+  verificationStatus  String    @default("PENDING")
+  rejectionReason     String?   @db.Text
+  imageHash           String?
+  createdAt           DateTime  @default(now())
+  user                User      @relation(fields: [userId], references: [id])
+  challenge           Challenge @relation(fields: [challengeId], references: [id])
   @@index([userId, challengeId, createdAt])
+  @@index([userId, imageHash])
 }
 
 

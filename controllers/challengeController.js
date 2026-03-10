@@ -2,8 +2,13 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 
-const uploadToS3 = require('../utils/s3Upload'); // তোমারটা ব্যবহার করো
+const uploadToS3 = require('../utils/s3Upload');
 const { addPointsWithMultiplier } = require('../utils/points');
+const {
+  verifySubmissionImage,
+  checkTimeConstraints,
+  checkDuplicateImage,
+} = require('../utils/challengeVerification');
 const { notifyNewChallenge } = require('../utils/challengeNotifications');
 const { notifyUser } = require('../utils/notificationService'); // Import notification service
 
@@ -330,24 +335,65 @@ exports.submitToChallenge = async (req, res) => {
       return res.status(409).json({ error: 'Challenge already completed (upload limit reached)' });
     }
 
+    // ── Verification (runs BEFORE S3 upload to avoid orphaned files) ──
+    const imageBuffer = req.file.buffer;
+
+    const [aiResult, timeResult, dupeResult] = await Promise.all([
+      verifySubmissionImage(imageBuffer, challenge.title, challenge.description),
+      Promise.resolve(checkTimeConstraints(challenge.title, zone)),
+      checkDuplicateImage(imageBuffer, userId),
+    ]);
+
+    // Duplicate check
+    if (!dupeResult.pass) {
+      return res.status(400).json({
+        error: dupeResult.reason,
+        verificationStatus: 'FAILED',
+      });
+    }
+
+    // Time constraint check
+    if (!timeResult.pass) {
+      return res.status(400).json({
+        error: timeResult.reason,
+        verificationStatus: 'FAILED',
+      });
+    }
+
+    // AI vision check
+    const verificationStatus = aiResult.status; // PASSED, FAILED, or SKIPPED
+    if (verificationStatus === 'FAILED') {
+      return res.status(400).json({
+        error: 'Photo doesn\'t match this challenge',
+        reason: aiResult.reason,
+        verificationStatus: 'FAILED',
+      });
+    }
+
+    // ── Verification passed — proceed with upload + submission ──
     const s3Url = await uploadToS3(req.file, 'challenge-submissions');
 
     try {
       const result = await prisma.$transaction(async (tx) => {
-  
+
         const countBefore = await tx.submission.count({
           where: { userId, challengeId: challenge.id, createdAt: { gte: window.startUTC, lte: window.endUTC } },
         });
         if (countBefore >= required) {
-          // someone else completed in parallel
           const err = new Error('LIMIT_REACHED');
           err.code = 'LIMIT_REACHED';
           throw err;
         }
 
-
         const submission = await tx.submission.create({
-          data: { userId, challengeId: challenge.id, mediaUrl: s3Url }
+          data: {
+            userId,
+            challengeId: challenge.id,
+            mediaUrl: s3Url,
+            verificationStatus,
+            rejectionReason: aiResult.reason || null,
+            imageHash: dupeResult.hash || null,
+          },
         });
 
         const newCount = await tx.submission.count({
@@ -355,7 +401,6 @@ exports.submitToChallenge = async (req, res) => {
         });
 
         if (newCount > required) {
-          // went over the cap due to a concurrent insert — rollback the whole tx
           const err = new Error('LIMIT_REACHED_AFTER_INSERT');
           err.code = 'LIMIT_REACHED';
           throw err;
@@ -368,7 +413,7 @@ exports.submitToChallenge = async (req, res) => {
             await addPointsWithMultiplier(userId, challenge.points, 'CHALLENGE_COMPLETION', challenge.id, tx);
             awarded = true;
           } catch (_) {
-       
+            // unique constraint — already completed
           }
         }
 
@@ -383,10 +428,10 @@ exports.submitToChallenge = async (req, res) => {
         isCompleted: result.newCount >= required,
         pointsAwarded: result.awarded ? challenge.points : 0,
         tier: challenge.tier,
+        verificationStatus,
       });
     } catch (txErr) {
       if (txErr && txErr.code === 'LIMIT_REACHED') {
-    
         return res.status(409).json({ error: 'Challenge already completed (upload limit reached)' });
       }
       throw txErr;
