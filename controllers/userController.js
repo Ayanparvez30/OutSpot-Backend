@@ -1002,6 +1002,19 @@ async function getUserVisitedSpots(req, res) {
       },
     });
 
+    // Infer placeType from placeName when the DB column is null (pre-migration records)
+    const inferPlaceType = (name) => {
+      if (!name) return null;
+      const n = name.toLowerCase();
+      if (/rooftop/.test(n)) return 'Rooftop Bars';
+      if (/cafe|coffee|bakery|patisserie/.test(n)) return 'Cafes';
+      if (/bar|pub|lounge|tavern/.test(n)) return 'Rooftop Bars';
+      if (/restaurant|grill|bistro|diner|eatery|kitchen|food/.test(n)) return 'Popular Restaurants';
+      if (/park|garden|trail|nature|outdoor|reserve|forest/.test(n)) return 'Outdoor Activities';
+      if (/concert|venue|theater|theatre|arena|stadium|event/.test(n)) return 'Venue Events';
+      return null;
+    };
+
     // De-duplicate: group by placeId (if present) or by lat+lng key
     const spotMap = new Map();
 
@@ -1015,7 +1028,7 @@ async function getUserVisitedSpots(req, res) {
         spotMap.set(key, {
           placeId: point.placeId || null,
           placeName: point.placeName || null,
-          placeType: point.placeType || null,
+          placeType: point.placeType || inferPlaceType(point.placeName),
           latitude: point.latitude,
           longitude: point.longitude,
           mediaUrl: point.mediaUrl,
@@ -1030,9 +1043,9 @@ async function getUserVisitedSpots(req, res) {
         existing.totalPoints += point.points;
         // allPoints is desc, so older dates come later
         existing.firstVisitedAt = point.createdAt;
-        // Keep placeType from most recent visit if not yet set
-        if (!existing.placeType && point.placeType) {
-          existing.placeType = point.placeType;
+        // Keep placeType from most recent visit (or infer) if not yet set
+        if (!existing.placeType) {
+          existing.placeType = point.placeType || inferPlaceType(point.placeName);
         }
       }
     }
