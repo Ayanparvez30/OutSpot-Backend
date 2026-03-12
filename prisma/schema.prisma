@@ -199,8 +199,9 @@ model LocationPoint {
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   mediaUrl   String
-  placeId    String?         // 👈 NEW: precise de-dupe
+  placeId    String?
   placeName  String?
+  placeType  String?
   latitude   Float?
   longitude  Float?
   points     Int      @default(5)

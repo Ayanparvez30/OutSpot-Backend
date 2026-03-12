@@ -254,8 +254,9 @@ exports.recordVisit = async (req, res) => {
       data: {
         userId,
         mediaUrl: mediaUrl || '',
-        placeId, // ✅ always stored
+        placeId,
         placeName: (name && String(name).trim()) || placeNameFromGoogle || null,
+        placeType: cat?.title || null,
         latitude: lat,
         longitude: lng,
         points

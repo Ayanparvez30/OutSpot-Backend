@@ -993,6 +993,7 @@ async function getUserVisitedSpots(req, res) {
         id: true,
         placeId: true,
         placeName: true,
+        placeType: true,
         latitude: true,
         longitude: true,
         mediaUrl: true,
@@ -1014,9 +1015,10 @@ async function getUserVisitedSpots(req, res) {
         spotMap.set(key, {
           placeId: point.placeId || null,
           placeName: point.placeName || null,
+          placeType: point.placeType || null,
           latitude: point.latitude,
           longitude: point.longitude,
-          mediaUrl: point.mediaUrl,       // most recent photo
+          mediaUrl: point.mediaUrl,
           firstVisitedAt: point.createdAt,
           lastVisitedAt: point.createdAt,
           visitCount: 1,
@@ -1028,6 +1030,10 @@ async function getUserVisitedSpots(req, res) {
         existing.totalPoints += point.points;
         // allPoints is desc, so older dates come later
         existing.firstVisitedAt = point.createdAt;
+        // Keep placeType from most recent visit if not yet set
+        if (!existing.placeType && point.placeType) {
+          existing.placeType = point.placeType;
+        }
       }
     }
 
