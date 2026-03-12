@@ -282,20 +282,32 @@ exports.getPlaceDetail = async (req, res) => {
   try {
     const { placeId } = req.params;
     const d = await details(placeId);
-    const photo = d.photos?.[0]?.photo_reference
-      ? photoUrlByRef(d.photos[0].photo_reference, 800)
-      : null;
+
+    const photos = buildPhotosArray(d, 8);
+    const image = photos[0] || photoUrlByRef(d.photos?.[0]?.photo_reference, 1200) || '';
+    const openNow = d.opening_hours?.open_now ?? null;
 
     res.json({
-      placeId: d.place_id,
-      name: d.name,
-      address: d.formatted_address || null,
-      location: d.geometry?.location || null,
-      openNow: d.opening_hours?.open_now ?? null,
-      photoUrl: photo,
-      rating: d.rating || null,
-      userRatingsTotal: d.user_ratings_total || null,
-      types: d.types || []
+      id: String(d.place_id),
+      name: d.name || '',
+      address: d.formatted_address || '',
+      phone: d.formatted_phone_number || d.international_phone_number || '',
+      website: d.website || '',
+      googleMapsUrl: d.url || '',
+      lat: Number(d.geometry?.location?.lat ?? 0),
+      lng: Number(d.geometry?.location?.lng ?? 0),
+      image,
+      photos,
+      category: d.types?.[0] || '',
+      priceLevel: d.price_level ?? null,
+      priceRange: priceLevelToRange(d.price_level) || '',
+      openNow,
+      status: openNowToStatus(openNow),
+      weekdayText: d.opening_hours?.weekday_text || [],
+      rating: Number(d.rating ?? 0),
+      totalReviews: Number(d.user_ratings_total ?? 0),
+      businessStatus: d.business_status || null,
+      types: d.types || [],
     });
   } catch (e) {
     console.error('place detail error', e);
