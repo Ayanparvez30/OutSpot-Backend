@@ -48,6 +48,7 @@ router.post('/me/privacy', checkAuth, userController.updatePrivacy);
 // routes/userRoutes.js
 router.get("/users/:userId/stats", checkAuth, userController.getUserStatsByUserId);
 router.get("/users/:userId/visited-spots", checkAuth, userController.getUserVisitedSpots);
+router.get("/users/:userId/completed-challenges", checkAuth, userController.getCompletedChallenges);
 
 router.get('/me/profile', checkAuth, userController.getProfile);
 

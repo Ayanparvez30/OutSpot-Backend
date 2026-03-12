@@ -959,37 +959,159 @@ async function getUserVisitedSpots(req, res) {
       }
     }
 
-    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
-    const limit = Math.min(50, Math.max(1, parseInt(req.query.limit, 10) || 20));
-    const skip = (page - 1) * limit;
+    // Fetch all location points for this user
+    const allPoints = await prisma.locationPoint.findMany({
+      where: { userId },
+      orderBy: { createdAt: "desc" },
+      select: {
+        id: true,
+        placeId: true,
+        placeName: true,
+        latitude: true,
+        longitude: true,
+        mediaUrl: true,
+        points: true,
+        createdAt: true,
+      },
+    });
 
-    const [spots, total] = await Promise.all([
-      prisma.locationPoint.findMany({
-        where: { userId },
-        orderBy: { createdAt: "desc" },
-        skip,
-        take: limit,
-        select: {
-          id: true,
-          placeId: true,
-          placeName: true,
-          latitude: true,
-          longitude: true,
-          mediaUrl: true,
-          points: true,
-          createdAt: true,
-        },
-      }),
-      prisma.locationPoint.count({ where: { userId } }),
-    ]);
+    // De-duplicate: group by placeId (if present) or by lat+lng key
+    const spotMap = new Map();
+
+    for (const point of allPoints) {
+      const key = point.placeId
+        ? `place:${point.placeId}`
+        : `coord:${point.latitude?.toFixed(5)},${point.longitude?.toFixed(5)}`;
+
+      if (!spotMap.has(key)) {
+        // First visit (newest due to desc order) — use as representative
+        spotMap.set(key, {
+          placeId: point.placeId || null,
+          placeName: point.placeName || null,
+          latitude: point.latitude,
+          longitude: point.longitude,
+          mediaUrl: point.mediaUrl,       // most recent photo
+          firstVisitedAt: point.createdAt,
+          lastVisitedAt: point.createdAt,
+          visitCount: 1,
+          totalPoints: point.points,
+        });
+      } else {
+        const existing = spotMap.get(key);
+        existing.visitCount += 1;
+        existing.totalPoints += point.points;
+        // allPoints is desc, so older dates come later
+        existing.firstVisitedAt = point.createdAt;
+      }
+    }
+
+    // Sort unique spots by lastVisitedAt desc
+    const spots = Array.from(spotMap.values()).sort(
+      (a, b) => new Date(b.lastVisitedAt) - new Date(a.lastVisitedAt)
+    );
 
     return res.json({
       success: true,
       data: spots,
-      pagination: { page, limit, total, totalPages: Math.ceil(total / limit) },
+      total: spots.length,
     });
   } catch (err) {
     console.error("getUserVisitedSpots error:", err);
+    return res.status(500).json({ success: false, message: "Server error" });
+  }
+}
+
+async function getCompletedChallenges(req, res) {
+  try {
+    const viewerId = req.authData.id;
+    const userId = parseInt(req.params.userId, 10);
+
+    if (!Number.isFinite(userId)) {
+      return res.status(400).json({ success: false, message: "Invalid userId" });
+    }
+
+    // Allow self or friends only
+    if (viewerId !== userId) {
+      const friendship = await prisma.friendship.findFirst({
+        where: {
+          status: "ACCEPTED",
+          OR: [
+            { requesterId: viewerId, receiverId: userId },
+            { requesterId: userId, receiverId: viewerId },
+          ],
+        },
+        select: { id: true },
+      });
+      if (!friendship) {
+        return res.status(403).json({
+          success: false,
+          message: "You can only view completed challenges of your friends.",
+        });
+      }
+    }
+
+    // Fetch all completions with full challenge data + actual points from ledger
+    const [completions, ledgerRows] = await Promise.all([
+      prisma.challengeCompletion.findMany({
+        where: { userId },
+        orderBy: { createdAt: "desc" },
+        include: {
+          challenge: {
+            select: {
+              id: true,
+              title: true,
+              description: true,
+              frequency: true,
+              tier: true,
+              points: true,
+              requiredPhotos: true,
+            },
+          },
+        },
+      }),
+      prisma.pointsLedger.findMany({
+        where: { userId, reason: "CHALLENGE_COMPLETION" },
+        select: { refId: true, basePoints: true, appliedMultiplier: true, finalPoints: true, createdAt: true },
+        orderBy: { createdAt: "desc" },
+      }),
+    ]);
+
+    // Map ledger entries by challengeId for fast lookup (keep most recent per challenge)
+    const ledgerByChallenge = new Map();
+    for (const row of ledgerRows) {
+      if (row.refId != null && !ledgerByChallenge.has(row.refId)) {
+        ledgerByChallenge.set(row.refId, row);
+      }
+    }
+
+    const data = completions.map((c) => {
+      const ledger = ledgerByChallenge.get(c.challengeId);
+      return {
+        completionId: c.id,
+        windowKey: c.windowKey,
+        completedAt: c.createdAt,
+        challenge: {
+          id: c.challenge.id,
+          title: c.challenge.title,
+          description: c.challenge.description,
+          frequency: c.challenge.frequency,
+          tier: c.challenge.tier,
+          requiredPhotos: c.challenge.requiredPhotos,
+          basePoints: c.challenge.points,
+        },
+        pointsAwarded: ledger?.finalPoints ?? c.challenge.points,
+        basePoints: ledger?.basePoints ?? c.challenge.points,
+        multiplierApplied: ledger?.appliedMultiplier ?? 1,
+      };
+    });
+
+    return res.json({
+      success: true,
+      data,
+      total: data.length,
+    });
+  } catch (err) {
+    console.error("getCompletedChallenges error:", err);
     return res.status(500).json({ success: false, message: "Server error" });
   }
 }
@@ -1017,6 +1139,7 @@ module.exports = {
   getAchievementStatus,
   getUserStatsByUserId,
   getUserVisitedSpots,
+  getCompletedChallenges,
   // Account
   deleteAccount,
 };
