@@ -347,9 +347,35 @@ async function getMiniMeLocker(req, res) {
   const userId = req.authData.id;
   const minis = await prisma.minime.findMany({
     where: { userId, isSaved: true },
-    orderBy: { createdAt: 'desc' }
+    orderBy: { updatedAt: 'desc' }
   });
   return res.json({ locker: minis });
+}
+
+async function setActiveMinime(req, res) {
+  const userId = req.authData.id;
+  const minimeId = parseInt(req.params.id, 10);
+
+  if (!Number.isFinite(minimeId)) {
+    return res.status(400).json({ error: 'Invalid minime id' });
+  }
+
+  const minime = await prisma.minime.findFirst({
+    where: { id: minimeId, userId, isSaved: true },
+    select: { id: true, avatarUrl: true },
+  });
+
+  if (!minime) {
+    return res.status(404).json({ error: 'Minime not found in your locker' });
+  }
+
+  // Bump updatedAt so this minime sorts first in all profile queries (orderBy: updatedAt desc)
+  await prisma.minime.update({
+    where: { id: minimeId },
+    data: { updatedAt: new Date() },
+  });
+
+  return res.json({ success: true, avatarUrl: minime.avatarUrl });
 }
 
 // PROFILE/PRIVACY/POINTS – MISC
@@ -367,7 +393,7 @@ async function getUserProfile(req, res) {
       lastName: true,
       bio: true,
       isProfilePrivate: true,
-      minime: { select: { avatarUrl: true }, where: { isSaved: true } }
+      minime: { where: { isSaved: true }, orderBy: { updatedAt: 'desc' }, take: 1, select: { avatarUrl: true } }
     }
   });
 
@@ -417,7 +443,7 @@ async function getProfile(req, res) {
         bodyType: true,
         bodyShapeUrl: true,
         totalPoints: true,
-        minime: { select: { avatarUrl: true }, where: { isSaved: true } }
+        minime: { where: { isSaved: true }, orderBy: { updatedAt: 'desc' }, take: 1, select: { avatarUrl: true } }
       }
     });
 
@@ -1140,6 +1166,7 @@ module.exports = {
   getUserStatsByUserId,
   getUserVisitedSpots,
   getCompletedChallenges,
+  setActiveMinime,
   // Account
   deleteAccount,
 };

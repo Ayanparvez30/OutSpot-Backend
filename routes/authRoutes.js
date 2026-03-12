@@ -42,6 +42,7 @@ router.post('/save-profile', checkAuth, userController.saveProfile);
 router.post('/minime/generate', checkAuth, userController.generateMinime);
 router.post('/minime/regenerate', checkAuth, userController.regenerateMinime);
 router.post('/minime/save-latest', checkAuth, userController.saveLatestMinime);
+router.post('/minime/:id/set-active', checkAuth, userController.setActiveMinime);
 router.get('/minime/current', checkAuth, userController.getCurrentMinime);
 router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
 router.post('/me/privacy', checkAuth, userController.updatePrivacy);

@@ -360,12 +360,12 @@ exports.submitToChallenge = async (req, res) => {
       });
     }
 
-    // AI vision check
-    const verificationStatus = aiResult.status; // PASSED, FAILED, or SKIPPED
-    if (verificationStatus === 'FAILED') {
+    // AI vision check — only PASSED is accepted; FAILED and SKIPPED both reject
+    const verificationStatus = aiResult.status;
+    if (verificationStatus !== 'PASSED') {
       return res.status(400).json({
-        error: 'Photo doesn\'t match this challenge',
-        reason: aiResult.reason,
+        error: 'Photo verification failed',
+        reason: aiResult.reason || 'Please submit a clear, relevant photo that matches the challenge.',
         verificationStatus: 'FAILED',
       });
     }
