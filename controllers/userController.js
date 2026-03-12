@@ -774,57 +774,49 @@ async function getUserStatsByUserId(req, res) {
       return res.status(404).json({ success: false, message: "User not found" });
     }
 
-    // --------- Stats ----------
-    const friendsCount = await prisma.friendship.count({
-      where: {
-        status: "ACCEPTED",
-        OR: [{ requesterId: userId }, { receiverId: userId }],
-      },
-    });
+    // --------- Stats (all queries in parallel) ----------
+    const [
+      friendsCount,
+      groupsCount,
+      myCommunity,
+      uniquePlaces,
+      uniqueCoords,
+      challengesCompleted,
+      user,
+    ] = await Promise.all([
+      prisma.friendship.count({
+        where: {
+          status: "ACCEPTED",
+          OR: [{ requesterId: userId }, { receiverId: userId }],
+        },
+      }),
+      prisma.communityMember.count({ where: { userId } }),
+      // Own created community (not just joined)
+      prisma.community.findFirst({
+        where: { creatorId: userId },
+        select: { id: true, name: true, imageUrl: true },
+      }),
+      // Unique placeId-based visits
+      prisma.locationPoint.findMany({
+        where: { userId, placeId: { not: null } },
+        distinct: ["placeId"],
+        select: { placeId: true },
+      }),
+      // Unique coordinate-based visits (no placeId)
+      prisma.locationPoint.findMany({
+        where: { userId, placeId: null, latitude: { not: null }, longitude: { not: null } },
+        distinct: ["latitude", "longitude"],
+        select: { latitude: true, longitude: true },
+      }),
+      // Completed challenges (count via ChallengeCompletion — one row per completed window)
+      prisma.challengeCompletion.count({ where: { userId } }),
+      prisma.user.findUnique({
+        where: { id: userId },
+        select: { bodyType: true },
+      }),
+    ]);
 
-    const groupsCount = await prisma.communityMember.count({
-      where: { userId },
-    });
-
-    // ✅ latest joined community (joinedAt preferred; fallback by id)
-    const myCommunity = await prisma.communityMember.findFirst({
-      where: { userId },
-      orderBy: [{ joinedAt: "desc" }, { id: "desc" }],
-      include: {
-        community: { select: { id: true, name: true, imageUrl: true } },
-      },
-    });
-
-    // spots visited: unique placeIds + unique coordinates from records without placeId
-    let spotsVisited = 0;
-
-    // Count unique placeId-based visits
-    const uniquePlaces = await prisma.locationPoint.findMany({
-      where: { userId, placeId: { not: null } },
-      distinct: ["placeId"],
-      select: { placeId: true },
-    });
-    spotsVisited += uniquePlaces.length;
-
-    // Also count unique coordinate-based visits that have NO placeId
-    const uniqueCoords = await prisma.locationPoint.findMany({
-      where: { userId, placeId: null, latitude: { not: null }, longitude: { not: null } },
-      distinct: ["latitude", "longitude"],
-      select: { latitude: true, longitude: true },
-    });
-    spotsVisited += uniqueCoords.length;
-
-    const challengesCompleted = await prisma.pointsLedger.count({
-      where: {
-        userId,
-        reason: { in: ["DAILY_CHALLENGE_COMPLETE", "WEEKLY_CHALLENGE_COMPLETE"] },
-      },
-    });
-
-    const user = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { bodyType: true },
-    });
+    const spotsVisited = uniquePlaces.length + uniqueCoords.length;
 
     return res.json({
       success: true,
@@ -835,7 +827,7 @@ async function getUserStatsByUserId(req, res) {
         friends: friendsCount,
         community: groupsCount,
         challengesCompleted,
-        myCommunity: myCommunity?.community || null,
+        myCommunity: myCommunity || null,
       },
     });
   } catch (err) {
