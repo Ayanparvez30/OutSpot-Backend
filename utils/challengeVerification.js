@@ -52,10 +52,12 @@ const TIME_CONSTRAINTS = {
 
 // ---------- Pre-flight: reject obviously invalid images ----------
 function isImageLikelyBlankOrDark(imageBuffer) {
-  // A real photo is almost never under 5 KB after JPEG encoding.
-  // Black/blank screens compress to well under 2 KB.
+  // Only reject completely empty or clearly corrupted uploads (< 1 KB).
+  // Flutter often compresses images aggressively — real photos can be as small as
+  // a few KB, so a 5 KB threshold was incorrectly rejecting legitimate submissions.
+  // Actual blank/dark/solid-color images are caught by the AI vision check.
   const sizeKB = imageBuffer.length / 1024;
-  return sizeKB < 5;
+  return sizeKB < 1;
 }
 
 // ---------- AI Vision Verification ----------
