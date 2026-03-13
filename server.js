@@ -134,6 +134,10 @@ cron.schedule(MSG_CLEANUP_CRON, async () => {
   }
 });
 
+// ---- Challenge notification scheduler ----
+const { midnightChallengeScheduler } = require('./schedulers/midnightChallengeScheduler');
+midnightChallengeScheduler.start();
+
 const server = http.createServer(app);
 const { initSocket } = require('./utils/socket');
 initSocket(server);
