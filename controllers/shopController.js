@@ -647,9 +647,18 @@ exports.purchasePointBundle = async (req, res) => {
   }
 };
 
-exports.getCatalog = async (_req, res) => {
+exports.getCatalog = async (req, res) => {
   try {
+    const gender = req.query.gender;
+    const allowedSlots = gender === 'feminine' ? FEMININE_SLOTS
+                       : gender === 'masculine' ? MASCULINE_SLOTS
+                       : [...new Set([...MASCULINE_SLOTS, ...FEMININE_SLOTS])];
+
     const items = await prisma.shopItem.findMany({
+      where: {
+        OR: [{ appleProductId: { not: null } }, { googleProductId: { not: null } }],
+        slot: { in: allowedSlots },
+      },
       orderBy: [{ isFeatured: 'desc' }, { slot: 'asc' }, { name: 'asc' }],
       select: {
         id: true,
