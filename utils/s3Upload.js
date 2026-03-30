@@ -1,4 +1,4 @@
-const { S3Client, PutObjectCommand } = require("@aws-sdk/client-s3");
+const { S3Client, PutObjectCommand, DeleteObjectCommand } = require("@aws-sdk/client-s3");
 const crypto = require("crypto");
 const path = require("path");
 
@@ -28,4 +28,21 @@ const uploadToS3 = async (file, folder = "uploads") => {
   return `https://${process.env.S3_BUCKET_NAME}.s3.${process.env.AWS_REGION}.amazonaws.com/${fileName}`;
 };
 
+/**
+ * Delete a file from S3 by its full URL.
+ * Silently ignores errors (best-effort cleanup).
+ */
+const deleteFromS3 = async (fileUrl) => {
+  try {
+    const bucket = process.env.S3_BUCKET_NAME;
+    const region = process.env.AWS_REGION;
+    const prefix = `https://${bucket}.s3.${region}.amazonaws.com/`;
+    if (!fileUrl || !fileUrl.startsWith(prefix)) return;
+
+    const key = fileUrl.slice(prefix.length);
+    await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+  } catch (_) { /* best-effort */ }
+};
+
 module.exports = uploadToS3;
+module.exports.deleteFromS3 = deleteFromS3;

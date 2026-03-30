@@ -3,6 +3,7 @@ const { PrismaClient } = require('@prisma/client');
 const nodemailer = require('nodemailer');
 const prisma = new PrismaClient();
 const { notifyUser } = require('../utils/notificationService');
+const { deleteFromS3 } = require('../utils/s3Upload');
 
 // ✅ NEW: single source of truth for weekly points (sums pointsLedger.finalPoints since Monday)
 const {
@@ -372,8 +373,56 @@ exports.unfriend = async (req, res) => {
     return res.status(404).json({ error: "No friendship exists with that user." });
   }
 
-  await prisma.friendship.delete({ where: { id: friendRecord.id } });
-  return res.json({ message: "Unfriended successfully." });
+  // Find the 1:1 private chat between these two users
+  const privateChats = await prisma.chat.findMany({
+    where: {
+      isGroup: false,
+      isCommunity: false,
+      AND: [
+        { users: { some: { userId: currentUserId } } },
+        { users: { some: { userId: friendUserId } } },
+      ],
+    },
+    include: { _count: { select: { users: true } } },
+  });
+
+  // Only delete chats that have exactly these 2 users (not group chats they might share)
+  const exactPrivateChats = privateChats.filter(c => c._count.users === 2);
+  const chatIds = exactPrivateChats.map(c => c.id);
+
+  // Collect S3 image URLs from messages before deleting
+  let imageUrls = [];
+  if (chatIds.length > 0) {
+    const mediaMessages = await prisma.message.findMany({
+      where: { chatId: { in: chatIds }, imageUrl: { not: null } },
+      select: { imageUrl: true },
+    });
+    imageUrls = mediaMessages.map(m => m.imageUrl);
+  }
+
+  // Delete friendship + private chat(s) + all messages (cascade) in a transaction
+  await prisma.$transaction([
+    prisma.friendship.delete({ where: { id: friendRecord.id } }),
+    ...(chatIds.length > 0
+      ? [prisma.chat.deleteMany({ where: { id: { in: chatIds } } })]
+      : []),
+  ]);
+
+  // Clean up S3 images (best-effort, non-blocking)
+  for (const url of imageUrls) {
+    deleteFromS3(url);
+  }
+
+  // Notify both users via socket so they can remove the chat from UI
+  try {
+    const io = require('../utils/socket').getIO();
+    for (const cid of chatIds) {
+      io.to(`user:${currentUserId}`).emit('chatDeleted', { chatId: cid });
+      io.to(`user:${friendUserId}`).emit('chatDeleted', { chatId: cid });
+    }
+  } catch (_) { /* socket not ready */ }
+
+  return res.json({ message: "Unfriended successfully.", deletedChatIds: chatIds });
 };
 
 // Friend list (weekly points from ledger)
@@ -484,19 +533,62 @@ exports.blockUser = async (req, res) => {
     return res.status(400).json({ error: "User is already blocked." });
   }
 
-  await prisma.friendship.deleteMany({
+  // Find 1:1 private chats between these two users
+  const privateChats = await prisma.chat.findMany({
     where: {
-      OR: [
-        { requesterId: currentUserId, receiverId: targetUserId },
-        { requesterId: targetUserId, receiverId: currentUserId },
+      isGroup: false,
+      isCommunity: false,
+      AND: [
+        { users: { some: { userId: currentUserId } } },
+        { users: { some: { userId: targetUserId } } },
       ],
     },
+    include: { _count: { select: { users: true } } },
   });
+  const chatIds = privateChats.filter(c => c._count.users === 2).map(c => c.id);
 
-  await prisma.block.create({
-    data: { blockerId: currentUserId, blockedId: targetUserId },
-  });
-  return res.json({ message: "User blocked successfully." });
+  // Collect S3 image URLs from messages before deleting
+  let imageUrls = [];
+  if (chatIds.length > 0) {
+    const mediaMessages = await prisma.message.findMany({
+      where: { chatId: { in: chatIds }, imageUrl: { not: null } },
+      select: { imageUrl: true },
+    });
+    imageUrls = mediaMessages.map(m => m.imageUrl);
+  }
+
+  await prisma.$transaction([
+    prisma.friendship.deleteMany({
+      where: {
+        OR: [
+          { requesterId: currentUserId, receiverId: targetUserId },
+          { requesterId: targetUserId, receiverId: currentUserId },
+        ],
+      },
+    }),
+    ...(chatIds.length > 0
+      ? [prisma.chat.deleteMany({ where: { id: { in: chatIds } } })]
+      : []),
+    prisma.block.create({
+      data: { blockerId: currentUserId, blockedId: targetUserId },
+    }),
+  ]);
+
+  // Clean up S3 images (best-effort, non-blocking)
+  for (const url of imageUrls) {
+    deleteFromS3(url);
+  }
+
+  // Notify both users to remove chat from UI
+  try {
+    const io = require('../utils/socket').getIO();
+    for (const cid of chatIds) {
+      io.to(`user:${currentUserId}`).emit('chatDeleted', { chatId: cid });
+      io.to(`user:${targetUserId}`).emit('chatDeleted', { chatId: cid });
+    }
+  } catch (_) { /* socket not ready */ }
+
+  return res.json({ message: "User blocked successfully.", deletedChatIds: chatIds });
 };
 
 // Incoming friend requests (weekly points from ledger)
