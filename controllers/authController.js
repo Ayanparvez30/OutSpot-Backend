@@ -989,7 +989,7 @@ exports.logout = async (req, res) => {
       where: { id: userId },
       data: {
         authorization: "",
-        fcmToken: "" 
+        fcmToken: null
       }
     });
 
@@ -1105,10 +1105,29 @@ exports.updateFcmToken = async (req, res) => {
 
   if (!fcmToken) return res.status(400).json({ error: "FCM token required" });
 
+  // Check if user previously had no token (logged out / fresh install)
+  const user = await prisma.user.findUnique({
+    where: { id: userId },
+    select: { fcmToken: true },
+  });
+  const wasMissing = !user?.fcmToken;
+
   await prisma.user.update({
     where: { id: userId },
     data: { fcmToken }
   });
+
+  // If user was logged out (no token), clear old challenge notifications
+  // so they don't see a flood of stale push notifications from previous days
+  if (wasMissing) {
+    await prisma.notification.deleteMany({
+      where: {
+        userId,
+        type: { in: ['DAILY_CHALLENGE', 'WEEKLY_CHALLENGE'] },
+        isRead: false,
+      },
+    });
+  }
 
   res.json({ message: "Token updated" });
 };

@@ -30,9 +30,9 @@ async function notifyUsersAboutMidnightChallenges(timezone) {
     const { startUTC: weekStart } = getWeekStartEndInZone(now, zone);
     const isMonday = new Date(now).toLocaleString('en-US', { timeZone: zone, weekday: 'long' }) === 'Sunday';
 
-    // Only users with an FCM token
+    // Only users with a valid FCM token (exclude null and empty string)
     const users = await prisma.user.findMany({
-      where: { fcmToken: { not: null } },
+      where: { fcmToken: { not: null }, NOT: { fcmToken: '' } },
       select: { id: true }
     });
 

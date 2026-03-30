@@ -95,9 +95,8 @@ async function notifyAllUsersAboutDailyChallenge() {
     // Get all users with FCM tokens (active users)
     const activeUsers = await prisma.user.findMany({
       where: {
-        fcmToken: {
-          not: null
-        }
+        fcmToken: { not: null },
+        NOT: { fcmToken: '' }
       },
       select: {
         id: true
@@ -144,9 +143,8 @@ async function notifyAllUsersAboutWeeklyChallenge() {
     // Get all users with FCM tokens (active users)
     const activeUsers = await prisma.user.findMany({
       where: {
-        fcmToken: {
-          not: null
-        }
+        fcmToken: { not: null },
+        NOT: { fcmToken: '' }
       },
       select: {
         id: true
