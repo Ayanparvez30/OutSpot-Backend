@@ -197,12 +197,22 @@ exports.sendTextMessage = async (req, res) => {
       }
     }
 
+    // Calculate expiresAt for disappearing messages
+    const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
+    let expiresAt = null;
+    if (chat.disappearingSeconds === 1) {
+      expiresAt = VIEW_ONCE_SENTINEL;
+    } else if (chat.disappearingSeconds) {
+      expiresAt = new Date(Date.now() + chat.disappearingSeconds * 1000);
+    }
+
     const message = await prisma.message.create({
       data: {
         chatId,
         senderId: userId,
         content,
         imageUrl: null,
+        expiresAt,
       },
       include: {
         sender: {
@@ -238,6 +248,8 @@ exports.sendTextMessage = async (req, res) => {
       id: message.id,
       content: message.content,
       imageUrl: message.imageUrl,
+      expiresAt: message.expiresAt,
+      isSystem: message.isSystem,
       createdAt: message.createdAt,
       chatId: message.chatId,
       sender: {

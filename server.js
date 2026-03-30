@@ -114,21 +114,41 @@ cron.schedule(CRON_EXPR, async () => {
 const MSG_CLEANUP_CRON = '* * * * *';
 cron.schedule(MSG_CLEANUP_CRON, async () => {
   try {
-    const result = await prisma.message.deleteMany({
+    // Find expired messages first so we can notify the right chat rooms
+    const expired = await prisma.message.findMany({
       where: {
         expiresAt: { not: null, lte: new Date() },
       },
+      select: { id: true, chatId: true },
     });
-    if (result.count > 0) {
-      console.log(`🗑️  Disappearing messages cleaned up: ${result.count}`);
 
-      // Notify connected clients so they can remove expired messages from UI
-      try {
-        const { getIO } = require('./utils/socket');
-        const io = getIO();
-        io.emit('messagesExpired', { count: result.count, at: new Date().toISOString() });
-      } catch (_) { /* socket not ready yet */ }
-    }
+    if (expired.length === 0) return;
+
+    // Delete them
+    await prisma.message.deleteMany({
+      where: { id: { in: expired.map(m => m.id) } },
+    });
+
+    console.log(`🗑️  Disappearing messages cleaned up: ${expired.length}`);
+
+    // Group by chatId and emit per-chat messagesDeleted events
+    // so the client knows exactly which messages to remove from UI
+    try {
+      const { getIO } = require('./utils/socket');
+      const io = getIO();
+
+      const byChatId = {};
+      for (const m of expired) {
+        if (!byChatId[m.chatId]) byChatId[m.chatId] = [];
+        byChatId[m.chatId].push(m.id);
+      }
+      for (const [chatId, messageIds] of Object.entries(byChatId)) {
+        io.to(`chat_${chatId}`).emit('messagesDeleted', {
+          chatId: parseInt(chatId, 10),
+          messageIds,
+        });
+      }
+    } catch (_) { /* socket not ready yet */ }
   } catch (e) {
     console.error('❌ Disappearing messages cron error:', e);
   }
