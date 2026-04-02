@@ -9,6 +9,7 @@ const haversineMeters = (a, b) => {
   const A = Math.sin(dLat/2)**2 + Math.cos(toRad(a.lat))*Math.cos(toRad(b.lat))*Math.sin(dLng/2)**2;
   return 2 * R * Math.asin(Math.sqrt(A));
 };
+const metersToMiles = (m) => +(m / 1609.344).toFixed(2);
 function buildPhotosArray(d, max = 8) {
   const refs = (d?.photos || []).slice(0, max).map(p => p.photo_reference).filter(Boolean);
   return refs.map(ref => photoUrlByRef(ref, 1200)).filter(Boolean);
@@ -65,8 +66,8 @@ function mapPlace(p, lat, lng, points) {
     address: p.vicinity || p.formatted_address || null,
     photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 400),
     points,
-    distanceMeters: p.geometry?.location
-      ? haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng })
+    distanceMiles: p.geometry?.location
+      ? metersToMiles(haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng }))
       : null,
     location: p.geometry?.location || null,
     rating: p.rating || null,
@@ -90,7 +91,7 @@ exports.getCategoryPlaces = async (req, res) => {
 
     const page = await nearbyPage({ lat, lng, radius, keyword: cat.keyword, type: cat.type });
     const items = (page.results || []).map(p => mapPlace(p, lat, lng, cat.points));
-    items.sort((a, b) => (a.distanceMeters || 0) - (b.distanceMeters || 0) || (b.rating || 0) - (a.rating || 0));
+    items.sort((a, b) => (a.distanceMiles || 0) - (b.distanceMiles || 0) || (b.rating || 0) - (a.rating || 0));
 
     res.json({
       category: { key: cat.key, title: cat.title, points: cat.points },
@@ -121,7 +122,7 @@ exports.getCategoryMorePlaces = async (req, res) => {
 
     const page = await nearbyPage({ pagetoken });
     const items = (page.results || []).map(p => mapPlace(p, lat, lng, cat.points));
-    items.sort((a, b) => (a.distanceMeters || 0) - (b.distanceMeters || 0) || (b.rating || 0) - (a.rating || 0));
+    items.sort((a, b) => (a.distanceMiles || 0) - (b.distanceMiles || 0) || (b.rating || 0) - (a.rating || 0));
 
     res.json({
       places: items,
@@ -197,8 +198,8 @@ exports.recordVisit = async (req, res) => {
         reason: 'too-far-from-place',
         message: `You need to be within ${MAX_PLACE_DISTANCE_METERS}m of this place to check in. You are currently ${dist}m away. Please get closer and try again.`,
         placeId,
-        distanceMeters: dist,
-        maxMeters: MAX_PLACE_DISTANCE_METERS,
+        distanceMiles: metersToMiles(dist),
+        maxMiles: metersToMiles(MAX_PLACE_DISTANCE_METERS),
       });
     }
 
@@ -270,7 +271,7 @@ exports.recordVisit = async (req, res) => {
       points,
       id: created.id,
       placeId,
-      distanceMeters: Math.round(distToPlace),
+      distanceMiles: metersToMiles(distToPlace),
     });
   } catch (e) {
     console.error('recordVisit error', e);
@@ -338,15 +339,15 @@ exports.searchPlaces = async (req, res) => {
       address: p.formatted_address || p.vicinity || null,
       photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 400),
       points: 5,
-      distanceMeters: p.geometry?.location
-        ? haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng })
+      distanceMiles: p.geometry?.location
+        ? metersToMiles(haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng }))
         : null,
       location: p.geometry?.location || null,
       rating: p.rating || null,
       userRatingsTotal: p.user_ratings_total || null,
     }));
 
-    places.sort((a, b) => (a.distanceMeters || 99999) - (b.distanceMeters || 99999));
+    places.sort((a, b) => (a.distanceMiles || 99999) - (b.distanceMiles || 99999));
 
     res.json({ query, places });
   } catch (e) {
@@ -663,7 +664,7 @@ out.push({
   visitCount: g._count?.placeId || 0,     
   uniqueUsers: uniqueUsersMap.get(placeId)?.size || 0,
   pointsCollected: g._sum?.points || 0,
-  distanceMeters: Math.round(dMeters),
+  distanceMiles: metersToMiles(dMeters),
 
   friendsCount,
   friendsPreview,
@@ -677,7 +678,7 @@ out.push({
       (b.pointsCollected || 0) - (a.pointsCollected || 0) ||
       (b.uniqueUsers || 0) - (a.uniqueUsers || 0) ||
       (b.visitCount || 0) - (a.visitCount || 0) ||
-      (a.distanceMeters || 0) - (b.distanceMeters || 0)
+      (a.distanceMiles || 0) - (b.distanceMiles || 0)
     );
 
     return res.json({
