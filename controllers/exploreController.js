@@ -60,16 +60,19 @@ const getCategory = key => CATEGORIES.find(c => c.key === key);
 
 // helper: map raw Google place to response object
 function mapPlace(p, lat, lng, points) {
+  const placeLat = p.geometry?.location?.lat ?? 0;
+  const placeLng = p.geometry?.location?.lng ?? 0;
   return {
     placeId: p.place_id,
     name: p.name,
     address: p.vicinity || p.formatted_address || null,
     photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 400),
     points,
-    distanceMiles: p.geometry?.location
-      ? metersToMiles(haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng }))
+    distanceMiles: placeLat && placeLng
+      ? metersToMiles(haversineMeters({ lat, lng }, { lat: placeLat, lng: placeLng }))
       : null,
-    location: p.geometry?.location || null,
+    lat: Number(placeLat),
+    lng: Number(placeLng),
     rating: p.rating || null,
     userRatingsTotal: p.user_ratings_total || null,
   };
@@ -395,19 +398,24 @@ exports.searchPlaces = async (req, res) => {
 
     const results = await textSearch({ query, lat, lng, radius });
 
-    const places = results.map(p => ({
-      placeId: p.place_id,
-      name: p.name,
-      address: p.formatted_address || p.vicinity || null,
-      photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 400),
-      points: 5,
-      distanceMiles: p.geometry?.location
-        ? metersToMiles(haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng }))
-        : null,
-      location: p.geometry?.location || null,
-      rating: p.rating || null,
-      userRatingsTotal: p.user_ratings_total || null,
-    }));
+    const places = results.map(p => {
+      const pLat = p.geometry?.location?.lat ?? 0;
+      const pLng = p.geometry?.location?.lng ?? 0;
+      return {
+        placeId: p.place_id,
+        name: p.name,
+        address: p.formatted_address || p.vicinity || null,
+        photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 400),
+        points: 5,
+        distanceMiles: pLat && pLng
+          ? metersToMiles(haversineMeters({ lat, lng }, { lat: pLat, lng: pLng }))
+          : null,
+        lat: Number(pLat),
+        lng: Number(pLng),
+        rating: p.rating || null,
+        userRatingsTotal: p.user_ratings_total || null,
+      };
+    });
 
     places.sort((a, b) => (a.distanceMiles || 99999) - (b.distanceMiles || 99999));
 
