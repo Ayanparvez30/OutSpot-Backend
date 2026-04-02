@@ -282,11 +282,67 @@ exports.recordVisit = async (req, res) => {
 exports.getPlaceDetail = async (req, res) => {
   try {
     const { placeId } = req.params;
+    const lat = parseFloat(req.query.lat);
+    const lng = parseFloat(req.query.lng);
     const d = await details(placeId);
 
     const photos = buildPhotosArray(d, 8);
     const image = photos[0] || photoUrlByRef(d.photos?.[0]?.photo_reference, 1200) || '';
     const openNow = d.opening_hours?.open_now ?? null;
+    const placeLat = d.geometry?.location?.lat;
+    const placeLng = d.geometry?.location?.lng;
+
+    let distanceMiles = null;
+    if (Number.isFinite(lat) && Number.isFinite(lng) && placeLat && placeLng) {
+      distanceMiles = metersToMiles(haversineMeters({ lat, lng }, { lat: placeLat, lng: placeLng }));
+    }
+
+    // Match which app categories this place falls under based on Google types
+    const placeTypes = d.types || [];
+    const TYPE_TO_SECTIONS = {
+      restaurant: ['Popular Restaurants'],
+      cafe: ['Cafes'],
+      bar: ['Bars'],
+      night_club: ['Bars'],
+      park: ['Outdoor Activities'],
+      campground: ['Outdoor Activities'],
+      tourist_attraction: ['Outdoor Activities'],
+      rooftop: ['Rooftop Bars'],
+    };
+    const sections = new Set();
+    for (const t of placeTypes) {
+      if (TYPE_TO_SECTIONS[t]) TYPE_TO_SECTIONS[t].forEach(s => sections.add(s));
+    }
+    // Keyword-based fallback from name
+    const nameLower = (d.name || '').toLowerCase();
+    if (nameLower.includes('rooftop')) sections.add('Rooftop Bars');
+    if (nameLower.includes('cafe') || nameLower.includes('coffee')) sections.add('Cafes');
+
+    // Cuisine / services from Google data
+    const cuisine = [];
+    if (d.serves_breakfast) cuisine.push('Breakfast');
+    if (d.serves_brunch) cuisine.push('Brunch');
+    if (d.serves_lunch) cuisine.push('Lunch');
+    if (d.serves_dinner) cuisine.push('Dinner');
+    if (d.serves_beer) cuisine.push('Beer');
+    if (d.serves_wine) cuisine.push('Wine');
+    if (d.serves_vegetarian_food) cuisine.push('Vegetarian');
+
+    const services = [];
+    if (d.dine_in) services.push('Dine-in');
+    if (d.takeout) services.push('Takeout');
+    if (d.delivery) services.push('Delivery');
+    if (d.reservable) services.push('Reservable');
+    if (d.wheelchair_accessible_entrance) services.push('Wheelchair Accessible');
+
+    // Reviews (top 5 from Google)
+    const reviews = (d.reviews || []).slice(0, 5).map(r => ({
+      author: r.author_name || '',
+      authorPhoto: r.profile_photo_url || null,
+      rating: r.rating || 0,
+      text: r.text || '',
+      timeAgo: r.relative_time_description || '',
+    }));
 
     res.json({
       id: String(d.place_id),
@@ -295,11 +351,16 @@ exports.getPlaceDetail = async (req, res) => {
       phone: d.formatted_phone_number || d.international_phone_number || '',
       website: d.website || '',
       googleMapsUrl: d.url || '',
-      lat: Number(d.geometry?.location?.lat ?? 0),
-      lng: Number(d.geometry?.location?.lng ?? 0),
+      lat: Number(placeLat ?? 0),
+      lng: Number(placeLng ?? 0),
+      distanceMiles,
       image,
       photos,
+      description: d.editorial_summary?.overview || null,
       category: d.types?.[0] || '',
+      sections: [...sections],
+      cuisine,
+      services,
       priceLevel: d.price_level ?? null,
       priceRange: priceLevelToRange(d.price_level) || '',
       openNow,
@@ -307,6 +368,7 @@ exports.getPlaceDetail = async (req, res) => {
       weekdayText: d.opening_hours?.weekday_text || [],
       rating: Number(d.rating ?? 0),
       totalReviews: Number(d.user_ratings_total ?? 0),
+      reviews,
       businessStatus: d.business_status || null,
       types: d.types || [],
     });

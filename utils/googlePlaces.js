@@ -16,6 +16,7 @@ const fieldsForDetails = [
 
   'rating',
   'user_ratings_total',
+  'reviews',
 
   'formatted_phone_number',
   'international_phone_number',
@@ -24,6 +25,19 @@ const fieldsForDetails = [
 
   'price_level',
   'business_status',
+  'editorial_summary',
+  'serves_beer',
+  'serves_breakfast',
+  'serves_brunch',
+  'serves_dinner',
+  'serves_lunch',
+  'serves_wine',
+  'serves_vegetarian_food',
+  'takeout',
+  'delivery',
+  'dine_in',
+  'reservable',
+  'wheelchair_accessible_entrance',
 ].join(',');
 
 function photoUrlByRef(photoRef, maxwidth = 800) {
