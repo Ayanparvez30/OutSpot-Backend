@@ -32,7 +32,7 @@ model User {
     // 👇 Referral fields
   referralCode     String            @unique @default(cuid())
   referredById     Int?
-  referredBy       User?             @relation("UserReferredBy", fields: [referredById], references: [id])
+  referredBy       User?             @relation("UserReferredBy", fields: [referredById], references: [id], onDelete: SetNull)
   referredUsers    User[]            @relation("UserReferredBy")
   invitesSent      Referral[]        @relation("UserInvites")
   invitesReceived  Referral[]        @relation("UserReferred")
@@ -225,7 +225,7 @@ model Notification {
 
   // relations
   user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
-  actor User? @relation("NotificationActor", fields: [actorId], references: [id])
+  actor User? @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   // indexes
   @@index([userId, createdAt])
@@ -259,7 +259,7 @@ model Chat {
 
 
   createdById Int?
-  createdBy   User? @relation(fields: [createdById], references: [id])
+  createdBy   User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
 }
 
 model Message {
@@ -283,7 +283,7 @@ model ChatImage {
   id      Int    @id @default(autoincrement())
   userId  Int
   fileUrl String
-  user    User   @relation(fields: [userId], references: [id])
+  user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 
@@ -380,7 +380,7 @@ model Submission {
   rejectionReason     String?   @db.Text
   imageHash           String?
   createdAt           DateTime  @default(now())
-  user                User      @relation(fields: [userId], references: [id])
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   challenge           Challenge @relation(fields: [challengeId], references: [id])
   @@index([userId, challengeId, createdAt])
   @@index([userId, imageHash])
@@ -393,7 +393,7 @@ model ChallengeCompletion {
   challengeId  Int
   windowKey    String
   createdAt    DateTime @default(now())
-  user         User      @relation(fields: [userId], references: [id])
+  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
   challenge    Challenge @relation(fields: [challengeId], references: [id])
   @@unique([userId, challengeId, windowKey])
 }
@@ -403,7 +403,7 @@ model Community {
   
   imageUrl    String?
   creatorId   Int
-  creator     User              @relation("UserCreatedCommunities", fields: [creatorId], references: [id])
+  creator     User              @relation("UserCreatedCommunities", fields: [creatorId], references: [id], onDelete: Cascade)
   members     CommunityMember[]
   chats       Chat[]
   media       Media[] // ✅ inverse of Media.community
@@ -430,7 +430,7 @@ model ContactSync {
   phone     String? // optional
   createdAt DateTime @default(now())
 
-  user User @relation(fields: [userId], references: [id])
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
 
 model Report {
@@ -443,8 +443,8 @@ model Report {
   reviewedAt  DateTime?
   createdAt   DateTime @default(now())
 
-  reporter    User     @relation("Reporter", fields: [reporterId], references: [id])
-  reported    User     @relation("Reported", fields: [reportedId], references: [id])
+  reporter    User     @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported    User     @relation("Reported", fields: [reportedId], references: [id], onDelete: Cascade)
 }
 
 enum ShopSlot {

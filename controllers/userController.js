@@ -745,36 +745,68 @@ async function getAchievementStatus(req, res) {
 // ------------ ACCOUNT DELETE ------------
 async function deleteAccount(req, res) {
   const userId = req.authData.id;
+  const { deleteFromS3 } = require('../utils/s3Upload');
 
   try {
-
     const user = await prisma.user.findUnique({
       where: { id: userId },
-      select: { firebaseUid: true }
+      select: { firebaseUid: true, selfieUrl: true, bodyShapeUrl: true }
     });
-    const firebaseUid = user?.firebaseUid || null;
+    if (!user) return res.status(404).json({ error: 'User not found' });
 
-    // 1) Firebase Auth
+    const firebaseUid = user.firebaseUid || null;
+
+    // 1) Collect all S3 URLs before deleting DB records
+    const [
+      minimes,
+      media,
+      stories,
+      messages,
+      chatImages,
+      submissions,
+      locationPoints,
+      communityImages,
+    ] = await Promise.all([
+      prisma.minime.findMany({ where: { userId }, select: { avatarUrl: true } }),
+      prisma.media.findMany({ where: { senderId: userId }, select: { fileUrl: true } }),
+      prisma.story.findMany({ where: { userId }, select: { mediaUrl: true } }),
+      prisma.message.findMany({ where: { senderId: userId, imageUrl: { not: null } }, select: { imageUrl: true } }),
+      prisma.chatImage.findMany({ where: { userId }, select: { fileUrl: true } }),
+      prisma.submission.findMany({ where: { userId }, select: { mediaUrl: true } }),
+      prisma.locationPoint.findMany({ where: { userId }, select: { mediaUrl: true } }),
+      prisma.community.findMany({ where: { creatorId: userId }, select: { imageUrl: true } }),
+    ]);
+
+    const s3Urls = [
+      user.selfieUrl,
+      user.bodyShapeUrl,
+      ...minimes.map(m => m.avatarUrl),
+      ...media.map(m => m.fileUrl),
+      ...stories.map(s => s.mediaUrl),
+      ...messages.map(m => m.imageUrl),
+      ...chatImages.map(c => c.fileUrl),
+      ...submissions.map(s => s.mediaUrl),
+      ...locationPoints.map(l => l.mediaUrl),
+      ...communityImages.map(c => c.imageUrl),
+    ].filter(Boolean);
+
+    // 2) Firebase Auth + Firestore cleanup
     if (firebaseUid) {
-      try {
-        await admin.auth().deleteUser(firebaseUid);
-      } catch (e) {
-        if (e.code !== 'auth/user-not-found') throw e;
-      }
+      try { await admin.auth().deleteUser(firebaseUid); }
+      catch (e) { if (e.code !== 'auth/user-not-found') throw e; }
+      try { await admin.firestore().collection('users').doc(firebaseUid).delete(); }
+      catch (_) { }
+      try { await admin.database().ref(`users/${firebaseUid}`).remove(); }
+      catch (_) { }
     }
 
-    try {
-      await admin.firestore().collection('users').doc(firebaseUid).delete();
-    } catch (_) { }
-    try {
-      await admin.database().ref(`users/${firebaseUid}`).remove();
-    } catch (_) { }
+    // 3) Delete user from DB — all cascade relations handle cleanup
+    await prisma.user.delete({ where: { id: userId } });
 
-    // 3) Prisma DB
-    await prisma.$transaction(async (tx) => {
-
-      await tx.user.delete({ where: { id: userId } });
-    });
+    // 4) Clean up S3 files (best-effort, non-blocking)
+    for (const url of s3Urls) {
+      deleteFromS3(url);
+    }
 
     return res.json({ message: 'Account deleted everywhere' });
   } catch (error) {
