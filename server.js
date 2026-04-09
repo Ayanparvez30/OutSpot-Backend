@@ -114,25 +114,30 @@ cron.schedule(CRON_EXPR, async () => {
 const MSG_CLEANUP_CRON = '* * * * *';
 cron.schedule(MSG_CLEANUP_CRON, async () => {
   try {
-    // Find expired messages first so we can notify the right chat rooms
+    // Find expired messages — include imageUrl so we can clean up S3
     const expired = await prisma.message.findMany({
       where: {
         expiresAt: { not: null, lte: new Date() },
       },
-      select: { id: true, chatId: true },
+      select: { id: true, chatId: true, imageUrl: true },
     });
 
     if (expired.length === 0) return;
 
-    // Delete them
+    // Delete DB records
     await prisma.message.deleteMany({
       where: { id: { in: expired.map(m => m.id) } },
     });
 
     console.log(`🗑️  Disappearing messages cleaned up: ${expired.length}`);
 
+    // Delete S3 images (best-effort)
+    const { deleteFromS3 } = require('./utils/s3Upload');
+    for (const m of expired) {
+      if (m.imageUrl) deleteFromS3(m.imageUrl);
+    }
+
     // Group by chatId and emit per-chat messagesDeleted events
-    // so the client knows exactly which messages to remove from UI
     try {
       const { getIO } = require('./utils/socket');
       const io = getIO();

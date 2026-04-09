@@ -507,11 +507,12 @@ function initSocket(server) {
               expiresAt: VIEW_ONCE_SENTINEL,
               senderId: { not: uid },
             },
-            select: { id: true },
+            select: { id: true, imageUrl: true },
           });
 
           if (viewOnceMessages.length > 0) {
             const msgIds = viewOnceMessages.map(m => m.id);
+            const imageUrls = viewOnceMessages.map(m => m.imageUrl).filter(Boolean);
 
             // Schedule deletion after 5 seconds
             setTimeout(async () => {
@@ -519,6 +520,10 @@ function initSocket(server) {
                 await prisma.message.deleteMany({
                   where: { id: { in: msgIds } },
                 });
+
+                // Delete S3 images
+                const { deleteFromS3 } = require('../utils/s3Upload');
+                for (const url of imageUrls) deleteFromS3(url);
 
                 io.to(`chat_${cid}`).emit('messagesDeleted', {
                   chatId: cid,

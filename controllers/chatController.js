@@ -1598,13 +1598,16 @@ exports.markChatAsRead = async (req, res) => {
           expiresAt: VIEW_ONCE_SENTINEL,
           senderId: { not: currentUserId },
         },
-        select: { id: true },
+        select: { id: true, imageUrl: true },
       });
       if (viewOnceMessages.length > 0) {
         const msgIds = viewOnceMessages.map(m => m.id);
+        const imageUrls = viewOnceMessages.map(m => m.imageUrl).filter(Boolean);
         setTimeout(async () => {
           try {
             await prisma.message.deleteMany({ where: { id: { in: msgIds } } });
+            const { deleteFromS3 } = require('../utils/s3Upload');
+            for (const url of imageUrls) deleteFromS3(url);
             const io = require('../utils/socket').getIO();
             io.to(`chat_${cid}`).emit('messagesDeleted', { chatId: cid, messageIds: msgIds });
           } catch (e) {
