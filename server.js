@@ -163,8 +163,28 @@ const { initSocket } = require('./utils/socket');
 initSocket(server);
 
 const PORT = process.env.PORT || 3000;
-server.listen(PORT, '0.0.0.0', () => {
+server.listen(PORT, '0.0.0.0', async () => {
   console.log(`✅ Server running on ${PORT}`);
   console.log(`ℹ️  Health: GET http://localhost:${PORT}/health`);
   console.log(`ℹ️  Story TTL (minutes): ${STORY_TTL_MINUTES} | Cron: ${CRON_EXPR}`);
+
+  // TODO: REMOVE after first deploy — one-time fix for community chat flags
+  try {
+    const bad = await prisma.chat.count({
+      where: {
+        communityId: { not: null },
+        OR: [{ isCommunity: false }, { isGroup: true }],
+      },
+    });
+    if (bad > 0) {
+      const fixed = await prisma.chat.updateMany({
+        where: {
+          communityId: { not: null },
+          OR: [{ isCommunity: false }, { isGroup: true }],
+        },
+        data: { isCommunity: true, isGroup: false },
+      });
+      console.log(`🔧 Fixed ${fixed.count} community chat flags (one-time migration)`);
+    }
+  } catch (_) { }
 });

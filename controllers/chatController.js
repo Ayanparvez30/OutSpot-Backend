@@ -907,8 +907,14 @@ const chats = await prisma.chat.findMany({
       const unreadCount = isMuted ? 0 : (unreadCountsMap.get(chat.id) || 0);
       const latestMessage = chat.messages.length > 0 ? chat.messages[0] : null;
 
+      // Derive a clear chatType: 'personal' | 'group' | 'community'
+      const chatType = chat.isCommunity ? 'community'
+        : chat.isGroup ? 'group'
+        : 'personal';
+
       return {
         ...chat,
+        chatType,
         users: chatUsers,
         unreadCount,
         isMuted,
