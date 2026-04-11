@@ -73,6 +73,7 @@ model User {
   inventory UserInventory[]
   multipliers ActiveMultiplier[]
   pointBundlePurchases PointBundlePurchase[]
+  communityHistory     CommunityHistory[]
   notificationRedDot   Boolean @default(false)
 
   // Admin panel fields
@@ -405,6 +406,7 @@ model Community {
   creatorId   Int
   creator     User              @relation("UserCreatedCommunities", fields: [creatorId], references: [id], onDelete: Cascade)
   members     CommunityMember[]
+  history     CommunityHistory[]
   chats       Chat[]
   media       Media[] // ✅ inverse of Media.community
 }
@@ -421,6 +423,19 @@ model CommunityMember {
   @@unique([userId, communityId])
     @@index([userId, communityId])
 
+}
+
+model CommunityHistory {
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  communityId Int
+  action      String   // 'joined' or 'left'
+  createdAt   DateTime @default(now())
+
+  user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
 }
 
 model ContactSync {

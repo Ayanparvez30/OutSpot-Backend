@@ -84,6 +84,11 @@ exports.createCommunity = async (req, res) => {
       data: { userId: creatorId, communityId: community.id },
     });
 
+    // Track history
+    await prisma.communityHistory.create({
+      data: { userId: creatorId, communityId: community.id, action: 'joined' },
+    });
+
     const chat = await ensureCommunityChat(community.id);
     await prisma.userOnChat.create({
       data: { chatId: chat.id, userId: creatorId },
@@ -317,6 +322,11 @@ exports.joinCommunity = async (req, res) => {
 
     await prisma.communityMember.create({ data: { userId, communityId: id } });
 
+    // Track history
+    await prisma.communityHistory.create({
+      data: { userId, communityId: id, action: 'joined' },
+    });
+
     const chat = await ensureCommunityChat(id);
     const inChat = await prisma.userOnChat.findFirst({ where: { chatId: chat.id, userId } });
     if (!inChat) await prisma.userOnChat.create({ data: { chatId: chat.id, userId } });
@@ -360,6 +370,9 @@ exports.leaveCommunity = async (req, res) => {
       prisma.communityMember.delete({ where: { id: membership.id } }),
       prisma.userOnChat.deleteMany({
         where: { userId, chat: { communityId: id, isCommunity: true } },
+      }),
+      prisma.communityHistory.create({
+        data: { userId, communityId: id, action: 'left' },
       }),
     ]);
 
@@ -449,14 +462,18 @@ exports.getMyCommunities = async (req, res) => {
     const take = Math.min(parseInt(req.query.limit || '50', 10), 100);
     const skip = Math.max(parseInt(req.query.skip || '0', 10), 0);
 
-    const nameFilter = q
-      ? { name: { contains: q, mode: 'insensitive' } }
-      : {};
+    const nameFilter = q ? { name: { contains: q } } : {};
 
-    const where = { creatorId: userId, ...nameFilter };
+    // Both created AND joined communities
+    const where = {
+      ...nameFilter,
+      OR: [
+        { creatorId: userId },
+        { members: { some: { userId } } },
+      ],
+    };
 
-   
-    const [total, createdItems] = await prisma.$transaction([
+    const [total, communities] = await prisma.$transaction([
       prisma.community.count({ where }),
       prisma.community.findMany({
         where,
@@ -465,7 +482,6 @@ exports.getMyCommunities = async (req, res) => {
         skip,
         include: {
           _count: { select: { members: true } },
-
           members: {
             where: { userId },
             select: { joinedAt: true },
@@ -476,20 +492,58 @@ exports.getMyCommunities = async (req, res) => {
       }),
     ]);
 
-    const items = createdItems.map((c) => ({
+    const items = communities.map((c) => ({
       id: c.id,
       name: c.name,
       imageUrl: c.imageUrl,
       membersCount: c._count.members,
       joinedAt: c.members?.[0]?.joinedAt ?? null,
-      type: 'created',
-      isCreator: true,
-      isMember: true, 
+      type: c.creatorId === userId ? 'created' : 'joined',
+      isCreator: c.creatorId === userId,
+      isMember: true,
     }));
 
     return res.json({ items, total, skip, take });
   } catch (err) {
-    console.error('getMyCommunities (created only) error:', err);
+    console.error('getMyCommunities error:', err);
     return res.status(500).json({ error: 'Failed to load your communities' });
+  }
+};
+
+// -------------------- community history (join/leave log) --------------------
+exports.getCommunityHistory = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const take = Math.min(parseInt(req.query.limit || '50', 10), 100);
+    const skip = Math.max(parseInt(req.query.skip || '0', 10), 0);
+
+    const [total, history] = await prisma.$transaction([
+      prisma.communityHistory.count({ where: { userId } }),
+      prisma.communityHistory.findMany({
+        where: { userId },
+        orderBy: { createdAt: 'desc' },
+        take,
+        skip,
+        include: {
+          community: {
+            select: { id: true, name: true, imageUrl: true },
+          },
+        },
+      }),
+    ]);
+
+    const items = history.map((h) => ({
+      id: h.id,
+      action: h.action,
+      communityId: h.community.id,
+      communityName: h.community.name,
+      communityImage: h.community.imageUrl,
+      date: h.createdAt,
+    }));
+
+    return res.json({ items, total, skip, take });
+  } catch (err) {
+    console.error('getCommunityHistory error:', err);
+    return res.status(500).json({ error: 'Failed to load community history' });
   }
 };
