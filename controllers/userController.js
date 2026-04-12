@@ -790,7 +790,28 @@ async function deleteAccount(req, res) {
       ...communityImages.map(c => c.imageUrl),
     ].filter(Boolean);
 
-    // 2) Firebase Auth + Firestore cleanup
+    // 2) Transfer ownership of any communities this user created
+    // If there's another member, they become the new creator. Otherwise the community is deleted.
+    const ownedCommunities = await prisma.community.findMany({
+      where: { creatorId: userId },
+      select: { id: true },
+    });
+    for (const c of ownedCommunities) {
+      const nextOwner = await prisma.communityMember.findFirst({
+        where: { communityId: c.id, userId: { not: userId } },
+        orderBy: { joinedAt: 'asc' },
+        select: { userId: true },
+      });
+      if (nextOwner) {
+        await prisma.community.update({
+          where: { id: c.id },
+          data: { creatorId: nextOwner.userId },
+        });
+      }
+      // else: community has no other members → will cascade-delete with the user below
+    }
+
+    // 3) Firebase Auth + Firestore cleanup
     if (firebaseUid) {
       try { await admin.auth().deleteUser(firebaseUid); }
       catch (e) { if (e.code !== 'auth/user-not-found') throw e; }
@@ -800,7 +821,7 @@ async function deleteAccount(req, res) {
       catch (_) { }
     }
 
-    // 3) Delete user from DB — all cascade relations handle cleanup
+    // 4) Delete user from DB — all cascade relations handle cleanup
     await prisma.user.delete({ where: { id: userId } });
 
     // 4) Clean up S3 files (best-effort, non-blocking)
