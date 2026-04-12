@@ -86,7 +86,7 @@ exports.createCommunity = async (req, res) => {
 
     // Track history
     await prisma.communityHistory.create({
-      data: { userId: creatorId, communityId: community.id, action: 'joined' },
+      data: { userId: creatorId, communityId: community.id, action: 'created' },
     });
 
     const chat = await ensureCommunityChat(community.id);
