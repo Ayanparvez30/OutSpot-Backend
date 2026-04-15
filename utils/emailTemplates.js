@@ -25,8 +25,6 @@ function baseLayout(content) {
           <tr>
             <td align="center" style="padding-bottom:24px;">
               <span style="font-size:28px;font-weight:700;color:${BRAND_COLOR};letter-spacing:1px;">OUTSPOT</span>
-              <br/>
-              <span style="font-size:12px;color:${MUTED_COLOR};letter-spacing:2px;text-transform:uppercase;">Explore &amp; Earn</span>
             </td>
           </tr>
           <!-- Card -->

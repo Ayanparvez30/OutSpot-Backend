@@ -17,7 +17,7 @@ const firstAvatar = (minimeArr) =>
     ? (minimeArr[0]?.avatarUrl || "")
     : "";
 
-const REASON_RANK = { CONTACT: 3, MUTUAL: 2, COMMUNITY: 1 };
+const REASON_RANK = { CONTACT: 5, MUTUAL: 4, COMMUNITY: 3, POPULAR: 2, NEW_USER: 1 };
 
 const getMatchScore = (user, q) => {
   const qLower = q.toLowerCase();
@@ -887,6 +887,99 @@ exports.getRecommendedFriends = async (req, res) => {
         },
       },
     });
+  }
+
+  // Fallback tiers — fill if 1-3 didn't reach 20 (ensures list never empty)
+  const remainingSlots = 20 - suggested.size;
+  if (remainingSlots > 0) {
+    const excludeIds = [
+      userId,
+      ...friendIds,
+      ...blockedIds,
+      ...Array.from(suggested.keys()),
+    ];
+
+    const popularTake = Math.ceil(remainingSlots / 2);
+    const newUserTake = remainingSlots - popularTake;
+
+    const userSelect = {
+      id: true,
+      username: true,
+      totalPoints: true,
+      createdAt: true,
+      minime: {
+        select: { avatarUrl: true, isSaved: true, updatedAt: true },
+        orderBy: [{ isSaved: "desc" }, { updatedAt: "desc" }],
+        take: 1,
+      },
+    };
+
+    const [popularUsers, newUsers] = await Promise.all([
+      prisma.user.findMany({
+        where: { id: { notIn: excludeIds }, isActive: true, isBanned: false },
+        orderBy: [{ totalPoints: "desc" }],
+        take: popularTake,
+        select: userSelect,
+      }),
+      prisma.user.findMany({
+        where: {
+          id: { notIn: excludeIds },
+          isActive: true,
+          isBanned: false,
+          createdAt: { gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) },
+        },
+        orderBy: [{ createdAt: "desc" }],
+        take: newUserTake,
+        select: userSelect,
+      }),
+    ]);
+
+    for (const u of popularUsers) {
+      upsert(u.id, {
+        id: u.id,
+        username: u.username,
+        avatarUrl: firstAvatar(u.minime),
+        totalPoints: u.totalPoints || 0,
+        reason: { type: "POPULAR", label: "Trending" },
+      });
+    }
+
+    for (const u of newUsers) {
+      if (suggested.has(u.id)) continue;
+      upsert(u.id, {
+        id: u.id,
+        username: u.username,
+        avatarUrl: firstAvatar(u.minime),
+        totalPoints: u.totalPoints || 0,
+        reason: { type: "NEW_USER", label: "New to Outspot" },
+      });
+    }
+
+    // Backfill with more POPULAR if < 30d signups didn't fill newUser slots
+    const stillShort = 20 - suggested.size;
+    if (stillShort > 0) {
+      const excludeIds2 = [
+        userId,
+        ...friendIds,
+        ...blockedIds,
+        ...Array.from(suggested.keys()),
+      ];
+      const extraPopular = await prisma.user.findMany({
+        where: { id: { notIn: excludeIds2 }, isActive: true, isBanned: false },
+        orderBy: [{ totalPoints: "desc" }],
+        take: stillShort,
+        select: userSelect,
+      });
+      for (const u of extraPopular) {
+        upsert(u.id, {
+          id: u.id,
+          username: u.username,
+          avatarUrl: firstAvatar(u.minime),
+          totalPoints: u.totalPoints || 0,
+          reason: { type: "POPULAR", label: "Trending" },
+        });
+      }
+    }
   }
 
   // weekly points (batch) — from ledger
