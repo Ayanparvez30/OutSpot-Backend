@@ -2087,3 +2087,55 @@ exports.getDisappearingMessages = async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch disappearing messages setting' });
   }
 };
+
+// POST /api/chats/confirm-delivery
+// Called from Flutter's onBackgroundMessage handler when FCM push arrives on device.
+// Marks all undelivered messages in a chat as delivered for this user.
+exports.confirmDelivery = async (req, res) => {
+  const userId = req.authData.id;
+  const chatId = parseInt(req.body.chatId, 10);
+
+  if (!chatId) return res.status(400).json({ error: 'chatId required' });
+
+  try {
+    const userOnChat = await prisma.userOnChat.findFirst({
+      where: { userId, chatId },
+      select: { id: true, lastDeliveredMessageId: true },
+    });
+    if (!userOnChat) return res.status(403).json({ error: 'Not a member' });
+
+    // Find latest message in this chat (not sent by this user)
+    const latestMsg = await prisma.message.findFirst({
+      where: { chatId, senderId: { not: userId } },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+
+    if (!latestMsg) return res.json({ success: true, delivered: false });
+
+    // Only advance forward
+    if (userOnChat.lastDeliveredMessageId && userOnChat.lastDeliveredMessageId >= latestMsg.id) {
+      return res.json({ success: true, delivered: false, already: true });
+    }
+
+    await prisma.userOnChat.updateMany({
+      where: { userId, chatId },
+      data: { lastDeliveredMessageId: latestMsg.id },
+    });
+
+    // Notify sender via socket so tick updates in real-time
+    try {
+      const io = require('../utils/socket').getIO();
+      io.to(`chat_${chatId}`).emit('messageDelivered', {
+        chatId,
+        userId,
+        lastDeliveredMessageId: latestMsg.id,
+      });
+    } catch (_) {}
+
+    return res.json({ success: true, delivered: true, lastDeliveredMessageId: latestMsg.id });
+  } catch (error) {
+    console.error('confirmDelivery error:', error);
+    return res.status(500).json({ error: 'Failed to confirm delivery' });
+  }
+};

@@ -70,6 +70,7 @@ router.put(
 router.get('/chats/search', checkAuth, chatController.searchChats);
 
 router.post('/chats/messages', checkAuth, chatController.sendTextMessage);
+router.post('/chats/confirm-delivery', checkAuth, chatController.confirmDelivery);
 
 module.exports = router;
 

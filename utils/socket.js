@@ -64,56 +64,57 @@ async function smartPersistLocation(userId, latitude, longitude, threshold = 50)
 }
 
 async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstName, senderLastName, messageContent) {
-  const pushDeliveredUserIds = [];
+  // Push is only a wake-up signal — NOT delivery confirmation.
+  // Delivery is tracked solely by client emitting 'messageDelivered' via socket
+  // when message actually reaches the device (like WhatsApp).
   try {
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
       include: { users: { include: { user: true } } },
     });
 
-    if (!chat) {
-      console.error('Chat not found for push notification');
-      return pushDeliveredUserIds;
-    }
+    if (!chat) return;
 
     for (const userOnChat of chat.users) {
       const user = userOnChat.user;
       if (user.id === senderId) continue;
-
       if (isUserOnline(user.id)) continue;
-
-      // Always track delivery for offline users (message is in DB)
-      pushDeliveredUserIds.push(user.id);
-
-      // Skip FCM push if chat is muted for this user
+      if (!user.fcmToken) continue;
       if (userOnChat.isMuted) continue;
 
-      if (user.fcmToken) {
-        const notificationPayload = {
-          token: user.fcmToken,
-          notification: {
-            title: `${senderFirstName || ''} ${senderLastName || ''}`.trim() || 'New message',
-            body: messageContent || '',
-          },
-          data: {
-            type: 'CHAT_MESSAGE',
-            chatId: String(chatId),
-            senderId: String(senderId),
-            senderName: `${senderFirstName || ''} ${senderLastName || ''}`.trim(),
-          },
-        };
+      const notificationPayload = {
+        token: user.fcmToken,
+        notification: {
+          title: `${senderFirstName || ''} ${senderLastName || ''}`.trim() || 'New message',
+          body: messageContent || '',
+        },
+        data: {
+          type: 'CHAT_MESSAGE',
+          chatId: String(chatId),
+          senderId: String(senderId),
+          senderName: `${senderFirstName || ''} ${senderLastName || ''}`.trim(),
+        },
+      };
 
-        try {
-          await admin.messaging().send(notificationPayload);
-        } catch (error) {
-          console.error(`Failed to send push notification to user ${user.id}:`, error);
+      try {
+        await admin.messaging().send(notificationPayload);
+      } catch (error) {
+        // Token invalid = app uninstalled or token expired → clear it
+        if (error.code === 'messaging/registration-token-not-registered' ||
+            error.code === 'messaging/invalid-registration-token') {
+          await prisma.user.update({
+            where: { id: user.id },
+            data: { fcmToken: null },
+          });
+          console.log(`🧹 Cleared stale FCM token for user ${user.id}`);
+        } else {
+          console.error(`Failed to send push to user ${user.id}:`, error.code || error.message);
         }
       }
     }
   } catch (error) {
     console.error('Error in sendPushNotificationToOfflineUsers:', error);
   }
-  return pushDeliveredUserIds;
 }
 
 function isUserOnline(userId) {
@@ -383,28 +384,17 @@ function initSocket(server) {
           }
         }
 
-        // push notifications + mark delivery for users who receive the push
+        // Send push notification to offline users (wake-up only, no delivery marking)
+        // Delivery is confirmed solely by client emitting 'messageDelivered' via socket
         const sender = await prisma.user.findUnique({ where: { id: senderId } });
         if (sender) {
-          const pushDeliveredUserIds = await sendPushNotificationToOfflineUsers(
+          sendPushNotificationToOfflineUsers(
             chatId,
             senderId,
             sender.firstName,
             sender.lastName,
             content || ''
           );
-          // Mark delivery for offline users who got the push notification
-          for (const uid of pushDeliveredUserIds) {
-            await prisma.userOnChat.updateMany({
-              where: { userId: uid, chatId },
-              data: { lastDeliveredMessageId: message.id },
-            });
-            io.to(`chat_${chatId}`).emit('messageDelivered', {
-              chatId,
-              userId: uid,
-              lastDeliveredMessageId: message.id,
-            });
-          }
         }
       } catch (error) {
         console.error('❌ Error sending message:', error);
