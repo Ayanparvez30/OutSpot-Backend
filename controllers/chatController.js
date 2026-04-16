@@ -382,10 +382,10 @@ exports.getGlobalChatRooms = async (req, res) => {
         latestMessage: latestMsg ? {
           ...latestMsg,
           readBy: r.users
-            .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMsg.id)
+            .filter(u => u.userId !== latestMsg.sender?.id && u.lastSeenMessageId && u.lastSeenMessageId >= latestMsg.id)
             .map(u => u.userId),
           deliveredTo: r.users
-            .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMsg.id)
+            .filter(u => u.userId !== latestMsg.sender?.id && u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMsg.id)
             .map(u => u.userId),
         } : null,
       };
@@ -925,10 +925,10 @@ const chats = await prisma.chat.findMany({
           createdAt: latestMessage.createdAt,
           senderId: latestMessage.senderId,
           readBy: chat.users
-            .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
+            .filter(u => u.userId !== latestMessage.senderId && u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
             .map(u => u.userId),
           deliveredTo: chat.users
-            .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
+            .filter(u => u.userId !== latestMessage.senderId && u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
             .map(u => u.userId),
         } : null,
         totalMessages: chat._count.messages
@@ -992,10 +992,10 @@ exports.getMessages = async (req, res) => {
         avatarUrl: firstAvatar(m.sender.minime),
       },
       readBy: m.chat.users
-        .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
+        .filter(u => u.userId !== m.senderId && u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
         .map(u => u.userId),
       deliveredTo: m.chat.users
-        .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= m.id)
+        .filter(u => u.userId !== m.senderId && u.lastDeliveredMessageId && u.lastDeliveredMessageId >= m.id)
         .map(u => u.userId),
     }));
 
@@ -1058,10 +1058,10 @@ exports.getMessagesPaginated = async (req, res) => {
         avatarUrl: firstAvatar(m.sender.minime),
       },
       readBy: m.chat.users
-        .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
+        .filter(u => u.userId !== m.senderId && u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
         .map(u => u.userId),
       deliveredTo: m.chat.users
-        .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= m.id)
+        .filter(u => u.userId !== m.senderId && u.lastDeliveredMessageId && u.lastDeliveredMessageId >= m.id)
         .map(u => u.userId),
     }));
 
@@ -1765,10 +1765,10 @@ const chats = await prisma.chat.findMany({
           createdAt: latestMessage.createdAt,
           senderId: latestMessage.senderId,
           readBy: chat.users
-            .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
+            .filter(u => u.userId !== latestMessage.senderId && u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
             .map(u => u.userId),
           deliveredTo: chat.users
-            .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
+            .filter(u => u.userId !== latestMessage.senderId && u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
             .map(u => u.userId),
         } : null,
         totalMessages: chat._count.messages
@@ -1864,10 +1864,10 @@ exports.getMyGroupChats = async (req, res) => {
       let deliveredTo = [];
       if (latestMessage) {
         readBy = chat.users
-          .filter(u => u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
+          .filter(u => u.userId !== latestMessage.senderId && u.lastSeenMessageId && u.lastSeenMessageId >= latestMessage.id)
           .map(u => u.userId);
         deliveredTo = chat.users
-          .filter(u => u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
+          .filter(u => u.userId !== latestMessage.senderId && u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
           .map(u => u.userId);
       }
 
