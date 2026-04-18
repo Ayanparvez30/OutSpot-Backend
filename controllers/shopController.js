@@ -650,14 +650,14 @@ exports.purchasePointBundle = async (req, res) => {
 exports.getCatalog = async (req, res) => {
   try {
     const gender = req.query.gender;
-    const allowedSlots = gender === 'feminine' ? FEMININE_SLOTS
-                       : gender === 'masculine' ? MASCULINE_SLOTS
-                       : [...new Set([...MASCULINE_SLOTS, ...FEMININE_SLOTS])];
+    if (gender !== 'masculine' && gender !== 'feminine') {
+      return res.status(400).json({ success: false, message: 'gender query param required (masculine|feminine)' });
+    }
 
     const items = await prisma.shopItem.findMany({
       where: {
         OR: [{ appleProductId: { not: null } }, { googleProductId: { not: null } }],
-        slot: { in: allowedSlots },
+        gender,
       },
       orderBy: [{ isFeatured: 'desc' }, { slot: 'asc' }, { name: 'asc' }],
       select: {
@@ -667,6 +667,7 @@ exports.getCatalog = async (req, res) => {
         brand: true,
         imageUrl: true,
         isFeatured: true,
+        gender: true,
         appleProductId: true,
         googleProductId: true,
       },
@@ -684,23 +685,23 @@ exports.getCatalog = async (req, res) => {
   }
 };
 
-// Free items only (both IAP IDs null) — for outfit selection screen
-// Required ?gender=masculine|feminine — filters slots by gender
+// Free items only (both IAP IDs null) — for onboarding outfit selection
+// Required ?gender=masculine|feminine
 exports.getCatalogFree = async (req, res) => {
   try {
-    const gender = req.query.gender; // 'masculine' | 'feminine'
-    const allowedSlots = gender === 'feminine' ? FEMININE_SLOTS
-                       : gender === 'masculine' ? MASCULINE_SLOTS
-                       : [...new Set([...MASCULINE_SLOTS, ...FEMININE_SLOTS])];
+    const gender = req.query.gender;
+    if (gender !== 'masculine' && gender !== 'feminine') {
+      return res.status(400).json({ success: false, message: 'gender query param required (masculine|feminine)' });
+    }
 
     const items = await prisma.shopItem.findMany({
       where: {
         appleProductId: null,
         googleProductId: null,
-        slot: { in: allowedSlots },
+        gender,
       },
       orderBy: [{ slot: 'asc' }, { createdAt: 'desc' }],
-      select: { id: true, slot: true, imageUrl: true },
+      select: { id: true, slot: true, imageUrl: true, gender: true },
     });
 
     const grouped = items.reduce((acc, item) => {
@@ -716,23 +717,23 @@ exports.getCatalogFree = async (req, res) => {
 };
 
 // Paid items only (at least one IAP ID set) — for the shop/store
-// Optional ?gender=masculine|feminine — filters slots by gender
+// Required ?gender=masculine|feminine
 exports.getCatalogPaid = async (req, res) => {
   try {
     const gender = req.query.gender;
-    const allowedSlots = gender === 'feminine' ? FEMININE_SLOTS
-                       : gender === 'masculine' ? MASCULINE_SLOTS
-                       : [...new Set([...MASCULINE_SLOTS, ...FEMININE_SLOTS])];
+    if (gender !== 'masculine' && gender !== 'feminine') {
+      return res.status(400).json({ success: false, message: 'gender query param required (masculine|feminine)' });
+    }
 
     const items = await prisma.shopItem.findMany({
       where: {
         OR: [{ appleProductId: { not: null } }, { googleProductId: { not: null } }],
-        slot: { in: allowedSlots },
+        gender,
       },
       orderBy: [{ isFeatured: 'desc' }, { slot: 'asc' }, { name: 'asc' }],
       select: {
         id: true, slot: true, name: true, brand: true, imageUrl: true,
-        isFeatured: true, appleProductId: true, googleProductId: true,
+        isFeatured: true, gender: true, appleProductId: true, googleProductId: true,
       },
     });
 

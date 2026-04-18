@@ -2,15 +2,22 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const uploadToS3 = require('../../utils/s3Upload');
 
+const GENDER_SLOTS = {
+  masculine: ['TOP', 'BOTTOM', 'SHOES', 'GLASSES', 'WATCH'],
+  feminine:  ['TOP', 'BOTTOM', 'SHOES', 'GLASSES', 'WATCH', 'PURSE', 'ORNAMENT', 'MAKEUP'],
+};
+
 exports.listItems = async (req, res) => {
   try {
     const page = parseInt(req.query.page) || 1;
     const pageSize = 20;
     const slot = req.query.slot;
+    const gender = req.query.gender;
     const search = (req.query.q || '').trim();
 
     const where = {};
     if (slot) where.slot = slot;
+    if (gender === 'masculine' || gender === 'feminine') where.gender = gender;
     if (search) where.OR = [{ name: { contains: search } }, { brand: { contains: search } }];
 
     const [items, total] = await Promise.all([
@@ -28,13 +35,14 @@ exports.listItems = async (req, res) => {
     const params = new URLSearchParams();
     if (search) params.set('q', search);
     if (slot) params.set('slot', slot);
+    if (where.gender) params.set('gender', where.gender);
     const baseUrl = `/admin/shop${params.toString() ? `?${params}` : ''}`;
 
     res.render('admin/pages/shop/index', {
       layout: 'admin/layouts/main',
       title: 'Shop Items',
       items, total, page, totalPages, baseUrl,
-      search, slotFilter: slot || '',
+      search, slotFilter: slot || '', genderFilter: where.gender || '',
     });
   } catch (error) {
     console.error('List shop items error:', error);
@@ -56,6 +64,15 @@ exports.createItem = async (req, res) => {
     const { slot, name, brand, imageUrl, isFeatured, isFree, gender, appleProductId, googleProductId } = req.body;
     const free = isFree === 'on';
 
+    if (!gender || !GENDER_SLOTS[gender]) {
+      req.flash('error', 'Gender must be masculine or feminine.');
+      return res.redirect('/admin/shop/create');
+    }
+    if (!GENDER_SLOTS[gender].includes(slot)) {
+      req.flash('error', `Slot ${slot} is not allowed for ${gender}.`);
+      return res.redirect('/admin/shop/create');
+    }
+
     let finalImageUrl = imageUrl || '';
     if (req.file) {
       finalImageUrl = await uploadToS3(req.file, 'shop-items');
@@ -72,7 +89,7 @@ exports.createItem = async (req, res) => {
         brand: free ? null : (brand || null),
         imageUrl: finalImageUrl,
         isFeatured: free ? false : (isFeatured === 'on'),
-        gender: slot === 'ACCESSORY' && gender ? gender : null,
+        gender,
         appleProductId: free ? null : (appleProductId || null),
         googleProductId: free ? null : (googleProductId || null),
       },
@@ -115,6 +132,16 @@ exports.updateItem = async (req, res) => {
     const { slot, name, brand, imageUrl, isFeatured, isFree, gender, appleProductId, googleProductId } = req.body;
     const free = isFree === 'on';
 
+    if (!gender || !GENDER_SLOTS[gender]) {
+      req.flash('error', 'Gender must be masculine or feminine.');
+      return res.redirect(`/admin/shop/${id}/edit`);
+    }
+    // allow legacy ACCESSORY rows to keep their slot; all other slots must match gender
+    if (slot !== 'ACCESSORY' && !GENDER_SLOTS[gender].includes(slot)) {
+      req.flash('error', `Slot ${slot} is not allowed for ${gender}.`);
+      return res.redirect(`/admin/shop/${id}/edit`);
+    }
+
     let finalImageUrl;
     if (req.file) {
       finalImageUrl = await uploadToS3(req.file, 'shop-items');
@@ -135,7 +162,7 @@ exports.updateItem = async (req, res) => {
         brand: free ? null : (brand || null),
         imageUrl: finalImageUrl || undefined,
         isFeatured: free ? false : (isFeatured === 'on'),
-        gender: slot === 'ACCESSORY' && gender ? gender : null,
+        gender,
         appleProductId: free ? null : (appleProductId || null),
         googleProductId: free ? null : (googleProductId || null),
       },

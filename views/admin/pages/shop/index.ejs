@@ -1,14 +1,34 @@
 <div class="d-flex justify-content-between align-items-center mb-3">
-  <div class="d-flex gap-2 align-items-center">
-    <span class="text-muted"><%= total %> items</span>
-    <a href="/admin/shop" class="btn btn-sm <%= !slotFilter ? 'btn-primary' : 'btn-outline-secondary' %>">All</a>
-    <% ['TOP','BOTTOM','SHOES','GLASSES','WATCH','MAKEUP','PURSE','ORNAMENT','ACCESSORY'].forEach(s => { %>
-      <a href="/admin/shop?slot=<%= s %>" class="btn btn-sm <%= slotFilter === s ? 'btn-primary' : 'btn-outline-secondary' %>"><%= s %></a>
-    <% }) %>
+  <div class="d-flex flex-column gap-2">
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+      <span class="text-muted"><%= total %> items</span>
+      <% function buildUrl(overrides) {
+        const params = new URLSearchParams();
+        if (search) params.set('q', search);
+        if (slotFilter && (!overrides || overrides.slot === undefined)) params.set('slot', slotFilter);
+        if (genderFilter && (!overrides || overrides.gender === undefined)) params.set('gender', genderFilter);
+        if (overrides) {
+          if (overrides.slot) params.set('slot', overrides.slot);
+          if (overrides.gender) params.set('gender', overrides.gender);
+        }
+        return '/admin/shop' + (params.toString() ? '?' + params.toString() : '');
+      } %>
+      <a href="<%= buildUrl({ gender: '' }) %>" class="btn btn-sm <%= !genderFilter ? 'btn-primary' : 'btn-outline-secondary' %>">All genders</a>
+      <a href="<%= buildUrl({ gender: 'masculine' }) %>" class="btn btn-sm <%= genderFilter === 'masculine' ? 'btn-primary' : 'btn-outline-secondary' %>">Masculine</a>
+      <a href="<%= buildUrl({ gender: 'feminine' }) %>" class="btn btn-sm <%= genderFilter === 'feminine' ? 'btn-primary' : 'btn-outline-secondary' %>">Feminine</a>
+    </div>
+    <div class="d-flex gap-2 align-items-center flex-wrap">
+      <a href="<%= buildUrl({ slot: '' }) %>" class="btn btn-sm <%= !slotFilter ? 'btn-primary' : 'btn-outline-secondary' %>">All slots</a>
+      <% ['TOP','BOTTOM','SHOES','GLASSES','WATCH','MAKEUP','PURSE','ORNAMENT','ACCESSORY'].forEach(s => { %>
+        <a href="<%= buildUrl({ slot: s }) %>" class="btn btn-sm <%= slotFilter === s ? 'btn-primary' : 'btn-outline-secondary' %>"><%= s %></a>
+      <% }) %>
+    </div>
   </div>
   <div class="d-flex gap-2">
     <form method="GET" action="/admin/shop" class="d-flex gap-2">
       <input type="text" name="q" class="form-control form-control-sm" placeholder="Search..." value="<%= search %>" style="width:180px">
+      <% if (slotFilter) { %><input type="hidden" name="slot" value="<%= slotFilter %>"><% } %>
+      <% if (genderFilter) { %><input type="hidden" name="gender" value="<%= genderFilter %>"><% } %>
       <button class="btn btn-sm btn-primary">Search</button>
     </form>
     <a href="/admin/shop/create" class="btn btn-sm btn-success"><i class="bi bi-plus me-1"></i>Create</a>
@@ -19,7 +39,7 @@
   <div class="card-body p-0">
     <table class="table table-hover mb-0">
       <thead>
-        <tr><th>Image</th><th>Name</th><th>Type</th><th>Slot</th><th>Featured</th><th>Owners</th><th>Actions</th></tr>
+        <tr><th>Image</th><th>Name</th><th>Type</th><th>Gender</th><th>Slot</th><th>Featured</th><th>Owners</th><th>Actions</th></tr>
       </thead>
       <tbody>
         <% items.forEach(item => { %>
@@ -34,6 +54,15 @@
                 <span class="badge bg-success">Free</span>
               <% } else { %>
                 <span class="badge bg-warning text-dark">Paid</span>
+              <% } %>
+            </td>
+            <td>
+              <% if (item.gender === 'masculine') { %>
+                <span class="badge bg-primary">Masculine</span>
+              <% } else if (item.gender === 'feminine') { %>
+                <span class="badge bg-danger">Feminine</span>
+              <% } else { %>
+                <span class="badge bg-secondary">—</span>
               <% } %>
             </td>
             <td><%= item.slot %></td>
@@ -53,7 +82,7 @@
           </tr>
         <% }) %>
         <% if (items.length === 0) { %>
-          <tr><td colspan="7" class="text-center text-muted py-3">No items found.</td></tr>
+          <tr><td colspan="8" class="text-center text-muted py-3">No items found.</td></tr>
         <% } %>
       </tbody>
     </table>

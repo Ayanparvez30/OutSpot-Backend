@@ -1,5 +1,6 @@
 <%
   const isFreeItem = item ? (!item.appleProductId && !item.googleProductId) : false;
+  const currentGender = item && item.gender ? item.gender : 'masculine';
 %>
 <div class="row justify-content-center">
   <div class="col-md-6">
@@ -17,24 +18,18 @@
           </div>
 
           <div class="mb-3">
-            <label class="form-label">Slot</label>
-            <select name="slot" class="form-select" required id="slotSelect">
-              <%
-                const slots = [
-                  { value: 'TOP', label: 'TOP (shirt/top)' },
-                  { value: 'BOTTOM', label: 'BOTTOM (pants)' },
-                  { value: 'SHOES', label: 'SHOES' },
-                  { value: 'GLASSES', label: 'GLASSES' },
-                  { value: 'WATCH', label: 'WATCH (masculine)' },
-                  { value: 'MAKEUP', label: 'MAKEUP (feminine - lipstick)' },
-                  { value: 'PURSE', label: 'PURSE (feminine - bag)' },
-                  { value: 'ORNAMENT', label: 'ORNAMENT (feminine - jewelry)' },
-                  { value: 'ACCESSORY', label: 'ACCESSORY (legacy)' },
-                ];
-              %>
-              <% slots.forEach(s => { %>
-                <option value="<%= s.value %>" <%= item && item.slot === s.value ? 'selected' : '' %>><%= s.label %></option>
-              <% }) %>
+            <label class="form-label">Gender</label>
+            <select name="gender" class="form-select" required id="genderSelect">
+              <option value="masculine" <%= currentGender === 'masculine' ? 'selected' : '' %>>Masculine</option>
+              <option value="feminine"  <%= currentGender === 'feminine'  ? 'selected' : '' %>>Feminine</option>
+            </select>
+          </div>
+
+          <div class="mb-3">
+            <label class="form-label">Category (Slot)</label>
+            <select name="slot" class="form-select" required id="slotSelect"
+                    data-current="<%= item ? item.slot : '' %>">
+              <!-- populated by JS based on gender -->
             </select>
           </div>
 
@@ -87,9 +82,54 @@
 </div>
 
 <script>
+  const GENDER_SLOTS = {
+    masculine: [
+      { value: 'TOP',     label: 'Top (shirt)' },
+      { value: 'BOTTOM',  label: 'Bottom (pants)' },
+      { value: 'SHOES',   label: 'Shoes' },
+      { value: 'GLASSES', label: 'Glasses' },
+      { value: 'WATCH',   label: 'Watch' },
+    ],
+    feminine: [
+      { value: 'TOP',      label: 'Top' },
+      { value: 'BOTTOM',   label: 'Bottom' },
+      { value: 'SHOES',    label: 'Shoes' },
+      { value: 'GLASSES',  label: 'Glasses' },
+      { value: 'WATCH',    label: 'Watch' },
+      { value: 'PURSE',    label: 'Bag (purse)' },
+      { value: 'ORNAMENT', label: 'Necklace (ornament)' },
+      { value: 'MAKEUP',   label: 'Lipstick (makeup)' },
+    ],
+  };
+
+  const genderSelect = document.getElementById('genderSelect');
+  const slotSelect = document.getElementById('slotSelect');
   const isFreeCheckbox = document.getElementById('isFree');
   const paidFields = document.getElementById('paidFields');
   const nameField = document.getElementById('nameField');
+
+  function populateSlots(preserveValue) {
+    const gender = genderSelect.value;
+    const opts = GENDER_SLOTS[gender] || [];
+    const previous = preserveValue || slotSelect.value || slotSelect.dataset.current;
+    slotSelect.innerHTML = '';
+    opts.forEach(o => {
+      const el = document.createElement('option');
+      el.value = o.value;
+      el.textContent = o.label;
+      if (previous && previous === o.value) el.selected = true;
+      slotSelect.appendChild(el);
+    });
+    // Preserve legacy slot (e.g. ACCESSORY) when editing existing items
+    const legacy = slotSelect.dataset.current;
+    if (legacy && !opts.some(o => o.value === legacy)) {
+      const el = document.createElement('option');
+      el.value = legacy;
+      el.textContent = legacy + ' (legacy)';
+      el.selected = true;
+      slotSelect.appendChild(el);
+    }
+  }
 
   function toggleFields() {
     if (isFreeCheckbox.checked) {
@@ -101,6 +141,9 @@
     }
   }
 
+  genderSelect.addEventListener('change', () => populateSlots());
   isFreeCheckbox.addEventListener('change', toggleFields);
+
+  populateSlots(slotSelect.dataset.current);
   toggleFields();
 </script>
