@@ -535,6 +535,8 @@ exports.getSubmissions = async (req, res) => {
           select: {
             id: true,
             username: true,
+              firstName: true,
+    lastName: true,
             totalPoints: true,
             minime: {
               where: { isSaved: true },
@@ -659,7 +661,7 @@ exports.getSubmissions = async (req, res) => {
         const uploadedCount = perUserCount.get(uid) || 0;
         return {
           userId: uid,
-          username: u?.username || '',
+      username: `${u?.firstName || ''} ${u?.lastName || ''}`.trim(),
           avatarUrl: firstAvatar(u?.minime),
           uploadedCount,
           completed: uploadedCount >= required,
