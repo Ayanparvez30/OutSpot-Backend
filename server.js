@@ -159,6 +159,16 @@ cron.schedule(MSG_CLEANUP_CRON, async () => {
   }
 });
 
+// ---- Daily DB backup cron (02:00 UTC) ----
+const { backup: backupDb } = require('./scripts/backup-db');
+cron.schedule('0 2 * * *', async () => {
+  try {
+    await backupDb();
+  } catch (e) {
+    console.error('❌ DB backup cron error:', e.message);
+  }
+}, { timezone: 'UTC' });
+
 // ---- Challenge notification scheduler ----
 const { midnightChallengeScheduler } = require('./schedulers/midnightChallengeScheduler');
 midnightChallengeScheduler.start();
