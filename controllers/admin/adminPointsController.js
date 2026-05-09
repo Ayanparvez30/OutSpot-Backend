@@ -48,7 +48,8 @@ exports.createMultiplier = async (req, res) => {
   } catch (error) {
     console.error('Create multiplier error:', error);
     if (error.code === 'P2002') {
-      req.flash('error', `A product ID is already in use: ${(error.meta?.target || []).join(', ')}`);
+      const t = Array.isArray(error.meta?.target) ? error.meta.target.join(', ') : (error.meta?.target || 'unknown');
+      req.flash('error', `A product ID is already in use: ${t}`);
     } else {
       req.flash('error', `Failed to create multiplier: ${error.message}`);
     }
@@ -94,7 +95,8 @@ exports.updateMultiplier = async (req, res) => {
   } catch (error) {
     console.error('Update multiplier error:', error);
     if (error.code === 'P2002') {
-      req.flash('error', `A product ID is already in use: ${(error.meta?.target || []).join(', ')}`);
+      const t = Array.isArray(error.meta?.target) ? error.meta.target.join(', ') : (error.meta?.target || 'unknown');
+      req.flash('error', `A product ID is already in use: ${t}`);
     } else {
       req.flash('error', `Failed to update multiplier: ${error.message}`);
     }
@@ -188,7 +190,8 @@ exports.createBundle = async (req, res) => {
   } catch (error) {
     console.error('Create bundle error:', error);
     if (error.code === 'P2002') {
-      req.flash('error', `A product ID is already in use: ${(error.meta?.target || []).join(', ')}`);
+      const t = Array.isArray(error.meta?.target) ? error.meta.target.join(', ') : (error.meta?.target || 'unknown');
+      req.flash('error', `A product ID is already in use: ${t}`);
     } else {
       req.flash('error', `Failed to create bundle: ${error.message}`);
     }
