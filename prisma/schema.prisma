@@ -526,7 +526,7 @@ model MultiplierProduct {
   productId String   @unique // IAP SKU (Apple/Google)
   factor    Float    // e.g. 1.5, 2, 2.5
   hours     Int      // 1, 12, etc.
-  priceUsd  Decimal  @db.Decimal(10,2)
+  priceUsd  Decimal? @db.Decimal(10,2)  // optional — actual price comes from store
   appleProductId  String?   @unique   // App Store IAP SKU
   googleProductId String?   @unique   // Play Store IAP SKU
   createdAt DateTime @default(now())
@@ -567,7 +567,7 @@ model PointBundleProduct {
   id        Int      @id @default(autoincrement())
   productId String   @unique          // e.g. "bundle_10", "bundle_50"
   points    Int
-  priceUsd  Decimal  @db.Decimal(10,2)
+  priceUsd  Decimal? @db.Decimal(10,2)  // optional — actual price comes from store
   isActive  Boolean  @default(true)
   appleProductId  String?   @unique   // App Store IAP SKU
   googleProductId String?   @unique   // Play Store IAP SKU

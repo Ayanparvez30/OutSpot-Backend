@@ -18,8 +18,8 @@
               <input type="number" name="hours" class="form-control" value="<%= product ? product.hours : 1 %>" required>
             </div>
             <div class="col">
-              <label class="form-label">Price (USD)</label>
-              <input type="number" step="0.01" name="priceUsd" class="form-control" value="<%= product ? product.priceUsd : 0.99 %>" required>
+              <label class="form-label">Price (USD) <small class="text-muted">optional</small></label>
+              <input type="number" step="0.01" name="priceUsd" class="form-control" value="<%= product && product.priceUsd != null ? product.priceUsd : '' %>" placeholder="auto from store">
             </div>
           </div>
           <div class="row mb-3">
