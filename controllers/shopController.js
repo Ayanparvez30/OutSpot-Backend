@@ -324,7 +324,9 @@ exports.getInventory = async (req, res) => {
 
 exports.listMultipliers = async (_req, res) => {
   const rows = await prisma.multiplierProduct.findMany({ orderBy: [{ hours: 'asc' }, { factor: 'asc' }] });
-  res.json({ success: true, data: rows });
+  // Coerce nullable priceUsd -> "0.00" so Flutter parser doesn't break on null
+  const data = rows.map(r => ({ ...r, priceUsd: r.priceUsd != null ? String(r.priceUsd) : '0.00' }));
+  res.json({ success: true, data });
 };
 
 exports.getActiveMultiplier = async (req, res) => {
