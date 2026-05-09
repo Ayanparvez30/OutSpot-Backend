@@ -28,14 +28,19 @@ exports.createMultiplierForm = (req, res) => {
 
 exports.createMultiplier = async (req, res) => {
   try {
-    const { productId, factor, hours, appleProductId, googleProductId } = req.body;
+    const { productId, factor, hours, priceUsd, appleProductId, googleProductId } = req.body;
+    if (!productId || !productId.trim()) {
+      req.flash('error', 'Product ID (IAP SKU) is required.');
+      return res.redirect('/admin/points/multipliers/create');
+    }
     await prisma.multiplierProduct.create({
       data: {
-        productId,
+        productId: productId.trim(),
         factor: parseFloat(factor),
         hours: parseInt(hours),
-        appleProductId: appleProductId || null,
-        googleProductId: googleProductId || null,
+        priceUsd: parseFloat(priceUsd || '0'),
+        appleProductId: appleProductId?.trim() || null,
+        googleProductId: googleProductId?.trim() || null,
       },
     });
     req.flash('success', 'Multiplier product created.');
@@ -43,9 +48,9 @@ exports.createMultiplier = async (req, res) => {
   } catch (error) {
     console.error('Create multiplier error:', error);
     if (error.code === 'P2002') {
-      req.flash('error', 'A product ID is already in use.');
+      req.flash('error', `A product ID is already in use: ${(error.meta?.target || []).join(', ')}`);
     } else {
-      req.flash('error', 'Failed to create multiplier.');
+      req.flash('error', `Failed to create multiplier: ${error.message}`);
     }
     res.redirect('/admin/points/multipliers/create');
   }
@@ -72,15 +77,16 @@ exports.editMultiplierForm = async (req, res) => {
 
 exports.updateMultiplier = async (req, res) => {
   try {
-    const { productId, factor, hours, appleProductId, googleProductId } = req.body;
+    const { productId, factor, hours, priceUsd, appleProductId, googleProductId } = req.body;
     await prisma.multiplierProduct.update({
       where: { id: parseInt(req.params.id) },
       data: {
-        productId,
+        productId: productId?.trim(),
         factor: parseFloat(factor),
         hours: parseInt(hours),
-        appleProductId: appleProductId || null,
-        googleProductId: googleProductId || null,
+        ...(priceUsd !== undefined ? { priceUsd: parseFloat(priceUsd) } : {}),
+        appleProductId: appleProductId?.trim() || null,
+        googleProductId: googleProductId?.trim() || null,
       },
     });
     req.flash('success', 'Multiplier product updated.');
@@ -88,9 +94,9 @@ exports.updateMultiplier = async (req, res) => {
   } catch (error) {
     console.error('Update multiplier error:', error);
     if (error.code === 'P2002') {
-      req.flash('error', 'A product ID is already in use.');
+      req.flash('error', `A product ID is already in use: ${(error.meta?.target || []).join(', ')}`);
     } else {
-      req.flash('error', 'Failed to update multiplier.');
+      req.flash('error', `Failed to update multiplier: ${error.message}`);
     }
     res.redirect(`/admin/points/multipliers/${req.params.id}/edit`);
   }
@@ -162,15 +168,19 @@ exports.createBundleForm = (req, res) => {
 
 exports.createBundle = async (req, res) => {
   try {
-    const { productId, points, isActive, appleProductId, googleProductId } = req.body;
+    const { productId, points, priceUsd, isActive, appleProductId, googleProductId } = req.body;
+    if (!productId || !productId.trim()) {
+      req.flash('error', 'Product ID is required.');
+      return res.redirect('/admin/points/bundles/create');
+    }
     await prisma.pointBundleProduct.create({
       data: {
-        productId,
+        productId: productId.trim(),
         points: parseInt(points),
-        priceUsd: 0,
+        priceUsd: parseFloat(priceUsd || '0'),
         isActive: isActive === 'on',
-        appleProductId: appleProductId || null,
-        googleProductId: googleProductId || null,
+        appleProductId: appleProductId?.trim() || null,
+        googleProductId: googleProductId?.trim() || null,
       },
     });
     req.flash('success', 'Bundle created.');
@@ -178,9 +188,9 @@ exports.createBundle = async (req, res) => {
   } catch (error) {
     console.error('Create bundle error:', error);
     if (error.code === 'P2002') {
-      req.flash('error', 'A product ID is already in use.');
+      req.flash('error', `A product ID is already in use: ${(error.meta?.target || []).join(', ')}`);
     } else {
-      req.flash('error', 'Failed to create bundle.');
+      req.flash('error', `Failed to create bundle: ${error.message}`);
     }
     res.redirect('/admin/points/bundles/create');
   }
@@ -207,15 +217,16 @@ exports.editBundleForm = async (req, res) => {
 
 exports.updateBundle = async (req, res) => {
   try {
-    const { productId, points, isActive, appleProductId, googleProductId } = req.body;
+    const { productId, points, priceUsd, isActive, appleProductId, googleProductId } = req.body;
     await prisma.pointBundleProduct.update({
       where: { id: parseInt(req.params.id) },
       data: {
-        productId,
+        productId: productId?.trim(),
         points: parseInt(points),
+        ...(priceUsd !== undefined ? { priceUsd: parseFloat(priceUsd) } : {}),
         isActive: isActive === 'on',
-        appleProductId: appleProductId || null,
-        googleProductId: googleProductId || null,
+        appleProductId: appleProductId?.trim() || null,
+        googleProductId: googleProductId?.trim() || null,
       },
     });
     req.flash('success', 'Bundle updated.');

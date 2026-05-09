@@ -17,6 +17,10 @@
               <label class="form-label">Hours</label>
               <input type="number" name="hours" class="form-control" value="<%= product ? product.hours : 1 %>" required>
             </div>
+            <div class="col">
+              <label class="form-label">Price (USD)</label>
+              <input type="number" step="0.01" name="priceUsd" class="form-control" value="<%= product ? product.priceUsd : 0.99 %>" required>
+            </div>
           </div>
           <div class="row mb-3">
             <div class="col">
