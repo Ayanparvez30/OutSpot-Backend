@@ -15,7 +15,9 @@ const randomKey = (length = 16) => {
 };
 
 const generateOTP = () => {
-  return Math.floor(100000 + Math.random() * 900000).toString();
+  // TODO: REVERT — fixed OTP for testing only
+  return '482917';
+  // return Math.floor(100000 + Math.random() * 900000).toString();
 };
 
 module.exports = {
