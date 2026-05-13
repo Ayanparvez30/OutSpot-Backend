@@ -113,33 +113,43 @@ inviter = await prisma.user.findFirst({
 }
 
     // ---------- 1) CLEANUP UNVERIFIED ROWS ----------
-    // Block if VERIFIED user matches any identifier. Delete UNVERIFIED rows
-    // that match username/email/phone so signup never gets stuck.
-    const conflictIds = new Set();
+    // Block on any VERIFIED match. For UNVERIFIED matches, only delete if
+    // all identifiers resolve to the SAME row (the user's prior attempt).
+    // Different unverified rows from different users -> reject, don't touch.
+    const matchedUnverified = new Map(); // id -> matchedBy field
 
     if (username) {
       const u = await prisma.user.findUnique({ where: { username } });
       if (u) {
         if (u.isVerified) return response.response_with_code(res, 409, 'Username is already in use by another user');
-        conflictIds.add(u.id);
+        matchedUnverified.set(u.id, 'username');
       }
     }
     if (email) {
       const u = await prisma.user.findUnique({ where: { email } });
       if (u) {
         if (u.isVerified) return response.response_with_code(res, 409, 'Email is already in use by another user');
-        conflictIds.add(u.id);
+        matchedUnverified.set(u.id, (matchedUnverified.get(u.id) || '') + ',email');
       }
     }
     if (fullPhone) {
       const u = await prisma.user.findUnique({ where: { phone: fullPhone } });
       if (u) {
         if (u.isVerified) return response.response_with_code(res, 409, 'Phone number is already in use by another user');
-        conflictIds.add(u.id);
+        matchedUnverified.set(u.id, (matchedUnverified.get(u.id) || '') + ',phone');
       }
     }
-    if (conflictIds.size) {
-      await prisma.user.deleteMany({ where: { id: { in: [...conflictIds] } } });
+
+    if (matchedUnverified.size > 1) {
+      // Identifiers point to different unverified users — refuse to delete strangers
+      return response.response_with_code(
+        res, 409,
+        'Some of these identifiers are linked to other pending signups. Please use different ones.'
+      );
+    }
+    if (matchedUnverified.size === 1) {
+      const [staleId] = matchedUnverified.keys();
+      await prisma.user.delete({ where: { id: staleId } });
     }
 
     // ---------- 4) FRESH CREATE ----------
