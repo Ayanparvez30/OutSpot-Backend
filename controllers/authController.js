@@ -149,7 +149,16 @@ inviter = await prisma.user.findFirst({
     }
     if (matchedUnverified.size === 1) {
       const [staleId] = matchedUnverified.keys();
-      await prisma.user.delete({ where: { id: staleId } });
+      try {
+        await prisma.user.delete({ where: { id: staleId } });
+      } catch (delErr) {
+        // FK constraint or any unexpected error — don't proceed
+        console.error('Failed to delete stale unverified user:', staleId, delErr.code, delErr.message);
+        return response.response_with_code(
+          res, 409,
+          'A previous signup attempt is still linked. Please try again in a few minutes or contact support.'
+        );
+      }
     }
 
     // ---------- 4) FRESH CREATE ----------
