@@ -112,185 +112,34 @@ inviter = await prisma.user.findFirst({
   }
 }
 
-    const usernameUser = await prisma.user.findUnique({ where: { username } });
-    if (usernameUser) {
-      if (usernameUser.isVerified) {
-        return response.response_with_code(res, 409, 'Username is already in use by another user');
+    // ---------- 1) CLEANUP UNVERIFIED ROWS ----------
+    // Block if VERIFIED user matches any identifier. Delete UNVERIFIED rows
+    // that match username/email/phone so signup never gets stuck.
+    const conflictIds = new Set();
+
+    if (username) {
+      const u = await prisma.user.findUnique({ where: { username } });
+      if (u) {
+        if (u.isVerified) return response.response_with_code(res, 409, 'Username is already in use by another user');
+        conflictIds.add(u.id);
       }
-      // cross-field conflicts
-      if (email && usernameUser.email && usernameUser.email !== email) {
-        return response.response_with_code(res, 409, 'Email belongs to a different user.');
-      }
-      if (fullPhone && usernameUser.phone && usernameUser.phone !== fullPhone) {
-        return response.response_with_code(res, 409, 'Phone number belongs to a different user.');
-      }
-
-      // A) email available → ALWAYS resend OTP (idempotent)
-      if (email || usernameUser.email) {
-        const toEmail = email || usernameUser.email;
-        const otp = generateOTP();
-        const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-// ✅ prevent assigning a phone that belongs to another user
-const nextPhone = fullPhone || usernameUser.phone || null;
-if (nextPhone) {
-  const phoneOwner = await prisma.user.findUnique({ where: { phone: nextPhone } });
-  if (phoneOwner && phoneOwner.id !== usernameUser.id) {
-    return response.response_with_code(res, 409, 'Phone number is already in use by another user');
-  }
-}
-        await prisma.user.update({
-          where: { username },
-          data: {
-            email: toEmail,
-            phone: fullPhone || usernameUser.phone || null,
-            password: hashedPassword, // keep latest (or drop to keep previous)
-            isVerified: false,
-            otp,
-            otpExpiresAt,
-            authorization: null,
-            ...(inviter && inviter.id !== usernameUser.id && !usernameUser.referredById
-              ? { referredById: inviter.id }
-              : {}),
-          }
-        });
-try {
-  await sendEmail(toEmail, 'Your OTP for Verification', emailTemplates.verificationOtp(otp));
-} catch (mailErr) {
-  console.error('sendEmail failed (resend OTP):', mailErr);
-  return response.response_with_code(
-    res,
-    500,
-    'OTP email could not be sent. Please check SMTP config and try again.'
-  );
-}
-
-
-        return response.true_status(res, {
-          isNewUser: false,
-          user: {
-            id: usernameUser.id,
-            username: usernameUser.username,
-            email: toEmail,
-            phone: fullPhone || usernameUser.phone || null,
-            isVerified: false
-          }
-        }, 'Verification pending. We sent a new OTP to your email.');
-      }
-
-   // B) no email, but phone present → DO NOT write to DB. return pendingSignupToken
-if (fullPhone) {
-  // ✅ prevent assigning a phone that belongs to another user
-  const phoneOwner = await prisma.user.findUnique({ where: { phone: fullPhone } });
-  if (phoneOwner && phoneOwner.id !== usernameUser.id) {
-    return response.response_with_code(res, 409, 'Phone number is already in use by another user');
-  }
-
-  const pendingSignupToken = signPendingSignup({
-    phone: fullPhone,
-    username: usernameUser.username,          // existing username
-    password: hashedPassword,                 // hashed
-    referredById: usernameUser.referredById || (inviter ? inviter.id : null),
-  });
-
-  return response.true_status(res, {
-    isNewUser: false,
-    pendingSignupToken,
-    user: {
-      id: usernameUser.id,                    // already exists in DB
-      username: usernameUser.username,
-      phone: fullPhone,
-      email: usernameUser.email || null,
-      isVerified: false
     }
-  }, 'Phone signup pending. Verify with Firebase in /verify-otp.');
-}
-
-
-      // C) neither email nor phone supplied
-      return response.response_with_code(
-        res, 409,
-        'Signup already started for this username. Provide email to get a new OTP or verify phone with Firebase.'
-      );
-    }
-
-    // ---------- 2) EMAIL EXISTS? ----------
     if (email) {
-      const emailUser = await prisma.user.findUnique({ where: { email } });
-      if (emailUser) {
-        if (emailUser.isVerified) {
-          return response.response_with_code(res, 409, 'Email is already in use by another user');
-        }
-        if (username && emailUser.username && emailUser.username !== username) {
-          return response.response_with_code(res, 409, 'Email belongs to a different user.');
-        }
-
-        // ALWAYS resend OTP
-        const otp = generateOTP();
-        const otpExpiresAt = new Date(Date.now() + 10 * 60 * 1000);
-        await prisma.user.update({
-          where: { email },
-          data: {
-            username: username || emailUser.username,
-            password: hashedPassword,
-            otp,
-            otpExpiresAt,
-            isVerified: false,
-            authorization: null,
-            ...(inviter && inviter.id !== emailUser.id && !emailUser.referredById
-              ? { referredById: inviter.id }
-              : {}),
-          }
-        });
-
-   try {
-  await sendEmail(email, 'Your OTP for Email Verification', emailTemplates.verificationOtp(otp));
-} catch (mailErr) {
-  console.error('sendEmail failed (email exists resend):', mailErr);
-  return response.response_with_code(
-    res,
-    500,
-    'OTP email could not be sent. Please check SMTP config and try again.'
-  );
-}
-
-
-        return response.true_status(res, {
-          isNewUser: false,
-          user: { id: emailUser.id, email, isVerified: false }
-        }, 'Email exists but not verified. OTP resent.');
+      const u = await prisma.user.findUnique({ where: { email } });
+      if (u) {
+        if (u.isVerified) return response.response_with_code(res, 409, 'Email is already in use by another user');
+        conflictIds.add(u.id);
       }
     }
-
-    // ---------- 3) PHONE EXISTS? ----------
     if (fullPhone) {
-      const phoneUser = await prisma.user.findUnique({ where: { phone: fullPhone } });
-      if (phoneUser) {
-        if (phoneUser.isVerified) {
-          return response.response_with_code(res, 409, 'Phone number is already in use by another user');
-        }
-        if (username && phoneUser.username && phoneUser.username !== username) {
-          return response.response_with_code(res, 409, 'Phone number belongs to a different user.');
-        }
-// Phone exists but not verified → DO NOT update DB. return pendingSignupToken
-const pendingSignupToken = signPendingSignup({
-  phone: fullPhone,
-  username: phoneUser.username,
-  password: hashedPassword,
-  referredById: phoneUser.referredById || (inviter ? inviter.id : null),
-});
-
-return response.true_status(res, {
-  isNewUser: false,
-  pendingSignupToken,
-  user: {
-    id: phoneUser.id,
-    phone: phoneUser.phone,
-    username: phoneUser.username,
-    email: phoneUser.email || null,
-    isVerified: false
-  }
-}, 'Phone signup pending. Verify with Firebase in /verify-otp.');
+      const u = await prisma.user.findUnique({ where: { phone: fullPhone } });
+      if (u) {
+        if (u.isVerified) return response.response_with_code(res, 409, 'Phone number is already in use by another user');
+        conflictIds.add(u.id);
       }
+    }
+    if (conflictIds.size) {
+      await prisma.user.deleteMany({ where: { id: { in: [...conflictIds] } } });
     }
 
     // ---------- 4) FRESH CREATE ----------
@@ -389,32 +238,11 @@ if (inviter && inviter.id !== u.id) {
     }
 // 4.b) Phone signup pending (NO DB SAVE until verified)
 if (fullPhone && !email) {
-  // uniqueness checks (same behavior)
-  const usernameUser = await prisma.user.findUnique({ where: { username } });
-  if (usernameUser) {
-    if (usernameUser.isVerified) {
-      return response.response_with_code(res, 409, 'Username is already in use by another user');
-    }
-    return response.response_with_code(
-      res,
-      409,
-      'Username already pending. Verify phone to finish signup.'
-    );
-  }
-
-  const phoneUser = await prisma.user.findUnique({ where: { phone: fullPhone } });
-  if (phoneUser?.isVerified) {
-    return response.response_with_code(res, 409, 'Phone number is already in use by another user');
-  }
-  if (phoneUser && phoneUser.username && phoneUser.username !== username) {
-    return response.response_with_code(res, 409, 'Phone number belongs to a different user.');
-  }
-
-  // Create pending token (store minimal, safe fields)
+  // Cleanup already removed unverified rows. Only verified rows remain.
   const pendingSignupToken = signPendingSignup({
     phone: fullPhone,
     username,
-    password: hashedPassword,              // already hashed
+    password: hashedPassword,
     referredById: inviter ? inviter.id : null
   });
 
