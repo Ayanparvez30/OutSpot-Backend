@@ -472,48 +472,80 @@ exports.getPlaceDetail = async (req, res) => {
   }
 };
 
-// GET /api/explore/search?q=starbucks&lat=X&lng=Y&radius=5000
+// GET /api/explore/search?q=starbucks&lat=X&lng=Y&radius=5000&limit=10
+// Backend-driven search (Flutter calls this instead of Google Autocomplete directly).
+// Returns rich place details + points breakdown applying user's active multiplier.
 exports.searchPlaces = async (req, res) => {
   try {
+    const userId = req.authData.id;
     const query = (req.query.q || '').trim();
     if (!query || query.length < 2) {
-      return res.status(400).json({ error: 'Search query required (min 2 characters)' });
+      return res.status(400).json({ success: false, error: 'Search query required (min 2 characters)' });
     }
 
     const lat = parseFloat(req.query.lat);
     const lng = parseFloat(req.query.lng);
     const radius = req.query.radius ? parseInt(req.query.radius, 10) : 5000;
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      return res.status(400).json({ error: 'lat/lng required' });
+      return res.status(400).json({ success: false, error: 'lat/lng required' });
     }
+    const limit = Math.min(parseInt(req.query.limit || '10', 10), 20);
 
+    // 1) Google text search
     const results = await textSearch({ query, lat, lng, radius });
+    const top = (results || []).slice(0, limit);
 
-    const places = results.map(p => {
-      const pLat = p.geometry?.location?.lat ?? 0;
-      const pLng = p.geometry?.location?.lng ?? 0;
-      return {
-        placeId: p.place_id,
-        name: p.name,
-        address: p.formatted_address || p.vicinity || null,
-        photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 400),
-        points: 5,
-        distanceMiles: pLat && pLng
-          ? metersToMiles(haversineMeters({ lat, lng }, { lat: pLat, lng: pLng }))
-          : null,
-        lat: Number(pLat),
-        lng: Number(pLng),
-        rating: p.rating || null,
-        userRatingsTotal: p.user_ratings_total || null,
-      };
+    // 2) Active multiplier for this user (factor=1 if none)
+    const now = new Date();
+    const activeMult = await prisma.activeMultiplier.findFirst({
+      where: { userId, endsAt: { gt: now } },
+      orderBy: { endsAt: 'desc' },
     });
+    const multiplier = activeMult?.factor || 1;
 
-    places.sort((a, b) => (a.distanceMiles || 99999) - (b.distanceMiles || 99999));
+    // 3) Enrich each result with details + classification + points
+    const places = await Promise.all(top.map(async (p) => {
+      let d = null;
+      try { d = await details(p.place_id); } catch (_) {}
+      const photos = buildPhotosArray(d, 8);
+      const image = photos[0] || photoUrlByRef(p.photos?.[0]?.photo_reference, 1200) || '';
+      const matched = primaryCategory(d || p);
+      const basePoints = matched ? matched.points : 0;
+      const finalPoints = Math.round(basePoints * multiplier);
+      const openNow = d?.opening_hours?.open_now ?? p.opening_hours?.open_now;
+      const placeLat = p.geometry?.location?.lat ?? d?.geometry?.location?.lat ?? 0;
+      const placeLng = p.geometry?.location?.lng ?? d?.geometry?.location?.lng ?? 0;
 
-    res.json({ query, places });
+      return {
+        id: p.place_id,
+        name: d?.name || p.name || '',
+        address: d?.formatted_address || p.formatted_address || p.vicinity || '',
+        lat: Number(placeLat),
+        lng: Number(placeLng),
+        image,
+        photos,
+        category: matched ? matched.title : null,
+        priceRange: priceLevelToRange(d?.price_level) || '',
+        status: openNowToStatus(openNow),
+        rating: Number(d?.rating ?? p.rating ?? 0),
+        totalReviews: Number(d?.user_ratings_total ?? p.user_ratings_total ?? 0),
+        phone: d?.formatted_phone_number || d?.international_phone_number || '',
+        website: d?.website || '',
+        openingHours: d?.opening_hours?.weekday_text || [],
+        basePoints,
+        multiplier,
+        points: finalPoints,
+      };
+    }));
+
+    res.json({
+      success: true,
+      message: 'Places fetched successfully',
+      places,
+    });
   } catch (e) {
     console.error('Search places error', e);
-    res.status(500).json({ error: 'Search failed' });
+    res.status(500).json({ success: false, error: 'Search failed' });
   }
 };
 
@@ -578,11 +610,11 @@ exports.getRestaurantsByCategory = async (req, res) => {
       return da - db;
     });
 
+    // Same set as /explore/category — no slice cap by default.
+    // ?limit= still honored if a caller explicitly wants fewer (low-bandwidth clients).
     const places = candidates;
 
-    // ✅ IMPORTANT: এখানে details call বেশি হবে
-    // limit এর উপর details call নিয়ন্ত্রণ করবেন
-    const limit = req.query.limit ? parseInt(req.query.limit, 10) : 10;
+    const limit = req.query.limit ? parseInt(req.query.limit, 10) : places.length;
 
     const top = places.slice(0, limit);
 
