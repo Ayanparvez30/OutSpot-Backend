@@ -663,6 +663,7 @@ exports.getRestaurantsByCategory = async (req, res) => {
           photos,
 
           category: cat.title,
+          points: cat.points,
           priceLevel: d?.price_level ?? null,
           priceRange: priceLevelToRange(d?.price_level) || '',
           openNow: openNow ?? null,
