@@ -8,6 +8,7 @@ const fieldsForDetails = [
   'formatted_address',
   'vicinity',
   'geometry/location',
+  'geometry/viewport',
   'types',
   'photos',
 

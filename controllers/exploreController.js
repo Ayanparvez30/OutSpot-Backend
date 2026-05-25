@@ -246,12 +246,14 @@ exports.recordVisit = async (req, res) => {
     let placeLat = null;
     let placeLng = null;
     let placeNameFromGoogle = null;
+    let viewport = null;  // { northeast: {lat,lng}, southwest: {lat,lng} } or null
 
     try {
       const d = await details(placeId);
       placeLat = d?.geometry?.location?.lat ?? null;
       placeLng = d?.geometry?.location?.lng ?? null;
       placeNameFromGoogle = d?.name ?? null;
+      viewport = d?.geometry?.viewport || null;
     } catch (e) {
       return res.status(502).json({
         awarded: false,
@@ -271,12 +273,19 @@ exports.recordVisit = async (req, res) => {
       { lat: placeLat, lng: placeLng }
     );
 
-    if (distToPlace > MAX_PLACE_DISTANCE_METERS) {
+    // Accept if user is inside Google's viewport bounding box (handles large
+    // venues — stadiums, malls, parks — where distance to center is misleading).
+    const insideViewport = viewport &&
+      lat >= viewport.southwest.lat && lat <= viewport.northeast.lat &&
+      lng >= viewport.southwest.lng && lng <= viewport.northeast.lng;
+
+    if (!insideViewport && distToPlace > MAX_PLACE_DISTANCE_METERS) {
       const dist = Math.round(distToPlace);
+      console.log(`[recordVisit] too-far user=${userId} placeId=${placeId} dist=${dist}m max=${MAX_PLACE_DISTANCE_METERS}m viewport=${viewport ? 'present-but-outside' : 'absent'}`);
       return res.status(403).json({
         awarded: false,
         reason: 'too-far-from-place',
-        message: `You need to be within ${MAX_PLACE_DISTANCE_METERS}m of this place to check in. You are currently ${dist}m away. Please get closer and try again.`,
+        message: `You need to be within ${MAX_PLACE_DISTANCE_METERS}m of this place to check in. You are currently ${dist}m away.`,
         placeId,
         distanceMiles: metersToMiles(dist),
         maxMiles: metersToMiles(MAX_PLACE_DISTANCE_METERS),
