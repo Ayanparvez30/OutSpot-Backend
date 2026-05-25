@@ -40,6 +40,28 @@ const fieldsForDetails = [
   'wheelchair_accessible_entrance',
 ].join(',');
 
+// Nearbysearch with rankby=distance — returns ALL places of given type within ~3km,
+// sorted by distance ascending. No prominence filtering, so chains (Starbucks etc.) included naturally.
+async function nearbyByDistance({ lat, lng, type }) {
+  const key = process.env.GOOGLE_MAPS_API_KEY;
+  if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
+  if (!type) throw new Error('nearbyByDistance: type required');
+
+  const params = new URLSearchParams({
+    key,
+    location: `${lat},${lng}`,
+    rankby: 'distance',
+    type,
+  });
+  const url = `${GMAPS_BASE}/nearbysearch/json?${params.toString()}`;
+  const r = await fetch(url);
+  const j = await r.json();
+  if (j.status !== 'OK' && j.status !== 'ZERO_RESULTS') {
+    throw new Error(`Places Nearby (rankby=distance) error: ${j.status} ${j.error_message || ''}`);
+  }
+  return j.results || [];
+}
+
 function photoUrlByRef(photoRef, maxwidth = 800) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!photoRef || !key) return null;
@@ -169,6 +191,7 @@ module.exports = {
   nearby,
   nearbyPage,
   nearbyAll,
+  nearbyByDistance,
   details,
   textSearch,
   photoUrlByRef,

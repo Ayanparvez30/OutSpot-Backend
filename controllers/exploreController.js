@@ -1,6 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { nearbyPage, nearbyAll, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
+const { nearbyPage, nearbyAll, nearbyByDistance, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
 const { addPointsWithMultiplier } = require('../utils/points');
 
 const toRad = d => (d * Math.PI) / 180;
@@ -20,13 +20,60 @@ const NEARBY_WITH_PLACEID   = Number(process.env.EXPLORE_DUP_RADIUS_WITH_PLACEID
 const NEARBY_WITHOUT_PLACEID= Number(process.env.EXPLORE_DUP_RADIUS_METERS       || 15);  // fallback when no placeId
 const DUP_WINDOW_HOURS      = Number(process.env.EXPLORE_DUP_WINDOW_HOURS        || 12);  // 12h window
 
+// Priority order matters. Walk top-down — first match wins.
+// A Starbucks tagged ['cafe','food','restaurant'] hits Cafes first → primary=Cafes,
+// excluded from Restaurants results. A pub tagged ['bar','restaurant'] → primary=Bars.
 const CATEGORIES = [
-  { key: 'rooftop-bars',       title: 'Rooftop Bars',       icon: '🍹', keyword: 'rooftop bar',              type: null,          points: 4, imageKey: 'rooftop-bars' },
-  { key: 'outdoor-activities', title: 'Outdoor Activities', icon: '🌳', keyword: 'outdoor activities parks', type: null,          points: 3, imageKey: 'outdoor-activities' },
-  { key: 'venue-events',       title: 'Venue Events',       icon: '🎤', keyword: 'concert venue live music', type: null,          points: 4, imageKey: 'venue-events' },
-  { key: 'popular-restaurants',title: 'Popular Restaurants',icon: '🍽️', keyword: 'popular restaurant',       type: 'restaurant',  points: 4, imageKey: 'popular-restaurants' },
-  { key: 'cafes',              title: 'Cafes',              icon: '☕', keyword: 'cafe coffee shop',          type: 'cafe',        points: 3, imageKey: 'cafes' },
+  { key: 'venue-events', title: 'Venue Events', icon: '🎤', points: 4, imageKey: 'venue-events',
+    googleTypes: ['stadium', 'movie_theater', 'amusement_park', 'bowling_alley', 'casino', 'concert_hall', 'performing_arts_theater'] },
+  { key: 'outdoors',     title: 'Outdoors',     icon: '🌳', points: 3, imageKey: 'outdoors',
+    googleTypes: ['park', 'campground', 'tourist_attraction', 'natural_feature', 'hiking_area'] },
+  { key: 'bars',         title: 'Bars',         icon: '🍻', points: 4, imageKey: 'bars',
+    googleTypes: ['bar', 'night_club', 'pub'] },
+  { key: 'cafes',        title: 'Cafes',        icon: '☕', points: 3, imageKey: 'cafes',
+    googleTypes: ['cafe'] },
+  { key: 'restaurants',  title: 'Restaurants',  icon: '🍽️', points: 4, imageKey: 'restaurants',
+    googleTypes: ['restaurant', 'meal_takeaway', 'meal_delivery'] },
 ];
+
+// Name patterns suggesting "this is coffee-focused" — used to disambiguate when
+// Google tags a place as BOTH cafe and restaurant (McDonald's vs Starbucks both
+// get those tags identically; only the name distinguishes them).
+const COFFEE_NAME_RE = /coffee|caf[eé]|espresso|barista|roastery|donut|doughnut|pastry|brewhouse|\bbrew\b|bakery/i;
+
+function findCat(key) { return CATEGORIES.find(c => c.key === key); }
+
+// Determine the PRIMARY category for a place. Walks priority list. For the
+// cafe/restaurant overlap (McDonald's, Dunkin, Starbucks all tagged both), uses
+// name + bakery tag as tiebreaker so:
+//   Starbucks ("...Coffee Company") -> Cafes
+//   McDonald's ("McDonald's")        -> Restaurants
+//   Dunkin (cafe + bakery)           -> Cafes
+function primaryCategory(place) {
+  const types = Array.isArray(place?.types) ? place.types : [];
+  const tset = new Set(types);
+  const name = String(place?.name || '');
+
+  // 1) Venue Events
+  if (findCat('venue-events').googleTypes.some(t => tset.has(t))) return findCat('venue-events');
+  // 2) Outdoors
+  if (findCat('outdoors').googleTypes.some(t => tset.has(t))) return findCat('outdoors');
+  // 3) Bars
+  if (findCat('bars').googleTypes.some(t => tset.has(t))) return findCat('bars');
+
+  // 4) Cafe vs Restaurant disambiguation
+  const isCafe = tset.has('cafe');
+  const isRest = tset.has('restaurant') || tset.has('meal_takeaway') || tset.has('meal_delivery');
+  const isBakery = tset.has('bakery');
+  const nameLooksCoffee = COFFEE_NAME_RE.test(name);
+
+  if (isCafe && (isBakery || nameLooksCoffee)) return findCat('cafes');
+  if (isCafe && isRest) return findCat('restaurants'); // fast-food w/ McCafe-style cafe tag
+  if (isCafe) return findCat('cafes');
+  if (isRest) return findCat('restaurants');
+
+  return null;
+}
 
 
 const RESTAURANT_CATEGORIES = [
@@ -78,7 +125,7 @@ function mapPlace(p, lat, lng, points) {
   };
 }
 
-// GET /api/explore/category/:key/places?lat&lng&radius=2500
+// GET /api/explore/category/:key/places?lat&lng&radius=5000
 exports.getCategoryPlaces = async (req, res) => {
   try {
     const { key } = req.params;
@@ -92,14 +139,33 @@ exports.getCategoryPlaces = async (req, res) => {
       return res.status(400).json({ error: 'lat/lng required' });
     }
 
-    const page = await nearbyPage({ lat, lng, radius, keyword: cat.keyword, type: cat.type });
-    const items = (page.results || []).map(p => mapPlace(p, lat, lng, cat.points));
-    items.sort((a, b) => (a.distanceMiles || 0) - (b.distanceMiles || 0) || (b.rating || 0) - (a.rating || 0));
+    // Fetch by each Google type for this category, then classify each result via
+    // the priority hierarchy. A place stays only if its PRIMARY bucket matches the
+    // requested category (Starbucks tagged [cafe,restaurant,food] → primary=Cafes
+    // → excluded from /restaurants results).
+    const all = await Promise.all(
+      cat.googleTypes.map(t => nearbyByDistance({ lat, lng, type: t }).catch(() => []))
+    );
+
+    const radiusMiles = metersToMiles(radius);
+    const seen = new Set();
+    const items = [];
+    for (const list of all) {
+      for (const p of list) {
+        if (!p?.place_id || seen.has(p.place_id)) continue;
+        seen.add(p.place_id);
+        const primary = primaryCategory(p);
+        if (!primary || primary.key !== cat.key) continue; // wrong bucket
+        const m = { ...mapPlace(p, lat, lng, cat.points), category: cat.title };
+        if (m.distanceMiles != null && m.distanceMiles <= radiusMiles) items.push(m);
+      }
+    }
+    items.sort((a, b) => (a.distanceMiles ?? 99999) - (b.distanceMiles ?? 99999));
 
     res.json({
       category: { key: cat.key, title: cat.title, points: cat.points },
       places: items,
-      nextPageToken: page.next_page_token || null,
+      nextPageToken: null,
     });
   } catch (e) {
     console.error('Category places error', e);
