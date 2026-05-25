@@ -1,6 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
-const { nearbyPage, nearbyAll, nearbyByDistance, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
+const { nearbyPage, nearbyAll, nearbyByDistance, nearbyByDistanceAll, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
 const { addPointsWithMultiplier } = require('../utils/points');
 
 const toRad = d => (d * Math.PI) / 180;
@@ -143,8 +143,10 @@ exports.getCategoryPlaces = async (req, res) => {
     // the priority hierarchy. A place stays only if its PRIMARY bucket matches the
     // requested category (Starbucks tagged [cafe,restaurant,food] → primary=Cafes
     // → excluded from /restaurants results).
+    // Multi-page per type — up to 60 results per type. Multi-type categories
+    // (Outdoors, Venue Events) get even more. Single response, no pagination needed.
     const all = await Promise.all(
-      cat.googleTypes.map(t => nearbyByDistance({ lat, lng, type: t }).catch(() => []))
+      cat.googleTypes.map(t => nearbyByDistanceAll({ lat, lng, type: t, maxPages: 3 }).catch(() => []))
     );
 
     const radiusMiles = metersToMiles(radius);

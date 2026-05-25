@@ -42,24 +42,51 @@ const fieldsForDetails = [
 
 // Nearbysearch with rankby=distance — returns ALL places of given type within ~3km,
 // sorted by distance ascending. No prominence filtering, so chains (Starbucks etc.) included naturally.
-async function nearbyByDistance({ lat, lng, type }) {
+async function nearbyByDistance({ lat, lng, type, pagetoken }) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
-  if (!type) throw new Error('nearbyByDistance: type required');
 
-  const params = new URLSearchParams({
-    key,
-    location: `${lat},${lng}`,
-    rankby: 'distance',
-    type,
-  });
+  const params = new URLSearchParams({ key });
+  if (pagetoken) {
+    params.set('pagetoken', pagetoken);
+  } else {
+    if (!type) throw new Error('nearbyByDistance: type required');
+    params.set('location', `${lat},${lng}`);
+    params.set('rankby', 'distance');
+    params.set('type', type);
+  }
   const url = `${GMAPS_BASE}/nearbysearch/json?${params.toString()}`;
   const r = await fetch(url);
   const j = await r.json();
-  if (j.status !== 'OK' && j.status !== 'ZERO_RESULTS') {
+  if (j.status !== 'OK' && j.status !== 'ZERO_RESULTS' && j.status !== 'INVALID_REQUEST') {
     throw new Error(`Places Nearby (rankby=distance) error: ${j.status} ${j.error_message || ''}`);
   }
-  return j.results || [];
+  return j;
+}
+
+// Multi-page version — up to maxPages × 20 results per type. Tokens need ~2s delay.
+async function nearbyByDistanceAll({ lat, lng, type, maxPages = 3 }) {
+  const out = [];
+  let page = await nearbyByDistance({ lat, lng, type });
+  out.push(...(page.results || []));
+  let token = page.next_page_token;
+  let pages = 1;
+  while (token && pages < maxPages) {
+    await new Promise(r => setTimeout(r, 2000));
+    let tries = 0;
+    let next;
+    while (tries < 4) {
+      next = await nearbyByDistance({ pagetoken: token });
+      if (next.status !== 'INVALID_REQUEST') break;
+      tries++;
+      await new Promise(r => setTimeout(r, 1500));
+    }
+    if (!next || next.status === 'INVALID_REQUEST') break;
+    out.push(...(next.results || []));
+    token = next.next_page_token;
+    pages++;
+  }
+  return out;
 }
 
 function photoUrlByRef(photoRef, maxwidth = 800) {
@@ -192,6 +219,7 @@ module.exports = {
   nearbyPage,
   nearbyAll,
   nearbyByDistance,
+  nearbyByDistanceAll,
   details,
   textSearch,
   photoUrlByRef,
