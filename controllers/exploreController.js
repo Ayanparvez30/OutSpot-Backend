@@ -103,7 +103,16 @@ function openNowToStatus(openNow) {
   return 'Unknown';
 }
 
-const getCategory = key => CATEGORIES.find(c => c.key === key);
+// Backward-compatible key aliases — old Flutter clients still send legacy keys.
+const CATEGORY_ALIASES = {
+  'rooftop-bars':        'bars',
+  'outdoor-activities':  'outdoors',
+  'popular-restaurants': 'restaurants',
+};
+const getCategory = key => {
+  const resolved = CATEGORY_ALIASES[key] || key;
+  return CATEGORIES.find(c => c.key === resolved);
+};
 
 // helper: map raw Google place to response object
 function mapPlace(p, lat, lng, points) {
