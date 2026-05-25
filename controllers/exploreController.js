@@ -104,10 +104,15 @@ function openNowToStatus(openNow) {
 }
 
 // Backward-compatible key aliases — old Flutter clients still send legacy keys.
+// All map into the 5 canonical buckets so /explore/category and
+// /restaurants/category return the same underlying places.
 const CATEGORY_ALIASES = {
   'rooftop-bars':        'bars',
   'outdoor-activities':  'outdoors',
   'popular-restaurants': 'restaurants',
+  'trending':            'restaurants',
+  'popular':             'restaurants',
+  'events':              'venue-events',
 };
 const getCategory = key => {
   const resolved = CATEGORY_ALIASES[key] || key;
@@ -532,25 +537,48 @@ exports.getRestaurantCategories = async (req, res) => {
 exports.getRestaurantsByCategory = async (req, res) => {
   try {
     const { key } = req.params;
-    const cat = getRestaurantCategory(key);
+    // Use the canonical 5-bucket category (with aliases for legacy keys
+    // trending/popular/events/rooftop-bars/outdoor-activities/popular-restaurants).
+    const cat = getCategory(key);
     if (!cat) return res.status(404).json({ success: false, error: 'Unknown category' });
 
     const lat = parseFloat(req.query.lat);
     const lng = parseFloat(req.query.lng);
-    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 2500;
+    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 5000;
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ success: false, error: 'lat/lng required' });
     }
 
-    const places = await nearbyAll({
-      lat,
-      lng,
-      radius,
-      keyword: cat.keyword,
-      type: cat.type,
-      maxPages: 3,
+    // Same pipeline as /explore/category: nearbyByDistanceAll per type,
+    // priority-classify, dedup, sort by distance — guarantees /map view returns
+    // the same places as /explore for any category.
+    const all = await Promise.all(
+      cat.googleTypes.map(t => nearbyByDistanceAll({ lat, lng, type: t, maxPages: 3 }).catch(() => []))
+    );
+    const radiusMiles = metersToMiles(radius);
+    const seen = new Set();
+    const candidates = [];
+    for (const list of all) {
+      for (const p of list) {
+        if (!p?.place_id || seen.has(p.place_id)) continue;
+        seen.add(p.place_id);
+        const primary = primaryCategory(p);
+        if (!primary || primary.key !== cat.key) continue;
+        const distMiles = p.geometry?.location
+          ? metersToMiles(haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng }))
+          : null;
+        if (distMiles == null || distMiles > radiusMiles) continue;
+        candidates.push(p);
+      }
+    }
+    candidates.sort((a, b) => {
+      const da = haversineMeters({ lat, lng }, a.geometry.location);
+      const db = haversineMeters({ lat, lng }, b.geometry.location);
+      return da - db;
     });
+
+    const places = candidates;
 
     // ✅ IMPORTANT: এখানে details call বেশি হবে
     // limit এর উপর details call নিয়ন্ত্রণ করবেন
