@@ -3,6 +3,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { addPointsWithMultiplier } = require('../utils/points');
+const { validatePlaceDistance, metersToMiles } = require('../utils/placeDistance');
 const { OpenAI } = require('openai');
 const path = require('path');
 const multer = require('multer');
@@ -609,6 +610,40 @@ async function submitForPoints(req, res) {
               lastSubmitAt: lp.createdAt,
             });
           }
+        }
+      }
+    }
+
+    // Server-side place validation — runs BEFORE S3 upload so rejected
+    // submissions don't burn bandwidth/storage. Skipped only if no placeId
+    // (legacy free-form submissions).
+    if (placeId) {
+      const MAX_PLACE_DISTANCE_METERS = Number(process.env.MAX_PLACE_DISTANCE_METERS || 40);
+      const uLat = parseFloat(latitude);
+      const uLng = parseFloat(longitude);
+      if (Number.isFinite(uLat) && Number.isFinite(uLng)) {
+        const check = await validatePlaceDistance({
+          placeId: String(placeId).trim(),
+          userLat: uLat,
+          userLng: uLng,
+          maxMeters: MAX_PLACE_DISTANCE_METERS,
+        });
+        if (!check.ok) {
+          if (check.reason === 'too-far-from-place') {
+            console.log(`[submitForPoints] too-far user=${userId} placeId=${placeId} dist=${check.distMeters}m max=${MAX_PLACE_DISTANCE_METERS}m viewport=${check.viewportPresent ? 'present-but-outside' : 'absent'}`);
+            return res.status(403).json({
+              awarded: false,
+              reason: 'too-far-from-place',
+              message: check.message,
+              placeId,
+              distanceMiles: metersToMiles(check.distMeters),
+              maxMiles: metersToMiles(MAX_PLACE_DISTANCE_METERS),
+            });
+          }
+          if (check.reason === 'google-fetch-failed') {
+            return res.status(502).json({ awarded: false, reason: check.reason, message: check.message });
+          }
+          return res.status(400).json({ awarded: false, reason: check.reason, message: check.message });
         }
       }
     }
