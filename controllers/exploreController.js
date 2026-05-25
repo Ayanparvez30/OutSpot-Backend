@@ -20,6 +20,57 @@ const NEARBY_WITH_PLACEID   = Number(process.env.EXPLORE_DUP_RADIUS_WITH_PLACEID
 const NEARBY_WITHOUT_PLACEID= Number(process.env.EXPLORE_DUP_RADIUS_METERS       || 15);  // fallback when no placeId
 const DUP_WINDOW_HOURS      = Number(process.env.EXPLORE_DUP_WINDOW_HOURS        || 12);  // 12h window
 
+// In-memory shared cache so /explore/category and /restaurants/category return
+// the SAME candidate set for the same (location, category) within TTL. Without
+// this, Google Places API jitter produces e.g. 60 vs 52 results on two
+// back-to-back calls because next_page_token retries don't always saturate.
+const CATEGORY_CACHE = new Map(); // key -> { ts, candidates }
+const CATEGORY_CACHE_TTL_MS = 5 * 60 * 1000;
+function categoryCacheKey(catKey, lat, lng) {
+  // Round to 3 decimals (~110m) so close GPS reads hit the same cache slot.
+  // Radius is NOT part of the key — Flutter's /restaurants call omits radius
+  // while /explore passes it explicitly; we cache the unfiltered candidate
+  // pool and apply each caller's radius at retrieval time.
+  return `${catKey}|${lat.toFixed(3)}|${lng.toFixed(3)}`;
+}
+async function getCategoryCandidates({ cat, lat, lng, radius }) {
+  const key = categoryCacheKey(cat.key, lat, lng);
+  let pool;
+  const hit = CATEGORY_CACHE.get(key);
+  if (hit && Date.now() - hit.ts < CATEGORY_CACHE_TTL_MS) {
+    pool = hit.candidates;
+  } else {
+    const all = await Promise.all(
+      cat.googleTypes.map(t => nearbyByDistanceAll({ lat, lng, type: t, maxPages: 3 }).catch(() => []))
+    );
+    const seen = new Set();
+    pool = [];
+    for (const list of all) {
+      for (const p of list) {
+        if (!p?.place_id || seen.has(p.place_id)) continue;
+        seen.add(p.place_id);
+        const primary = primaryCategory(p);
+        if (!primary || primary.key !== cat.key) continue;
+        if (!p.geometry?.location) continue;
+        pool.push(p);
+      }
+    }
+    pool.sort((a, b) => {
+      const da = haversineMeters({ lat, lng }, a.geometry.location);
+      const db = haversineMeters({ lat, lng }, b.geometry.location);
+      return da - db;
+    });
+    CATEGORY_CACHE.set(key, { ts: Date.now(), candidates: pool });
+  }
+
+  // Apply per-request radius filter.
+  const radiusMiles = metersToMiles(radius);
+  return pool.filter(p => {
+    const distMiles = metersToMiles(haversineMeters({ lat, lng }, p.geometry.location));
+    return distMiles <= radiusMiles;
+  });
+}
+
 // Priority order matters. Walk top-down — first match wins.
 // A Starbucks tagged ['cafe','food','restaurant'] hits Cafes first → primary=Cafes,
 // excluded from Restaurants results. A pub tagged ['bar','restaurant'] → primary=Bars.
@@ -153,30 +204,10 @@ exports.getCategoryPlaces = async (req, res) => {
       return res.status(400).json({ error: 'lat/lng required' });
     }
 
-    // Fetch by each Google type for this category, then classify each result via
-    // the priority hierarchy. A place stays only if its PRIMARY bucket matches the
-    // requested category (Starbucks tagged [cafe,restaurant,food] → primary=Cafes
-    // → excluded from /restaurants results).
-    // Multi-page per type — up to 60 results per type. Multi-type categories
-    // (Outdoors, Venue Events) get even more. Single response, no pagination needed.
-    const all = await Promise.all(
-      cat.googleTypes.map(t => nearbyByDistanceAll({ lat, lng, type: t, maxPages: 3 }).catch(() => []))
-    );
-
-    const radiusMiles = metersToMiles(radius);
-    const seen = new Set();
-    const items = [];
-    for (const list of all) {
-      for (const p of list) {
-        if (!p?.place_id || seen.has(p.place_id)) continue;
-        seen.add(p.place_id);
-        const primary = primaryCategory(p);
-        if (!primary || primary.key !== cat.key) continue; // wrong bucket
-        const m = { ...mapPlace(p, lat, lng, cat.points), category: cat.title };
-        if (m.distanceMiles != null && m.distanceMiles <= radiusMiles) items.push(m);
-      }
-    }
-    items.sort((a, b) => (a.distanceMiles ?? 99999) - (b.distanceMiles ?? 99999));
+    // Shared candidate fetch — same set served to /restaurants/category for
+    // the same (lat,lng,radius,cat) within cache TTL.
+    const candidates = await getCategoryCandidates({ cat, lat, lng, radius });
+    const items = candidates.map(p => ({ ...mapPlace(p, lat, lng, cat.points), category: cat.title }));
 
     res.json({
       category: { key: cat.key, title: cat.title, points: cat.points },
@@ -582,35 +613,10 @@ exports.getRestaurantsByCategory = async (req, res) => {
       return res.status(400).json({ success: false, error: 'lat/lng required' });
     }
 
-    // Same pipeline as /explore/category: nearbyByDistanceAll per type,
-    // priority-classify, dedup, sort by distance — guarantees /map view returns
-    // the same places as /explore for any category.
-    const all = await Promise.all(
-      cat.googleTypes.map(t => nearbyByDistanceAll({ lat, lng, type: t, maxPages: 3 }).catch(() => []))
-    );
-    const radiusMiles = metersToMiles(radius);
-    const seen = new Set();
-    const candidates = [];
-    for (const list of all) {
-      for (const p of list) {
-        if (!p?.place_id || seen.has(p.place_id)) continue;
-        seen.add(p.place_id);
-        const primary = primaryCategory(p);
-        if (!primary || primary.key !== cat.key) continue;
-        const distMiles = p.geometry?.location
-          ? metersToMiles(haversineMeters({ lat, lng }, { lat: p.geometry.location.lat, lng: p.geometry.location.lng }))
-          : null;
-        if (distMiles == null || distMiles > radiusMiles) continue;
-        candidates.push(p);
-      }
-    }
-    candidates.sort((a, b) => {
-      const da = haversineMeters({ lat, lng }, a.geometry.location);
-      const db = haversineMeters({ lat, lng }, b.geometry.location);
-      return da - db;
-    });
+    // Shared cached candidate pool — identical set served to /explore/category
+    // for the same (lat,lng,cat). Radius filter applied per request.
+    const candidates = await getCategoryCandidates({ cat, lat, lng, radius });
 
-    // Same set as /explore/category — no slice cap by default.
     // ?limit= still honored if a caller explicitly wants fewer (low-bandwidth clients).
     const places = candidates;
 
