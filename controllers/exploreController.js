@@ -184,11 +184,18 @@ function primaryCategory(place) {
   // 3) Bars — lenient types[] match
   if (findCat('bars').googleTypes.some(t => tset.has(t))) return findCat('bars');
 
-  // 4) Cafe vs Restaurant — when both tags present, primary_type wins (Google's call)
-  const isCafe = tset.has('cafe');
-  const isRest = tset.has('restaurant') || tset.has('meal_takeaway') || tset.has('meal_delivery');
+  // 4) Cafe vs Restaurant — use bucket config so any cafe-family type
+  // (cafe, coffee_shop, etc) and any restaurant-family type (restaurant,
+  // meal_takeaway, meal_delivery, fast_food_restaurant, fine_dining_restaurant,
+  // brunch_restaurant, breakfast_restaurant) is matched consistently.
+  const cafesTypes = findCat('cafes').googleTypes;
+  const restTypes = findCat('restaurants').googleTypes;
+  const isCafe = cafesTypes.some(t => tset.has(t));
+  const isRest = restTypes.some(t => tset.has(t));
   if (isCafe && isRest) {
-    return primaryType === 'cafe' ? findCat('cafes') : findCat('restaurants');
+    // Both family tags present (Starbucks: coffee_shop + restaurant; McDonald's:
+    // fast_food_restaurant + cafe sometimes). Google's primary_type decides.
+    return cafesTypes.includes(primaryType) ? findCat('cafes') : findCat('restaurants');
   }
   if (isCafe) return findCat('cafes');
   if (isRest) return findCat('restaurants');
@@ -664,9 +671,25 @@ exports.searchPlaces = async (req, res) => {
     }
     const limit = Math.min(parseInt(req.query.limit || '10', 10), 20);
 
+    // Optional category filter — when user searches inside a category screen
+    // (e.g. Bars), Flutter passes ?category=bars so results are scoped to that
+    // bucket. Without the param, search returns places from all categories.
+    const categoryKey = req.query.category ? String(req.query.category).trim() : null;
+    const categoryFilter = categoryKey ? getCategory(categoryKey) : null;
+
     // 1) Google text search
-    const results = await textSearch({ query, lat, lng, radius });
-    const top = (results || []).slice(0, limit);
+    const rawResults = await textSearch({ query, lat, lng, radius });
+
+    // 2) Category filter via primaryCategory — drop hits that don't belong
+    // to the user's current bucket. Uses the SAME classifier as the explore
+    // category list, so search results align with what user sees in the grid.
+    const results = categoryFilter
+      ? (rawResults || []).filter(p => {
+          const m = primaryCategory(p);
+          return m && m.key === categoryFilter.key;
+        })
+      : (rawResults || []);
+    const top = results.slice(0, limit);
 
     // 2) Active multiplier for this user (factor=1 if none)
     const now = new Date();
@@ -676,45 +699,58 @@ exports.searchPlaces = async (req, res) => {
     });
     const multiplier = activeMult?.factor || 1;
 
-    // 3) Enrich each result with details + classification + points
-    const places = await Promise.all(top.map(async (p) => {
+    // 3) Enrich each result with details + classification + points.
+    // Field shape mirrors /restaurants/category/:key/places so Flutter can
+    // render search results with the SAME widget it uses for the category grid.
+    const restaurants = await Promise.all(top.map(async (p) => {
       let d = null;
       try { d = await details(p.place_id); } catch (_) {}
       const photos = buildPhotosArray(d, 8);
       const image = photos[0] || photoUrlByRef(p.photos?.[0]?.photo_reference, 4800) || '';
       const matched = primaryCategory(d || p);
-      const basePoints = matched ? matched.points : 0;
+      // When a category is enforced, use ITS points (filter guarantees match).
+      // Otherwise use the place's own bucket points (global search).
+      const bucket = categoryFilter || matched;
+      const basePoints = bucket ? bucket.points : 0;
       const finalPoints = Math.round(basePoints * multiplier);
       const openNow = d?.opening_hours?.open_now ?? p.opening_hours?.open_now;
       const placeLat = p.geometry?.location?.lat ?? d?.geometry?.location?.lat ?? 0;
       const placeLng = p.geometry?.location?.lng ?? d?.geometry?.location?.lng ?? 0;
 
       return {
-        id: p.place_id,
+        id: String(p.place_id),
         name: d?.name || p.name || '',
         address: d?.formatted_address || p.formatted_address || p.vicinity || '',
+        phone: d?.formatted_phone_number || d?.international_phone_number || '',
+        website: d?.website || '',
+        googleMapsUrl: d?.url || '',
         lat: Number(placeLat),
         lng: Number(placeLng),
         image,
         photos,
-        category: matched ? matched.title : null,
+        category: bucket ? bucket.title : (matched?.title || null),
+        points: finalPoints,
+        priceLevel: d?.price_level ?? null,
         priceRange: priceLevelToRange(d?.price_level) || '',
+        openNow: openNow ?? null,
         status: openNowToStatus(openNow),
+        openingHours: d?.opening_hours?.weekday_text || [],
         rating: Number(d?.rating ?? p.rating ?? 0),
         totalReviews: Number(d?.user_ratings_total ?? p.user_ratings_total ?? 0),
-        phone: d?.formatted_phone_number || d?.international_phone_number || '',
-        website: d?.website || '',
-        openingHours: d?.opening_hours?.weekday_text || [],
+        businessStatus: d?.business_status || null,
+        types: d?.types || p.types || [],
         basePoints,
         multiplier,
-        points: finalPoints,
       };
     }));
 
     res.json({
       success: true,
-      message: 'Places fetched successfully',
-      places,
+      category: categoryFilter ? { key: categoryFilter.key, title: categoryFilter.title } : null,
+      radius,
+      totalCount: restaurants.length,
+      hasMore: false,
+      restaurants,
     });
   } catch (e) {
     console.error('Search places error', e);
