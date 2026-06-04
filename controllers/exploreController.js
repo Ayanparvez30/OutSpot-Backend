@@ -750,7 +750,10 @@ exports.searchPlaces = async (req, res) => {
       radius,
       totalCount: restaurants.length,
       hasMore: false,
+      // Return BOTH keys — legacy Flutter parses `places`, newer parses `restaurants`.
+      // Same array, no duplication on the wire (same reference).
       restaurants,
+      places: restaurants,
     });
   } catch (e) {
     console.error('Search places error', e);
