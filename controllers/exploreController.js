@@ -244,11 +244,12 @@ const getCategory = key => {
 function mapPlace(p, lat, lng, points) {
   const placeLat = p.geometry?.location?.lat ?? 0;
   const placeLng = p.geometry?.location?.lng ?? 0;
+  const openNow = p.opening_hours?.open_now ?? null;
   return {
     placeId: p.place_id,
     name: p.name,
     address: p.vicinity || p.formatted_address || null,
-    photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 400),
+    photoUrl: photoUrlByRef(p.photos?.[0]?.photo_reference, 4800),
     points,
     distanceMiles: placeLat && placeLng
       ? metersToMiles(haversineMeters({ lat, lng }, { lat: placeLat, lng: placeLng }))
@@ -257,6 +258,13 @@ function mapPlace(p, lat, lng, points) {
     lng: Number(placeLng),
     rating: p.rating || null,
     userRatingsTotal: p.user_ratings_total || null,
+    openNow,
+    status: openNowToStatus(openNow),
+    openingHours: p.opening_hours?.weekday_text || [],
+    priceLevel: p.price_level ?? null,
+    priceRange: priceLevelToRange(p.price_level) || '',
+    businessStatus: p.business_status || null,
+    types: p.types || [],
   };
 }
 
