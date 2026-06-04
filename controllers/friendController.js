@@ -320,11 +320,62 @@ exports.acceptFriendRequest = async (req, res) => {
         }
       );
     } catch (e) {
-  
+
       console.error("notifyUser failed:", e);
     }
 
-    return res.json({ message: "Friend request accepted." });
+    // Eager-create the 1:1 private chat so it shows in both users' chat lists
+    // immediately (no message sent). Mirrors createPrivateChat dedupe + socket.
+    let chatId = null;
+    try {
+      const existingChats = await prisma.chat.findMany({
+        where: {
+          isGroup: false,
+          isCommunity: false,
+          OR: [
+            { name: null },
+            { NOT: { name: { startsWith: "Global Chat" } } },
+          ],
+          AND: [
+            { users: { some: { userId: receiverId } } },
+            { users: { some: { userId: requesterId } } },
+          ],
+        },
+        include: { _count: { select: { users: true } } },
+      });
+
+      const exactMatch = existingChats.find(c => c._count.users === 2);
+
+      if (exactMatch) {
+        chatId = exactMatch.id;
+      } else {
+        const chat = await prisma.chat.create({
+          data: {
+            isGroup: false,
+            users: {
+              create: [
+                { userId: receiverId, role: 'ADMIN' },
+                { userId: requesterId, role: 'ADMIN' },
+              ],
+            },
+          },
+        });
+        chatId = chat.id;
+
+        // Notify both participants via socket so they auto-add the new chat
+        try {
+          const io = require('../utils/socket').getIO();
+          io.to(`user:${receiverId}`).emit('newChat', { chatId });
+          io.to(`user:${requesterId}`).emit('newChat', { chatId });
+        } catch (socketErr) {
+          console.error("acceptFriendRequest socket notify error:", socketErr);
+        }
+      }
+    } catch (chatErr) {
+      console.error("acceptFriendRequest chat create error:", chatErr);
+    }
+
+    return res.json({ message: "Friend request accepted.", chatId });
   } catch (err) {
     console.error("acceptFriendRequest error:", err);
     return res.status(500).json({ error: "Failed to accept friend request" });
