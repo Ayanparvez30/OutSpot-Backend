@@ -1469,6 +1469,7 @@ exports.getUserProfile = async (req, res) => {
         lastName: true,
         bio: true,
         totalPoints: true,
+        isProfilePrivate: true,
         minime: {
           select: { avatarUrl: true },
           where: { isSaved: true },
@@ -1481,170 +1482,186 @@ exports.getUserProfile = async (req, res) => {
       return res.status(404).json({ error: "User not found" });
     }
 
-    // Fetch profile-visible stories
-    const stories = await prisma.story.findMany({
-      where: {
-        userId: targetUserId,
-        visibility: "profile",
-        NOT: { status: "VAULT" },
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-            minime: {
-              select: { avatarUrl: true },
-              where: { isSaved: true },
-              orderBy: { updatedAt: "desc" },
+    // Privacy gate: a private account hides its rich data from non-friends.
+    // Self and accepted friends always bypass (isPrivate = false for them).
+    const isPrivate = !isSelf && !isFriend && !!user.isProfilePrivate;
+
+    // Weekly points are identity-level (always shown, like total points).
+    const thisWeekPoints = await getWeeklyPointsForUser(targetUserId);
+
+    // Rich sections — only fetched when the viewer is allowed to see them.
+    let stories = [];
+    let friends = [];
+    let friendCount = 0;
+    let spotsVisited = 0;
+    let communities = [];
+    let recentVisitedSpots = [];
+    let mostRecent = null;
+
+    if (!isPrivate) {
+      // Fetch profile-visible stories
+      stories = await prisma.story.findMany({
+        where: {
+          userId: targetUserId,
+          visibility: "profile",
+          NOT: { status: "VAULT" },
+        },
+        include: {
+          user: {
+            select: {
+              id: true,
+              username: true,
+              minime: {
+                select: { avatarUrl: true },
+                where: { isSaved: true },
+                orderBy: { updatedAt: "desc" },
+              },
             },
           },
         },
-      },
-      orderBy: { createdAt: "desc" },
-    });
+        orderBy: { createdAt: "desc" },
+      });
 
-    // Fetch accepted friendships of target user
-    const friendships = await prisma.friendship.findMany({
-      where: {
-        status: "ACCEPTED",
-        OR: [{ requesterId: targetUserId }, { receiverId: targetUserId }],
-      },
-      include: {
-        requester: {
-          select: {
-            id: true,
-            username: true,
-            firstName: true,
-            lastName: true,
-            totalPoints: true,
-            minime: {
-              select: { avatarUrl: true },
-              where: { isSaved: true },
-              orderBy: { updatedAt: "desc" },
+      // Fetch accepted friendships of target user
+      const friendships = await prisma.friendship.findMany({
+        where: {
+          status: "ACCEPTED",
+          OR: [{ requesterId: targetUserId }, { receiverId: targetUserId }],
+        },
+        include: {
+          requester: {
+            select: {
+              id: true,
+              username: true,
+              firstName: true,
+              lastName: true,
+              totalPoints: true,
+              minime: {
+                select: { avatarUrl: true },
+                where: { isSaved: true },
+                orderBy: { updatedAt: "desc" },
+              },
+            },
+          },
+          receiver: {
+            select: {
+              id: true,
+              username: true,
+              firstName: true,
+              lastName: true,
+              totalPoints: true,
+              minime: {
+                select: { avatarUrl: true },
+                where: { isSaved: true },
+                orderBy: { updatedAt: "desc" },
+              },
             },
           },
         },
-        receiver: {
-          select: {
-            id: true,
-            username: true,
-            firstName: true,
-            lastName: true,
-            totalPoints: true,
-            minime: {
-              select: { avatarUrl: true },
-              where: { isSaved: true },
-              orderBy: { updatedAt: "desc" },
-            },
-          },
+      });
+
+      // Extract friend list
+      const friendsRaw = friendships.map((fr) =>
+        fr.requesterId === targetUserId ? fr.receiver : fr.requester
+      );
+      const friendIds = friendsRaw.map((f) => f.id);
+      friendCount = friendIds.length;
+
+      // Fetch weekly points efficiently (like getFriendList)
+      const weekPointsMap = await getWeeklyPointsForUsers(friendIds);
+      friends = friendsRaw.map((friend) => ({
+        id: friend.id,
+        username: friend.username,
+        firstName: friend.firstName,
+        lastName: friend.lastName,
+        avatarUrl: friend.minime?.[0]?.avatarUrl || null,
+        totalPoints: friend.totalPoints || 0,
+        thisWeekPoints: weekPointsMap.get(friend.id) || 0,
+        profileUrl: `/api/users/${friend.id}/profile`,
+      }));
+
+      // Fetch communities
+      const communityRows = await prisma.communityMember.findMany({
+        where: { userId: targetUserId },
+        include: { community: true },
+      });
+      communities = communityRows.map((c) => c.community);
+
+      // Spots visited count + recent visited spots
+      const upUniquePlaces = await prisma.locationPoint.findMany({
+        where: { userId: targetUserId, placeId: { not: null } },
+        distinct: ["placeId"],
+        select: { placeId: true },
+      });
+      const upUniqueCoords = await prisma.locationPoint.findMany({
+        where: { userId: targetUserId, placeId: null, latitude: { not: null }, longitude: { not: null } },
+        distinct: ["latitude", "longitude"],
+        select: { latitude: true, longitude: true },
+      });
+      spotsVisited = upUniquePlaces.length + upUniqueCoords.length;
+
+      recentVisitedSpots = await prisma.locationPoint.findMany({
+        where: { userId: targetUserId },
+        orderBy: { createdAt: "desc" },
+        take: 10,
+        select: {
+          id: true,
+          placeId: true,
+          placeName: true,
+          latitude: true,
+          longitude: true,
+          mediaUrl: true,
+          points: true,
+          createdAt: true,
         },
-      },
-    });
+      });
 
-    // Extract friend list
-    const friendsRaw = friendships.map((fr) =>
-      fr.requesterId === targetUserId ? fr.receiver : fr.requester
-    );
-    const friendIds = friendsRaw.map((f) => f.id);
-    const friendCount = friendIds.length;
+      // Fetch most recent joined or created community
+      const mostRecentCommunity = await prisma.communityMember.findFirst({
+        where: { userId: targetUserId },
+        include: { community: true },
+        orderBy: { joinedAt: "desc" },
+      });
 
-    // Fetch weekly points efficiently (like getFriendList)
-    const weekPointsMap = await getWeeklyPointsForUsers(friendIds);
-    const friends = friendsRaw.map((friend) => ({
-      id: friend.id,
-      username: friend.username,
-      firstName: friend.firstName,
-      lastName: friend.lastName,
-      avatarUrl: friend.minime?.[0]?.avatarUrl || null,
-      totalPoints: friend.totalPoints || 0,
-      thisWeekPoints: weekPointsMap.get(friend.id) || 0,
-      profileUrl: `/api/users/${friend.id}/profile`,
-    }));
-
-    // Fetch communities
-    const communities = await prisma.communityMember.findMany({
-      where: { userId: targetUserId },
-      include: { community: true },
-    });
-
-    // Spots visited count + recent visited spots
-    const upUniquePlaces = await prisma.locationPoint.findMany({
-      where: { userId: targetUserId, placeId: { not: null } },
-      distinct: ["placeId"],
-      select: { placeId: true },
-    });
-    const upUniqueCoords = await prisma.locationPoint.findMany({
-      where: { userId: targetUserId, placeId: null, latitude: { not: null }, longitude: { not: null } },
-      distinct: ["latitude", "longitude"],
-      select: { latitude: true, longitude: true },
-    });
-    const spotsVisited = upUniquePlaces.length + upUniqueCoords.length;
-
-    const recentVisitedSpots = await prisma.locationPoint.findMany({
-      where: { userId: targetUserId },
-      orderBy: { createdAt: "desc" },
-      take: 10,
-      select: {
-        id: true,
-        placeId: true,
-        placeName: true,
-        latitude: true,
-        longitude: true,
-        mediaUrl: true,
-        points: true,
-        createdAt: true,
-      },
-    });
-
-    // Weekly points for target user
-    let thisWeekPoints = null;
-    if (isSelf || isFriend) {
-      thisWeekPoints = await getWeeklyPointsForUser(targetUserId);
+      mostRecent = mostRecentCommunity
+        ? {
+            id: mostRecentCommunity.community.id,
+            name: mostRecentCommunity.community.name,
+            imageUrl: mostRecentCommunity.community.imageUrl || null,
+            membersCount: await prisma.communityMember.count({
+              where: { communityId: mostRecentCommunity.community.id },
+            }),
+            type:
+              mostRecentCommunity.community.creatorId === targetUserId
+                ? "created"
+                : "joined",
+            at: mostRecentCommunity.joinedAt,
+          }
+        : null;
     }
 
-    // Fetch most recent joined or created community
-    const mostRecentCommunity = await prisma.communityMember.findFirst({
-      where: { userId: targetUserId },
-      include: { community: true },
-      orderBy: { joinedAt: "desc" },
-    });
-
-    const mostRecent = mostRecentCommunity
-      ? {
-          id: mostRecentCommunity.community.id,
-          name: mostRecentCommunity.community.name,
-          imageUrl: mostRecentCommunity.community.imageUrl || null,
-          membersCount: await prisma.communityMember.count({
-            where: { communityId: mostRecentCommunity.community.id },
-          }),
-          type:
-            mostRecentCommunity.community.creatorId === targetUserId
-              ? "created"
-              : "joined",
-          at: mostRecentCommunity.joinedAt,
-        }
-      : null;
-
-    // Final structured profile data
+    // Final structured profile data.
+    // Always-visible identity fields: username, name, avatar, total/weekly points.
+    // isPrivate=true => rich sections are empty and the app shows the lock screen.
     const profileData = {
       id: user.id,
       username: user.username,
-      firstName: isSelf || isFriend ? user.firstName : null,
-      lastName: isSelf || isFriend ? user.lastName : null,
+      firstName: user.firstName,
+      lastName: user.lastName,
       minime: user.minime,
       isSelf,
       isFriend,
+      isPrivate, // true only when target is private AND viewer is neither self nor friend
       friendshipStatus, // "NONE" | "ACCEPTED" | "PENDING_SENT" | "PENDING_RECEIVED"
       friendCount,
       spotsVisited,
-      friends: friends,
-      communities: communities.map((c) => c.community),
-      thisWeekPoints: isSelf || isFriend ? thisWeekPoints : null,
-      bio: isSelf || isFriend ? user.bio : null,
-      totalPoints: isSelf || isFriend ? user.totalPoints : null,
+      friends,
+      communities,
+      thisWeekPoints,
+      totalPoints: user.totalPoints || 0,
+      bio: isPrivate ? null : user.bio,
       stories,
-      recentVisitedSpots: isSelf || isFriend ? recentVisitedSpots : [],
+      recentVisitedSpots,
       mostRecent,
     };
 

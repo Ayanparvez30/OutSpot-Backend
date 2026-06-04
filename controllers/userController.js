@@ -882,10 +882,55 @@ async function getUserStatsByUserId(req, res) {
     // Check if target user exists
     const targetUser = await prisma.user.findUnique({
       where: { id: userId },
-      select: { id: true },
+      select: { id: true, isProfilePrivate: true },
     });
     if (!targetUser) {
       return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    const isSelf = viewerId === userId;
+
+    // Friendship status relative to the VIEWER (drives the app's profile screen)
+    const friendship = await prisma.friendship.findFirst({
+      where: {
+        OR: [
+          { requesterId: viewerId, receiverId: userId },
+          { requesterId: userId, receiverId: viewerId },
+        ],
+      },
+      select: { status: true, requesterId: true },
+    });
+    const isFriend = friendship?.status === "ACCEPTED";
+
+    let friendshipStatus = "NONE";
+    if (isSelf) {
+      friendshipStatus = "SELF";
+    } else if (friendship) {
+      if (friendship.status === "ACCEPTED") {
+        friendshipStatus = "ACCEPTED";
+      } else if (friendship.status === "PENDING") {
+        friendshipStatus =
+          friendship.requesterId === viewerId ? "PENDING_SENT" : "PENDING_RECEIVED";
+      }
+    }
+
+    // Private account hides stats from non-friends (self & friends bypass).
+    const isPrivate = !isSelf && !isFriend && !!targetUser.isProfilePrivate;
+    if (isPrivate) {
+      return res.json({
+        success: true,
+        data: {
+          userId,
+          isPrivate: true,
+          friendshipStatus,
+          bodyType: null,
+          spotsVisited: 0,
+          friends: 0,
+          community: 0,
+          challengesCompleted: 0,
+          myCommunity: null,
+        },
+      });
     }
 
     // --------- Stats (all queries in parallel) ----------
@@ -936,6 +981,8 @@ async function getUserStatsByUserId(req, res) {
       success: true,
       data: {
         userId,
+        isPrivate: false,
+        friendshipStatus,
         bodyType: user?.bodyType || null,
         spotsVisited,
         friends: friendsCount,
