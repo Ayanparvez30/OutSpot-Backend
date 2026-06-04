@@ -10,9 +10,9 @@ const haversineMeters = (a, b) => {
   return 2 * R * Math.asin(Math.sqrt(A));
 };
 const metersToMiles = (m) => +(m / 1609.344).toFixed(2);
-function buildPhotosArray(d, max = 8) {
+function buildPhotosArray(d, max = 8, width = 1600) {
   const refs = (d?.photos || []).slice(0, max).map(p => p.photo_reference).filter(Boolean);
-  return refs.map(ref => photoUrlByRef(ref, 1200)).filter(Boolean);
+  return refs.map(ref => photoUrlByRef(ref, width)).filter(Boolean);
 }
 
 // ---- de-dupe tuning (env overrideable) ----
@@ -55,20 +55,26 @@ async function getCategoryCandidates({ cat, lat, lng, radius }) {
         pool.push(p);
       }
     }
-    pool.sort((a, b) => {
-      const da = haversineMeters({ lat, lng }, a.geometry.location);
-      const db = haversineMeters({ lat, lng }, b.geometry.location);
-      return da - db;
-    });
     CATEGORY_CACHE.set(key, { ts: Date.now(), candidates: pool });
   }
 
-  // Apply per-request radius filter.
+  // Apply per-request radius filter + hybrid (popularity × proximity) sort.
+  // Hybrid score: more reviews ranks higher, but distance discounts the score.
+  // Result: highly-reviewed venues near the user beat distant ones, while a
+  // tiny but ultra-close place doesn't outrank a popular spot a block away.
   const radiusMiles = metersToMiles(radius);
-  return pool.filter(p => {
-    const distMiles = metersToMiles(haversineMeters({ lat, lng }, p.geometry.location));
-    return distMiles <= radiusMiles;
-  });
+  const filtered = [];
+  for (const p of pool) {
+    const distMeters = haversineMeters({ lat, lng }, p.geometry.location);
+    if (metersToMiles(distMeters) > radiusMiles) continue;
+    const reviews = p.user_ratings_total || 0;
+    const km = distMeters / 1000;
+    // Score: reviews / (1 + km). 100 reviews @ 0km = 100; 100 reviews @ 1km = 50.
+    p._hybridScore = reviews / (1 + km);
+    filtered.push(p);
+  }
+  filtered.sort((a, b) => (b._hybridScore || 0) - (a._hybridScore || 0));
+  return filtered;
 }
 
 // Priority order matters. Walk top-down — first match wins.
@@ -76,11 +82,11 @@ async function getCategoryCandidates({ cat, lat, lng, radius }) {
 // excluded from Restaurants results. A pub tagged ['bar','restaurant'] → primary=Bars.
 const CATEGORIES = [
   { key: 'venue-events', title: 'Venue Events', icon: '🎤', points: 4, imageKey: 'venue-events',
-    googleTypes: ['stadium', 'movie_theater', 'amusement_park', 'bowling_alley', 'casino', 'concert_hall', 'performing_arts_theater'] },
+    googleTypes: ['night_club', 'karaoke', 'comedy_club'] },
   { key: 'outdoors',     title: 'Outdoors',     icon: '🌳', points: 3, imageKey: 'outdoors',
-    googleTypes: ['park', 'campground', 'tourist_attraction', 'natural_feature', 'hiking_area'] },
+    googleTypes: ['park', 'campground', 'tourist_attraction', 'hiking_area', 'national_park', 'botanical_garden'] },
   { key: 'bars',         title: 'Bars',         icon: '🍻', points: 4, imageKey: 'bars',
-    googleTypes: ['bar', 'night_club', 'pub'] },
+    googleTypes: ['bar', 'pub'] },
   { key: 'cafes',        title: 'Cafes',        icon: '☕', points: 3, imageKey: 'cafes',
     googleTypes: ['cafe'] },
   { key: 'restaurants',  title: 'Restaurants',  icon: '🍽️', points: 4, imageKey: 'restaurants',
@@ -104,9 +110,12 @@ function primaryCategory(place) {
   const types = Array.isArray(place?.types) ? place.types : [];
   const tset = new Set(types);
   const name = String(place?.name || '');
+  const primaryType = place?.primary_type || null;
 
-  // 1) Venue Events
-  if (findCat('venue-events').googleTypes.some(t => tset.has(t))) return findCat('venue-events');
+  // 1) Venue Events — STRICT. Google tags `night_club` loosely (restaurants/museums
+  // hosting events get the tag), so require it to be the PRIMARY type. A real
+  // dance club has primary_type='night_club'; Earls Kitchen has primary_type='restaurant'.
+  if (findCat('venue-events').googleTypes.includes(primaryType)) return findCat('venue-events');
   // 2) Outdoors
   if (findCat('outdoors').googleTypes.some(t => tset.has(t))) return findCat('outdoors');
   // 3) Bars
@@ -412,7 +421,7 @@ exports.getPlaceDetail = async (req, res) => {
     const d = await details(placeId);
 
     const photos = buildPhotosArray(d, 8);
-    const image = photos[0] || photoUrlByRef(d.photos?.[0]?.photo_reference, 1200) || '';
+    const image = photos[0] || photoUrlByRef(d.photos?.[0]?.photo_reference, 1600) || '';
     const openNow = d.opening_hours?.open_now ?? null;
     const placeLat = d.geometry?.location?.lat;
     const placeLng = d.geometry?.location?.lng;
@@ -539,7 +548,7 @@ exports.searchPlaces = async (req, res) => {
       let d = null;
       try { d = await details(p.place_id); } catch (_) {}
       const photos = buildPhotosArray(d, 8);
-      const image = photos[0] || photoUrlByRef(p.photos?.[0]?.photo_reference, 1200) || '';
+      const image = photos[0] || photoUrlByRef(p.photos?.[0]?.photo_reference, 1600) || '';
       const matched = primaryCategory(d || p);
       const basePoints = matched ? matched.points : 0;
       const finalPoints = Math.round(basePoints * multiplier);
@@ -639,7 +648,7 @@ exports.getRestaurantsByCategory = async (req, res) => {
         const photos = buildPhotosArray(d, 8);        // ✅ multiple photos
         const image =
           photos[0] ||
-          photoUrlByRef(p.photos?.[0]?.photo_reference, 1200) ||
+          photoUrlByRef(p.photos?.[0]?.photo_reference, 1600) ||
           '';
 
         const lat2 = p.geometry?.location?.lat ?? d?.geometry?.location?.lat ?? 0;

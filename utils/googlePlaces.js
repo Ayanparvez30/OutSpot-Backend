@@ -1,218 +1,275 @@
-
-const GMAPS_BASE = 'https://maps.googleapis.com/maps/api/place';
 // utils/googlePlaces.js
+// Migrated to Places API (New) v1. External call signatures + return shapes
+// preserved as legacy schema so all callers in controllers/* remain unchanged.
 
-const fieldsForDetails = [
-  'place_id',
-  'name',
-  'formatted_address',
-  'vicinity',
-  'geometry/location',
-  'geometry/viewport',
-  'types',
-  'photos',
+const NEW_BASE = 'https://places.googleapis.com/v1';
+const LEGACY_BASE = 'https://maps.googleapis.com/maps/api/place';
 
-  'opening_hours/open_now',
-  'opening_hours/weekday_text',
-
-  'rating',
-  'user_ratings_total',
-  'reviews',
-
-  'formatted_phone_number',
-  'international_phone_number',
-  'website',
-  'url',
-
-  'price_level',
-  'business_status',
-  'editorial_summary',
-  'serves_beer',
-  'serves_breakfast',
-  'serves_brunch',
-  'serves_dinner',
-  'serves_lunch',
-  'serves_wine',
-  'serves_vegetarian_food',
-  'takeout',
-  'delivery',
-  'dine_in',
-  'reservable',
-  'wheelchair_accessible_entrance',
+// Field mask for searchNearby / searchText — must list every nested field caller depends on.
+const SEARCH_FIELD_MASK = [
+  'places.id',
+  'places.displayName',
+  'places.formattedAddress',
+  'places.shortFormattedAddress',
+  'places.location',
+  'places.viewport',
+  'places.types',
+  'places.primaryType',
+  'places.photos',
+  'places.rating',
+  'places.userRatingCount',
+  'places.priceLevel',
+  'places.businessStatus',
+  'places.regularOpeningHours',
+  'places.currentOpeningHours',
 ].join(',');
 
-// Nearbysearch with rankby=distance — returns ALL places of given type within ~3km,
-// sorted by distance ascending. No prominence filtering, so chains (Starbucks etc.) included naturally.
-async function nearbyByDistance({ lat, lng, type, pagetoken }) {
+// Field mask for details (single place) — no `places.` prefix on the v1 single-resource endpoint.
+const DETAILS_FIELD_MASK = [
+  'id',
+  'displayName',
+  'formattedAddress',
+  'shortFormattedAddress',
+  'location',
+  'viewport',
+  'types',
+  'primaryType',
+  'photos',
+  'rating',
+  'userRatingCount',
+  'priceLevel',
+  'businessStatus',
+  'regularOpeningHours',
+  'currentOpeningHours',
+  'nationalPhoneNumber',
+  'internationalPhoneNumber',
+  'websiteUri',
+  'googleMapsUri',
+  'editorialSummary',
+  'reviews',
+  'servesBeer',
+  'servesBreakfast',
+  'servesBrunch',
+  'servesDinner',
+  'servesLunch',
+  'servesWine',
+  'servesVegetarianFood',
+  'takeout',
+  'delivery',
+  'dineIn',
+  'reservable',
+  'accessibilityOptions',
+].join(',');
+
+// Convert new v1 priceLevel enum to legacy 0-4 integer.
+function priceLevelToLegacy(enumStr) {
+  if (!enumStr) return null;
+  const map = {
+    PRICE_LEVEL_FREE: 0,
+    PRICE_LEVEL_INEXPENSIVE: 1,
+    PRICE_LEVEL_MODERATE: 2,
+    PRICE_LEVEL_EXPENSIVE: 3,
+    PRICE_LEVEL_VERY_EXPENSIVE: 4,
+  };
+  return map[enumStr] ?? null;
+}
+
+// Map a Places API (New) v1 place object into the legacy schema callers expect.
+function mapNewToLegacy(p) {
+  if (!p) return null;
+
+  const photos = (p.photos || []).map((ph) => ({
+    photo_reference: ph.name, // new v1 photo "name" path, used by photoUrlByRef
+    height: ph.heightPx,
+    width: ph.widthPx,
+  }));
+
+  const opening_hours = (p.regularOpeningHours || p.currentOpeningHours)
+    ? {
+        open_now: (p.currentOpeningHours || p.regularOpeningHours).openNow,
+        weekday_text: (p.regularOpeningHours || p.currentOpeningHours).weekdayDescriptions || [],
+      }
+    : undefined;
+
+  const geometry = {
+    location: p.location
+      ? { lat: p.location.latitude, lng: p.location.longitude }
+      : undefined,
+    viewport: p.viewport
+      ? {
+          northeast: { lat: p.viewport.high.latitude, lng: p.viewport.high.longitude },
+          southwest: { lat: p.viewport.low.latitude, lng: p.viewport.low.longitude },
+        }
+      : undefined,
+  };
+
+  return {
+    place_id: p.id,
+    name: p.displayName?.text || '',
+    formatted_address: p.formattedAddress || '',
+    vicinity: p.shortFormattedAddress || p.formattedAddress || '',
+    geometry,
+    types: p.types || [],
+    primary_type: p.primaryType || null,
+    photos,
+    rating: p.rating ?? 0,
+    user_ratings_total: p.userRatingCount ?? 0,
+    price_level: priceLevelToLegacy(p.priceLevel),
+    business_status: p.businessStatus || null,
+    opening_hours,
+    formatted_phone_number: p.nationalPhoneNumber || '',
+    international_phone_number: p.internationalPhoneNumber || '',
+    website: p.websiteUri || '',
+    url: p.googleMapsUri || '',
+    editorial_summary: p.editorialSummary ? { overview: p.editorialSummary.text } : undefined,
+    reviews: p.reviews || [],
+    serves_beer: p.servesBeer,
+    serves_breakfast: p.servesBreakfast,
+    serves_brunch: p.servesBrunch,
+    serves_dinner: p.servesDinner,
+    serves_lunch: p.servesLunch,
+    serves_wine: p.servesWine,
+    serves_vegetarian_food: p.servesVegetarianFood,
+    takeout: p.takeout,
+    delivery: p.delivery,
+    dine_in: p.dineIn,
+    reservable: p.reservable,
+    wheelchair_accessible_entrance: p.accessibilityOptions?.wheelchairAccessibleEntrance,
+  };
+}
+
+// --------------- Places API (New) searchNearby ---------------
+// Returns up to 20 places per call. No pagination available on searchNearby.
+// rankPreference: 'POPULARITY' (default, matches Google Maps app) or 'DISTANCE'.
+async function searchNearbyNew({ lat, lng, type, radius = 5000, maxResults = 20, rank = 'POPULARITY' }) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
+  if (!type) throw new Error('searchNearbyNew: type required');
 
-  const params = new URLSearchParams({ key });
-  if (pagetoken) {
-    params.set('pagetoken', pagetoken);
-  } else {
-    if (!type) throw new Error('nearbyByDistance: type required');
-    params.set('location', `${lat},${lng}`);
-    params.set('rankby', 'distance');
-    params.set('type', type);
-  }
-  const url = `${GMAPS_BASE}/nearbysearch/json?${params.toString()}`;
-  const r = await fetch(url);
+  const body = {
+    includedTypes: [type],
+    locationRestriction: {
+      circle: { center: { latitude: lat, longitude: lng }, radius },
+    },
+    maxResultCount: Math.min(20, Math.max(1, maxResults)),
+    rankPreference: rank,
+  };
+
+  const r = await fetch(`${NEW_BASE}/places:searchNearby`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': key,
+      'X-Goog-FieldMask': SEARCH_FIELD_MASK,
+    },
+    body: JSON.stringify(body),
+  });
   const j = await r.json();
-  if (j.status !== 'OK' && j.status !== 'ZERO_RESULTS' && j.status !== 'INVALID_REQUEST') {
-    throw new Error(`Places Nearby (rankby=distance) error: ${j.status} ${j.error_message || ''}`);
+  if (!r.ok) {
+    console.error('[searchNearbyNew] failed', r.status, JSON.stringify(j?.error || j).slice(0, 500));
+    throw new Error(`Places searchNearby error: ${j?.error?.status || r.status} ${j?.error?.message || ''}`);
   }
   return j;
 }
 
-// Multi-page version — up to maxPages × 20 results per type. Tokens need ~2s delay.
-async function nearbyByDistanceAll({ lat, lng, type, maxPages = 3 }) {
-  const out = [];
-  let page = await nearbyByDistance({ lat, lng, type });
-  out.push(...(page.results || []));
-  let token = page.next_page_token;
-  let pages = 1;
-  while (token && pages < maxPages) {
-    await new Promise(r => setTimeout(r, 2000));
-    let tries = 0;
-    let next;
-    while (tries < 4) {
-      next = await nearbyByDistance({ pagetoken: token });
-      if (next.status !== 'INVALID_REQUEST') break;
-      tries++;
-      await new Promise(r => setTimeout(r, 1500));
-    }
-    if (!next || next.status === 'INVALID_REQUEST') break;
-    out.push(...(next.results || []));
-    token = next.next_page_token;
-    pages++;
+// Legacy-compat: same shape as old nearbyByDistance — returns { results: [...] } in legacy schema.
+async function nearbyByDistance({ lat, lng, type, pagetoken }) {
+  if (pagetoken) {
+    // searchNearby has no pagination; signal end-of-results.
+    return { status: 'OK', results: [], next_page_token: null };
   }
-  return out;
+  const j = await searchNearbyNew({ lat, lng, type, rank: 'POPULARITY' });
+  const results = (j.places || []).map(mapNewToLegacy).filter(Boolean);
+  return { status: 'OK', results, next_page_token: null };
 }
 
+// searchNearby returns max 20 in one call — no pagination on this endpoint.
+// maxPages is preserved in signature for caller compat but ignored (single fetch).
+async function nearbyByDistanceAll({ lat, lng, type, radius, maxPages = 3 }) { // eslint-disable-line no-unused-vars
+  const j = await searchNearbyNew({ lat, lng, type, radius: radius || 5000, rank: 'POPULARITY' });
+  return (j.places || []).map(mapNewToLegacy).filter(Boolean);
+}
+
+// --------------- Photo URL (new v1 media endpoint) ---------------
+// Accepts either new "places/.../photos/..." name OR legacy `photoreference` string.
 function photoUrlByRef(photoRef, maxwidth = 800) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!photoRef || !key) return null;
-  return `https://maps.googleapis.com/maps/api/place/photo?maxwidth=${maxwidth}&photoreference=${photoRef}&key=${key}`;
+  // New v1 format: name = "places/<placeId>/photos/<photoId>"
+  if (typeof photoRef === 'string' && photoRef.startsWith('places/')) {
+    return `${NEW_BASE}/${photoRef}/media?maxWidthPx=${maxwidth}&key=${key}`;
+  }
+  // Legacy fallback (kept in case any old photo_reference still floats through caches)
+  return `${LEGACY_BASE}/photo?maxwidth=${maxwidth}&photoreference=${photoRef}&key=${key}`;
 }
 
-
-async function nearby({ lat, lng, radius = 2500, keyword, type }) {
-  const key = process.env.GOOGLE_MAPS_API_KEY;
-  if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
-
-  const params = new URLSearchParams({
-    key,
-    location: `${lat},${lng}`,
-    radius: String(radius),
-  });
-  if (keyword) params.set('keyword', keyword);
-  if (type) params.set('type', type);
-
-  const url = `${GMAPS_BASE}/nearbysearch/json?${params.toString()}`;
-  const r = await fetch(url);
-  const j = await r.json();
-
-  if (j.status !== 'OK' && j.status !== 'ZERO_RESULTS') {
-    throw new Error(`Places Nearby error: ${j.status} ${j.error_message || ''}`);
-  }
-  return j.results || [];
-}
-
-// Nearby search with page token
-async function nearbyPage({ lat, lng, radius = 2500, keyword, type, pagetoken }) {
-  const key = process.env.GOOGLE_MAPS_API_KEY;
-  if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
-
-  const params = new URLSearchParams({ key });
-
-  if (pagetoken) {
-    // Google requires only pagetoken + key for the next page
-    params.set('pagetoken', pagetoken);
-  } else {
-    params.set('location', `${lat},${lng}`);
-    params.set('radius', String(radius));
-    if (keyword) params.set('keyword', keyword);
-    if (type) params.set('type', type);
-  }
-
-  const url = `${GMAPS_BASE}/nearbysearch/json?${params.toString()}`;
-  const r = await fetch(url);
-  const j = await r.json();
-
-  // INVALID_REQUEST can happen briefly for next_page_token; caller will retry
-  if (j.status !== 'OK' && j.status !== 'ZERO_RESULTS' && j.status !== 'INVALID_REQUEST') {
-    throw new Error(`Places Nearby error: ${j.status} ${j.error_message || ''}`);
-  }
-
-  return j;
-}
-
-// Fetch multiple pages (max ~60 results). Google next_page_token needs a short delay.
-async function nearbyAll({ lat, lng, radius = 2500, keyword, type, maxPages = 3 }) {
-  const out = [];
-
-  let page = await nearbyPage({ lat, lng, radius, keyword, type });
-  out.push(...(page.results || []));
-
-  let token = page.next_page_token;
-  let pages = 1;
-
-  while (token && pages < maxPages) {
-    // token becomes valid after a short delay
-    await new Promise((r) => setTimeout(r, 2000));
-
-    // retry a few times if INVALID_REQUEST
-    let tries = 0;
-    let next;
-    while (tries < 4) {
-      next = await nearbyPage({ pagetoken: token });
-      if (next.status !== 'INVALID_REQUEST') break;
-      tries += 1;
-      await new Promise((r) => setTimeout(r, 1500));
-    }
-
-    if (!next || next.status === 'INVALID_REQUEST') break;
-
-    out.push(...(next.results || []));
-    token = next.next_page_token;
-    pages += 1;
-  }
-
-  return out;
-}
-
+// --------------- Place details (new v1) ---------------
 async function details(place_id) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
-  const url = `${GMAPS_BASE}/details/json?place_id=${place_id}&fields=${encodeURIComponent(
-    fieldsForDetails
-  )}&key=${key}`;
+  if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
+  if (!place_id) throw new Error('details: place_id required');
 
-  const r = await fetch(url);
+  const r = await fetch(`${NEW_BASE}/places/${encodeURIComponent(place_id)}`, {
+    method: 'GET',
+    headers: {
+      'X-Goog-Api-Key': key,
+      'X-Goog-FieldMask': DETAILS_FIELD_MASK,
+    },
+  });
   const j = await r.json();
-  if (j.status !== 'OK') throw new Error(`Places Details error: ${j.status} ${j.error_message || ''}`);
-  return j.result;
+  if (!r.ok) {
+    throw new Error(`Places Details error: ${j?.error?.status || r.status} ${j?.error?.message || ''}`);
+  }
+  return mapNewToLegacy(j);
 }
 
+// --------------- Text search (new v1) ---------------
 async function textSearch({ query, lat, lng, radius = 5000 }) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
 
-  const params = new URLSearchParams({
-    key,
-    query,
-    location: `${lat},${lng}`,
-    radius: String(radius),
+  const body = {
+    textQuery: query,
+    locationBias: {
+      circle: { center: { latitude: lat, longitude: lng }, radius },
+    },
+    pageSize: 20,
+  };
+
+  const r = await fetch(`${NEW_BASE}/places:searchText`, {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'X-Goog-Api-Key': key,
+      'X-Goog-FieldMask': SEARCH_FIELD_MASK,
+    },
+    body: JSON.stringify(body),
   });
-
-  const url = `${GMAPS_BASE}/textsearch/json?${params.toString()}`;
-  const r = await fetch(url);
   const j = await r.json();
-
-  if (j.status !== 'OK' && j.status !== 'ZERO_RESULTS') {
-    throw new Error(`Places TextSearch error: ${j.status} ${j.error_message || ''}`);
+  if (!r.ok) {
+    throw new Error(`Places TextSearch error: ${j?.error?.status || r.status} ${j?.error?.message || ''}`);
   }
-  return j.results || [];
+  return (j.places || []).map(mapNewToLegacy).filter(Boolean);
+}
+
+// --------------- Legacy radius-based nearby — backed by searchNearby ---------------
+// Kept for any caller that still uses them. Type-only or keyword fallback to textSearch.
+async function nearby({ lat, lng, radius = 2500, keyword, type }) {
+  if (type) {
+    const j = await searchNearbyNew({ lat, lng, type, radius, rank: 'POPULARITY' });
+    return (j.places || []).map(mapNewToLegacy).filter(Boolean);
+  }
+  if (keyword) return textSearch({ query: keyword, lat, lng, radius });
+  return [];
+}
+
+async function nearbyPage(opts) {
+  const results = await nearby(opts);
+  return { status: 'OK', results, next_page_token: null };
+}
+
+async function nearbyAll(opts) {
+  return nearby(opts);
 }
 
 module.exports = {
