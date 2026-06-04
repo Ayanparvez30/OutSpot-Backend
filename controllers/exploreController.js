@@ -149,8 +149,8 @@ async function getCategoryCandidates({ cat, lat, lng, radius, requiredCount = 10
 // excluded from Restaurants results. A pub tagged ['bar','restaurant'] → primary=Bars.
 const CATEGORIES = [
   { key: 'venue-events', title: 'Venue Events', icon: '🎤', points: 4, imageKey: 'venue-events',
-    googleTypes: ['night_club', 'karaoke', 'comedy_club', 'live_music_venue'],
-    textQueries: ['popular nightclubs', 'karaoke bars', 'comedy clubs'] },
+    googleTypes: ['night_club', 'karaoke', 'comedy_club', 'live_music_venue', 'concert_hall', 'performing_arts_theater'],
+    textQueries: ['popular nightclubs', 'karaoke bars', 'comedy clubs', 'concerts near me', 'live music venues'] },
   { key: 'outdoors',     title: 'Outdoors',     icon: '🌳', points: 3, imageKey: 'outdoors',
     googleTypes: ['park', 'campground', 'tourist_attraction', 'hiking_area', 'national_park', 'botanical_garden', 'sports_complex', 'sports_club', 'beach'],
     textQueries: ['parks', 'hiking trails', 'sports clubs'] },
