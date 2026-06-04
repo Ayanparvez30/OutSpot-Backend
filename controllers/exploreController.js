@@ -669,7 +669,7 @@ exports.searchPlaces = async (req, res) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ success: false, error: 'lat/lng required' });
     }
-    const limit = Math.min(parseInt(req.query.limit || '10', 10), 20);
+    const limit = Math.min(parseInt(req.query.limit || '20', 10), 20);
 
     // Optional category filter — when user searches inside a category screen
     // (e.g. Bars), Flutter passes ?category=bars so results are scoped to that
@@ -677,19 +677,35 @@ exports.searchPlaces = async (req, res) => {
     const categoryKey = req.query.category ? String(req.query.category).trim() : null;
     const categoryFilter = categoryKey ? getCategory(categoryKey) : null;
 
-    // 1) Google text search
-    const rawResults = await textSearch({ query, lat, lng, radius });
-
-    // 2) Category filter via primaryCategory — drop hits that don't belong
-    // to the user's current bucket. Uses the SAME classifier as the explore
-    // category list, so search results align with what user sees in the grid.
-    const results = categoryFilter
-      ? (rawResults || []).filter(p => {
+    // 1) Get raw candidates.
+    //    - With category: pull the FULL 9-cell grid + text-expanded pool from
+    //      getCategoryCandidates (uses same cache as /restaurants/category, so
+    //      no duplicate Google calls within TTL). Filter by name/address
+    //      substring. This is the requested "expand grid, then filter" flow.
+    //    - Without category: fall back to direct Google textSearch (global).
+    let rawResults;
+    if (categoryFilter) {
+      const pool = await getCategoryCandidates({ cat: categoryFilter, lat, lng, radius, requiredCount: Infinity });
+      const needle = query.toLowerCase();
+      rawResults = pool.filter(p =>
+        (p.name || '').toLowerCase().includes(needle) ||
+        (p.formatted_address || '').toLowerCase().includes(needle) ||
+        (p.vicinity || '').toLowerCase().includes(needle)
+      );
+      // Pool miss safety net — if substring match returned nothing, fall back
+      // to Google textSearch + category filter so niche names not in the pool
+      // still surface (e.g. a brand-new venue Google ranks low).
+      if (rawResults.length === 0) {
+        const fallback = await textSearch({ query, lat, lng, radius });
+        rawResults = (fallback || []).filter(p => {
           const m = primaryCategory(p);
           return m && m.key === categoryFilter.key;
-        })
-      : (rawResults || []);
-    const top = results.slice(0, limit);
+        });
+      }
+    } else {
+      rawResults = await textSearch({ query, lat, lng, radius });
+    }
+    const top = rawResults.slice(0, limit);
 
     // 2) Active multiplier for this user (factor=1 if none)
     const now = new Date();
