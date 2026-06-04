@@ -665,28 +665,20 @@ exports.removeStory = async (req, res) => {
       return res.status(403).json({ error: 'Unauthorized' });
     }
 
-    const refs = await prisma.savedStory.count({ where: { storyId: story.id } });
-
-    if (refs > 0) {
-      // ✅ keep it for savers; hide from feeds
-      await prisma.story.update({
-        where: { id: story.id },
-        data: { status: 'ARCHIVED', visibility: 'private' }
-      });
-      return res.json({ message: 'Story archived (others have saved it), removed from your feed.' });
-    }
-
-    // no refs → safe to hard-delete the row
+    // DB row is ALWAYS hard-deleted on user trigger. Each user's view of an
+    // image is a separate Story row (original or clone) — so deleting one row
+    // affects only the owner. SavedStory.story is onDelete: Cascade, so any
+    // SavedStory link to this row is removed automatically. S3 cleanup is the
+    // only conditional step — runs after the row is gone, deletes the object
+    // only if NO other table still references the URL.
     const mediaUrl = story.mediaUrl;
     await prisma.story.delete({ where: { id: story.id } });
 
-    // Orphan-only S3 cleanup — fires AFTER the row is gone, so if the same
-    // mediaUrl was used by another story/clone, that other row keeps the S3
-    // object alive. Fire-and-forget so the API response stays fast.
     if (mediaUrl) {
       const { deleteS3IfOrphan } = require('../utils/s3Cleanup');
       deleteS3IfOrphan(mediaUrl).then(r => {
         if (r.ok) console.log(`[removeStory] S3 orphan deleted: ${mediaUrl}`);
+        else if (r.reason === 'still-referenced') console.log(`[removeStory] S3 kept (still referenced ${r.count}x): ${mediaUrl}`);
       }).catch(e => console.error('[removeStory] s3 cleanup error', e));
     }
 
