@@ -452,15 +452,74 @@ exports.getPlaceDetail = async (req, res) => {
     if (nameLower.includes('rooftop')) sections.add('Rooftop Bars');
     if (nameLower.includes('cafe') || nameLower.includes('coffee')) sections.add('Cafes');
 
-    // Cuisine / services from Google data
-    const cuisine = [];
-    if (d.serves_breakfast) cuisine.push('Breakfast');
-    if (d.serves_brunch) cuisine.push('Brunch');
-    if (d.serves_lunch) cuisine.push('Lunch');
-    if (d.serves_dinner) cuisine.push('Dinner');
-    if (d.serves_beer) cuisine.push('Beer');
-    if (d.serves_wine) cuisine.push('Wine');
-    if (d.serves_vegetarian_food) cuisine.push('Vegetarian');
+    // ---------- Cuisine taxonomy split into 4 buckets ----------
+    // cuisine = origin/style of food (American, Pizza, Sushi, etc) — from types
+    // meals   = breakfast/brunch/lunch/dinner/dessert flags
+    // drinks  = bar/pub/coffee/tea + serves_beer/wine/cocktails flags
+    // dietary = vegetarian + keyword detection (vegan/gluten-free/halal/kosher)
+    const CUISINE_TYPE_MAP = {
+      american_restaurant: 'American', italian_restaurant: 'Italian',
+      mexican_restaurant: 'Mexican', chinese_restaurant: 'Chinese',
+      japanese_restaurant: 'Japanese', thai_restaurant: 'Thai',
+      indian_restaurant: 'Indian', french_restaurant: 'French',
+      spanish_restaurant: 'Spanish', greek_restaurant: 'Greek',
+      korean_restaurant: 'Korean', vietnamese_restaurant: 'Vietnamese',
+      mediterranean_restaurant: 'Mediterranean', middle_eastern_restaurant: 'Middle Eastern',
+      seafood_restaurant: 'Seafood', steak_house: 'Steakhouse',
+      sushi_restaurant: 'Sushi', pizza_restaurant: 'Pizza',
+      hamburger_restaurant: 'Burger', sandwich_shop: 'Sandwich',
+      barbecue_restaurant: 'BBQ', ramen_restaurant: 'Ramen',
+      fast_food_restaurant: 'Fast Food', fine_dining_restaurant: 'Fine Dining',
+      bar_and_grill: 'American', bakery: 'Bakery', ice_cream_shop: 'Ice Cream',
+      brunch_restaurant: null, breakfast_restaurant: null, // meals, not cuisine
+      dessert_restaurant: null, dessert_shop: null,
+    };
+    const MEAL_TYPE_MAP = {
+      breakfast_restaurant: 'Breakfast', brunch_restaurant: 'Brunch',
+      dessert_restaurant: 'Dessert', dessert_shop: 'Dessert',
+    };
+    const DRINK_TYPE_MAP = {
+      bar: 'Bar', pub: 'Pub', night_club: 'Nightlife',
+      coffee_shop: 'Coffee', cafe: 'Coffee', tea_house: 'Tea', wine_bar: 'Wine',
+    };
+
+    const cuisine = new Set();
+    const meals = new Set();
+    const drinks = new Set();
+    const dietary = new Set();
+
+    for (const t of placeTypes) {
+      if (CUISINE_TYPE_MAP[t]) cuisine.add(CUISINE_TYPE_MAP[t]);
+      if (MEAL_TYPE_MAP[t]) meals.add(MEAL_TYPE_MAP[t]);
+      if (DRINK_TYPE_MAP[t]) drinks.add(DRINK_TYPE_MAP[t]);
+    }
+    // Meal flags (only push if explicit — drop the always-on Lunch/Dinner from before)
+    if (d.serves_breakfast) meals.add('Breakfast');
+    if (d.serves_brunch) meals.add('Brunch');
+    if (d.serves_lunch) meals.add('Lunch');
+    if (d.serves_dinner) meals.add('Dinner');
+    if (d.serves_dessert) meals.add('Dessert');
+    // Drink flags
+    if (d.serves_beer) drinks.add('Beer');
+    if (d.serves_wine) drinks.add('Wine');
+    if (d.serves_cocktails) drinks.add('Cocktails');
+    if (d.serves_coffee) drinks.add('Coffee');
+    // Dietary
+    if (d.serves_vegetarian_food) dietary.add('Vegetarian');
+    // Dietary keyword scan over editorial summary + reviews
+    const dietaryHaystack = (
+      (d.editorial_summary?.overview || '') + ' ' +
+      (d.reviews || []).map(r => r.text || '').join(' ')
+    ).toLowerCase();
+    if (/\bvegan\b/.test(dietaryHaystack)) dietary.add('Vegan');
+    if (/gluten[- ]?free/.test(dietaryHaystack)) dietary.add('Gluten-Free');
+    if (/\bhalal\b/.test(dietaryHaystack)) dietary.add('Halal');
+    if (/\bkosher\b/.test(dietaryHaystack)) dietary.add('Kosher');
+
+    // Enforce no-overlap rule: sections wins, strip from cuisine/meals/drinks/dietary
+    for (const s of sections) {
+      cuisine.delete(s); meals.delete(s); drinks.delete(s); dietary.delete(s);
+    }
 
     const services = [];
     if (d.dine_in) services.push('Dine-in');
@@ -493,7 +552,10 @@ exports.getPlaceDetail = async (req, res) => {
       description: d.editorial_summary?.overview || null,
       category: d.types?.[0] || '',
       sections: [...sections],
-      cuisine,
+      cuisine: [...cuisine],
+      meals: [...meals],
+      drinks: [...drinks],
+      dietary: [...dietary],
       services,
       priceLevel: d.price_level ?? null,
       priceRange: priceLevelToRange(d.price_level) || '',

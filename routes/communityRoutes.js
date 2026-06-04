@@ -21,6 +21,9 @@ router.get('/communities/:communityId/chat-id', checkAuth, communityController.g
 
 router.post('/communities/leave', checkAuth, communityController.leaveCommunity);
 
+// Only the admin (creator) can remove another member
+router.post('/communities/remove-member', checkAuth, communityController.removeMember);
+
 
 // Only the creator can delete a community
 router.delete('/communities/:communityId', checkAuth, communityController.deleteCommunity);

@@ -383,6 +383,60 @@ exports.leaveCommunity = async (req, res) => {
   }
 };
 
+// -------------------- admin removes a member (exact clone of leave) --------------------
+exports.removeMember = async (req, res) => {
+  try {
+    const adminId = req.authData.id;
+    const id = Number(req.body?.communityId);
+    const targetUserId = Number(req.body?.userId);
+    if (!Number.isInteger(id)) {
+      return res.status(400).json({ error: 'Invalid communityId' });
+    }
+    if (!Number.isInteger(targetUserId)) {
+      return res.status(400).json({ error: 'Invalid userId' });
+    }
+
+    const community = await prisma.community.findUnique({
+      where: { id },
+      select: { id: true, creatorId: true },
+    });
+    if (!community) return res.status(404).json({ error: 'Community not found' });
+
+    // Only the admin (creator) can remove members
+    if (community.creatorId !== adminId) {
+      return res.status(403).json({ error: 'Only the community admin can remove members' });
+    }
+
+    // Creator cannot be removed; they should delete the community instead
+    if (community.creatorId === targetUserId) {
+      return res.status(403).json({ error: 'Creator cannot be removed. Delete the community instead.' });
+    }
+
+    const membership = await prisma.communityMember.findFirst({
+      where: { userId: targetUserId, communityId: id },
+      select: { id: true },
+    });
+    if (!membership) {
+      return res.status(404).json({ error: 'User is not a member of this community' });
+    }
+
+    await prisma.$transaction([
+      prisma.communityMember.delete({ where: { id: membership.id } }),
+      prisma.userOnChat.deleteMany({
+        where: { userId: targetUserId, chat: { communityId: id, isCommunity: true } },
+      }),
+      prisma.communityHistory.create({
+        data: { userId: targetUserId, communityId: id, action: 'left' },
+      }),
+    ]);
+
+    return res.json({ message: 'Member removed from community & chat' });
+  } catch (err) {
+    console.error('removeMember error:', err);
+    return res.status(500).json({ error: 'Failed to remove member' });
+  }
+};
+
 // -------------------- delete community --------------------
 exports.deleteCommunity = async (req, res) => {
   try {
