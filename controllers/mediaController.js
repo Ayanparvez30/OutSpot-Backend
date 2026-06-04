@@ -157,6 +157,15 @@ exports.uploadMedia = async (req, res) => {
 // ==================================================
 // saveToProfile: save existing/URL story to profile (SAVED) — CLONE-BASED
 // ==================================================
+// Guard against device-local cache paths slipping into the DB as mediaUrl.
+// Flutter has shipped builds that occasionally pass a path like
+// /data/user/0/<pkg>/cache/CAP....jpg instead of the S3 URL — accepting that
+// produces broken-image grid cells for every other user.
+function isPublicHttpUrl(u) {
+  if (typeof u !== 'string') return false;
+  return /^https?:\/\//i.test(u.trim());
+}
+
 exports.saveToProfile = async (req, res) => {
   const authenticatedUserId = req.authData.id;
   let { storyId, imageUrl, type = 'IMAGE', visibility = 'profile', latitude, longitude } = req.body;
@@ -164,6 +173,10 @@ exports.saveToProfile = async (req, res) => {
   try {
     if (!storyId && !imageUrl) {
       return res.status(400).json({ error: 'Provide either storyId or imageUrl' });
+    }
+    if (imageUrl && !isPublicHttpUrl(imageUrl)) {
+      console.log(`[saveToProfile] rejected non-http imageUrl user=${authenticatedUserId} url=${String(imageUrl).slice(0, 120)}`);
+      return res.status(400).json({ error: 'imageUrl must be a public http(s) URL. Upload via /upload first.' });
     }
 
     // ----------------------------------------------
@@ -419,6 +432,10 @@ exports.saveToVault = async (req, res) => {
     if (!storyId && !imageUrl) {
       return res.status(400).json({ error: 'Provide either storyId or imageUrl' });
     }
+    if (imageUrl && !isPublicHttpUrl(imageUrl)) {
+      console.log(`[saveToVault] rejected non-http imageUrl user=${userId} url=${String(imageUrl).slice(0, 120)}`);
+      return res.status(400).json({ error: 'imageUrl must be a public http(s) URL. Upload via /upload first.' });
+    }
 
     // ----------------------------------------------
     // Target status for this API
@@ -608,6 +625,36 @@ exports.getVaultStories = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch vault stories' });
   }
 };
+// Admin/maintenance: hide stories whose mediaUrl is a device-local cache path
+// (legacy data from before isPublicHttpUrl guard). Sets status=ARCHIVED so feeds
+// don't render broken_image cells.
+exports.purgeLocalPathStories = async (req, res) => {
+  try {
+    const stories = await prisma.story.findMany({
+      where: {
+        AND: [
+          { NOT: { mediaUrl: { startsWith: 'http://' } } },
+          { NOT: { mediaUrl: { startsWith: 'https://' } } },
+          { NOT: { status: 'ARCHIVED' } },
+        ],
+      },
+      select: { id: true, userId: true, mediaUrl: true },
+    });
+    if (stories.length === 0) {
+      return res.json({ archived: 0, message: 'No local-path stories to purge.' });
+    }
+    const ids = stories.map(s => s.id);
+    await prisma.story.updateMany({
+      where: { id: { in: ids } },
+      data: { status: 'ARCHIVED', visibility: 'private' },
+    });
+    return res.json({ archived: stories.length, sample: stories.slice(0, 5) });
+  } catch (e) {
+    console.error('purgeLocalPathStories error', e);
+    return res.status(500).json({ error: 'Failed to purge local-path stories' });
+  }
+};
+
 exports.removeStory = async (req, res) => {
   const userId = req.authData.id;
   const { storyId } = req.params;

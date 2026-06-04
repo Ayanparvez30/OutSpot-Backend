@@ -26,6 +26,7 @@ router.get('/stories', checkAuth, mediaController.getStories);
 router.post('/stories/profile', checkAuth, mediaController.saveToProfile);
 router.post('/stories/vault', checkAuth, mediaController.saveToVault); 
 router.delete('/stories/:storyId', checkAuth, mediaController.removeStory);
+router.post('/stories/purge-local-paths', checkAuth, mediaController.purgeLocalPathStories);
 router.get('/stories/vault', checkAuth, mediaController.getVaultStories);
 router.get('/stories/saved', checkAuth, mediaController.getSavedStories);  
 router.get('/stories/me', checkAuth, mediaController.getMyStories);
