@@ -197,7 +197,7 @@ exports.getCategoryPlaces = async (req, res) => {
 
     const lat = parseFloat(req.query.lat);
     const lng = parseFloat(req.query.lng);
-    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 5000;
+    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 16093;
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ error: 'lat/lng required' });
     }
@@ -566,7 +566,7 @@ exports.searchPlaces = async (req, res) => {
 
     const lat = parseFloat(req.query.lat);
     const lng = parseFloat(req.query.lng);
-    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 5000;
+    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 16093;
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ success: false, error: 'lat/lng required' });
     }
@@ -657,7 +657,7 @@ exports.getRestaurantsByCategory = async (req, res) => {
 
     const lat = parseFloat(req.query.lat);
     const lng = parseFloat(req.query.lng);
-    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 5000;
+    const radius = req.query.radius ? parseInt(req.query.radius, 10) : 16093;
 
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ success: false, error: 'lat/lng required' });

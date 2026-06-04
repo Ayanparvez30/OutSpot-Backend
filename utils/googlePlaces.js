@@ -157,7 +157,7 @@ function mapNewToLegacy(p) {
 // --------------- Places API (New) searchNearby ---------------
 // Returns up to 20 places per call. No pagination available on searchNearby.
 // rankPreference: 'POPULARITY' (default, matches Google Maps app) or 'DISTANCE'.
-async function searchNearbyNew({ lat, lng, type, radius = 5000, maxResults = 20, rank = 'POPULARITY' }) {
+async function searchNearbyNew({ lat, lng, type, radius = 16093, maxResults = 20, rank = 'POPULARITY' }) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
   if (!type) throw new Error('searchNearbyNew: type required');
@@ -202,7 +202,7 @@ async function nearbyByDistance({ lat, lng, type, pagetoken }) {
 // searchNearby returns max 20 in one call — no pagination on this endpoint.
 // maxPages is preserved in signature for caller compat but ignored (single fetch).
 async function nearbyByDistanceAll({ lat, lng, type, radius, maxPages = 3 }) { // eslint-disable-line no-unused-vars
-  const j = await searchNearbyNew({ lat, lng, type, radius: radius || 5000, rank: 'POPULARITY' });
+  const j = await searchNearbyNew({ lat, lng, type, radius: radius || 16093, rank: 'POPULARITY' });
   return (j.places || []).map(mapNewToLegacy).filter(Boolean);
 }
 
@@ -240,7 +240,7 @@ async function details(place_id) {
 }
 
 // --------------- Text search (new v1) ---------------
-async function textSearch({ query, lat, lng, radius = 5000 }) {
+async function textSearch({ query, lat, lng, radius = 16093 }) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!key) throw new Error('Missing GOOGLE_MAPS_API_KEY');
 
