@@ -667,12 +667,14 @@ exports.getRestaurantsByCategory = async (req, res) => {
     // for the same (lat,lng,cat). Radius filter applied per request.
     const candidates = await getCategoryCandidates({ cat, lat, lng, radius });
 
-    // ?limit= still honored if a caller explicitly wants fewer (low-bandwidth clients).
-    const places = candidates;
-
-    const limit = req.query.limit ? parseInt(req.query.limit, 10) : places.length;
-
-    const top = places.slice(0, limit);
+    // Pagination — only run details() for the visible page (Google API cost +
+    // latency scales with details() calls). Default page=1, pageSize=20.
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.max(1, Math.min(50, parseInt(req.query.pageSize, 10) || 20));
+    const offset = (page - 1) * pageSize;
+    const top = candidates.slice(offset, offset + pageSize);
+    const totalCount = candidates.length;
+    const hasMore = offset + top.length < totalCount;
 
     const restaurants = await Promise.all(
       top.map(async (p) => {
@@ -732,6 +734,10 @@ exports.getRestaurantsByCategory = async (req, res) => {
       success: true,
       category: { key: cat.key, title: cat.title },
       radius,
+      page,
+      pageSize,
+      totalCount,
+      hasMore,
       restaurants,
     });
   } catch (e) {
