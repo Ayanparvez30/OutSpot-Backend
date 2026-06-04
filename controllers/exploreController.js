@@ -10,7 +10,7 @@ const haversineMeters = (a, b) => {
   return 2 * R * Math.asin(Math.sqrt(A));
 };
 const metersToMiles = (m) => +(m / 1609.344).toFixed(2);
-function buildPhotosArray(d, max = 8, width = 1600) {
+function buildPhotosArray(d, max = 8, width = 4800) {
   const refs = (d?.photos || []).slice(0, max).map(p => p.photo_reference).filter(Boolean);
   return refs.map(ref => photoUrlByRef(ref, width)).filter(Boolean);
 }
@@ -33,48 +33,115 @@ function categoryCacheKey(catKey, lat, lng) {
   // pool and apply each caller's radius at retrieval time.
   return `${catKey}|${lat.toFixed(3)}|${lng.toFixed(3)}`;
 }
-async function getCategoryCandidates({ cat, lat, lng, radius }) {
+// Lazy grid expansion stages — load only what we need for the requested page.
+// Stage 1 (center cell) on first request, stage 2 (cardinal cells) when more
+// places needed, stage 3 (corner cells), stage 4 (text searches). Each stage
+// adds to the shared cached pool — next user in same cell gets the bigger pool
+// for free.
+const GRID_STAGES = [
+  { name: 'center',   cells: ['center'] },
+  { name: 'cardinal', cells: ['N', 'S', 'E', 'W'] },
+  { name: 'corner',   cells: ['NE', 'NW', 'SE', 'SW'] },
+];
+
+function buildGridCells(lat, lng, radius) {
+  // 9-cell grid covering the search circle. Cell radius = half total; center
+  // offset = total/2.5 → cells overlap slightly so no gap.
+  const cellRadius = Math.max(1000, Math.floor(radius / 2));
+  const offsetM = Math.floor(radius / 2.5);
+  const offsetLat = offsetM / 111000;
+  const offsetLng = offsetM / (111000 * Math.cos(lat * Math.PI / 180));
+  return {
+    center: { lat, lng, radius: cellRadius },
+    N:  { lat: lat + offsetLat, lng,                    radius: cellRadius },
+    S:  { lat: lat - offsetLat, lng,                    radius: cellRadius },
+    E:  { lat,                  lng: lng + offsetLng,   radius: cellRadius },
+    W:  { lat,                  lng: lng - offsetLng,   radius: cellRadius },
+    NE: { lat: lat + offsetLat, lng: lng + offsetLng,   radius: cellRadius },
+    NW: { lat: lat + offsetLat, lng: lng - offsetLng,   radius: cellRadius },
+    SE: { lat: lat - offsetLat, lng: lng + offsetLng,   radius: cellRadius },
+    SW: { lat: lat - offsetLat, lng: lng - offsetLng,   radius: cellRadius },
+  };
+}
+
+async function getCategoryCandidates({ cat, lat, lng, radius, requiredCount = 1000 }) {
   const key = categoryCacheKey(cat.key, lat, lng);
-  let pool;
-  const hit = CATEGORY_CACHE.get(key);
-  if (hit && Date.now() - hit.ts < CATEGORY_CACHE_TTL_MS) {
-    pool = hit.candidates;
-  } else {
-    const all = await Promise.all(
-      cat.googleTypes.map(t => nearbyByDistanceAll({ lat, lng, type: t, maxPages: 3 }).catch(() => []))
-    );
-    const seen = new Set();
-    pool = [];
-    for (const list of all) {
-      for (const p of list) {
-        if (!p?.place_id || seen.has(p.place_id)) continue;
-        seen.add(p.place_id);
-        const primary = primaryCategory(p);
-        if (!primary || primary.key !== cat.key) continue;
-        if (!p.geometry?.location) continue;
-        pool.push(p);
-      }
-    }
-    CATEGORY_CACHE.set(key, { ts: Date.now(), candidates: pool });
+  let entry = CATEGORY_CACHE.get(key);
+  if (!entry || Date.now() - entry.ts >= CATEGORY_CACHE_TTL_MS) {
+    entry = {
+      ts: Date.now(),
+      sortedPool: [],            // append-only — position locked once a place lands here
+      seenIds: new Set(),        // dedup guard (covers ALL expansion stages)
+      cellsLoaded: new Set(),
+      textQueriesLoaded: new Set(),
+    };
+    CATEGORY_CACHE.set(key, entry);
   }
 
-  // Apply per-request radius filter + hybrid (popularity × proximity) sort.
-  // Hybrid score: more reviews ranks higher, but distance discounts the score.
-  // Result: highly-reviewed venues near the user beat distant ones, while a
-  // tiny but ultra-close place doesn't outrank a popular spot a block away.
   const radiusMiles = metersToMiles(radius);
-  const filtered = [];
-  for (const p of pool) {
-    const distMeters = haversineMeters({ lat, lng }, p.geometry.location);
-    if (metersToMiles(distMeters) > radiusMiles) continue;
-    const reviews = p.user_ratings_total || 0;
-    const km = distMeters / 1000;
-    // Score: reviews / (1 + km). 100 reviews @ 0km = 100; 100 reviews @ 1km = 50.
-    p._hybridScore = reviews / (1 + km);
-    filtered.push(p);
+
+  // Filter, score & append a freshly-fetched batch to sortedPool. New places
+  // are sorted WITHIN the batch then concatenated — once positioned, a place
+  // never moves. Guarantees zero duplicates across paginated requests.
+  const appendBatch = (places) => {
+    const fresh = [];
+    for (const p of places) {
+      if (!p?.place_id || entry.seenIds.has(p.place_id)) continue;
+      const primary = primaryCategory(p);
+      if (!primary || primary.key !== cat.key) continue;
+      if (!p.geometry?.location) continue;
+      const distMeters = haversineMeters({ lat, lng }, p.geometry.location);
+      if (metersToMiles(distMeters) > radiusMiles) continue;
+      const reviews = p.user_ratings_total || 0;
+      p._hybridScore = reviews / (1 + distMeters / 1000);
+      entry.seenIds.add(p.place_id);
+      fresh.push(p);
+    }
+    fresh.sort((a, b) => (b._hybridScore || 0) - (a._hybridScore || 0));
+    entry.sortedPool.push(...fresh);
+  };
+
+  const cells = buildGridCells(lat, lng, radius);
+
+  // Stage 1-3: grid expansion.
+  for (const stage of GRID_STAGES) {
+    if (entry.sortedPool.length >= requiredCount) break;
+    const cellsToLoad = stage.cells.filter(c => !entry.cellsLoaded.has(c));
+    if (cellsToLoad.length === 0) continue;
+    const tasks = [];
+    for (const cellName of cellsToLoad) {
+      const c = cells[cellName];
+      for (const t of cat.googleTypes) {
+        tasks.push(
+          nearbyByDistanceAll({ lat: c.lat, lng: c.lng, type: t, radius: c.radius })
+            .catch(() => [])
+            .then(places => ({ cellName, places }))
+        );
+      }
+    }
+    const results = await Promise.all(tasks);
+    const batch = [];
+    for (const { cellName, places } of results) {
+      entry.cellsLoaded.add(cellName);
+      batch.push(...places);
+    }
+    appendBatch(batch);
   }
-  filtered.sort((a, b) => (b._hybridScore || 0) - (a._hybridScore || 0));
-  return filtered;
+
+  // Stage 4: searchText queries (sequential, Google rate-limits).
+  if (entry.sortedPool.length < requiredCount && Array.isArray(cat.textQueries)) {
+    for (const q of cat.textQueries) {
+      if (entry.sortedPool.length >= requiredCount) break;
+      if (entry.textQueriesLoaded.has(q)) continue;
+      try {
+        const places = await textSearch({ query: q, lat, lng, radius });
+        entry.textQueriesLoaded.add(q);
+        appendBatch(places);
+      } catch (_) { /* skip on error */ }
+    }
+  }
+
+  return entry.sortedPool;
 }
 
 // Priority order matters. Walk top-down — first match wins.
@@ -82,15 +149,20 @@ async function getCategoryCandidates({ cat, lat, lng, radius }) {
 // excluded from Restaurants results. A pub tagged ['bar','restaurant'] → primary=Bars.
 const CATEGORIES = [
   { key: 'venue-events', title: 'Venue Events', icon: '🎤', points: 4, imageKey: 'venue-events',
-    googleTypes: ['night_club', 'karaoke', 'comedy_club'] },
+    googleTypes: ['night_club', 'karaoke', 'comedy_club', 'live_music_venue'],
+    textQueries: ['popular nightclubs', 'karaoke bars', 'comedy clubs'] },
   { key: 'outdoors',     title: 'Outdoors',     icon: '🌳', points: 3, imageKey: 'outdoors',
-    googleTypes: ['park', 'campground', 'tourist_attraction', 'hiking_area', 'national_park', 'botanical_garden'] },
+    googleTypes: ['park', 'campground', 'tourist_attraction', 'hiking_area', 'national_park', 'botanical_garden', 'sports_complex', 'sports_club', 'beach'],
+    textQueries: ['parks', 'hiking trails', 'sports clubs'] },
   { key: 'bars',         title: 'Bars',         icon: '🍻', points: 4, imageKey: 'bars',
-    googleTypes: ['bar', 'pub'] },
+    googleTypes: ['bar', 'pub', 'wine_bar', 'bar_and_grill'],
+    textQueries: ['popular bars', 'irish pubs', 'cocktail bars'] },
   { key: 'cafes',        title: 'Cafes',        icon: '☕', points: 3, imageKey: 'cafes',
-    googleTypes: ['cafe'] },
+    googleTypes: ['cafe', 'coffee_shop'],
+    textQueries: ['best coffee shops', 'popular cafes'] },
   { key: 'restaurants',  title: 'Restaurants',  icon: '🍽️', points: 4, imageKey: 'restaurants',
-    googleTypes: ['restaurant', 'meal_takeaway', 'meal_delivery'] },
+    googleTypes: ['restaurant', 'meal_takeaway', 'meal_delivery', 'fast_food_restaurant', 'fine_dining_restaurant', 'brunch_restaurant', 'breakfast_restaurant'],
+    textQueries: ['popular restaurants', 'best restaurants', 'fine dining'] },
 ];
 
 function findCat(key) { return CATEGORIES.find(c => c.key === key); }
@@ -410,7 +482,7 @@ exports.getPlaceDetail = async (req, res) => {
     const d = await details(placeId);
 
     const photos = buildPhotosArray(d, 8);
-    const image = photos[0] || photoUrlByRef(d.photos?.[0]?.photo_reference, 1600) || '';
+    const image = photos[0] || photoUrlByRef(d.photos?.[0]?.photo_reference, 4800) || '';
     const openNow = d.opening_hours?.open_now ?? null;
     const placeLat = d.geometry?.location?.lat;
     const placeLng = d.geometry?.location?.lng;
@@ -589,7 +661,7 @@ exports.searchPlaces = async (req, res) => {
       let d = null;
       try { d = await details(p.place_id); } catch (_) {}
       const photos = buildPhotosArray(d, 8);
-      const image = photos[0] || photoUrlByRef(p.photos?.[0]?.photo_reference, 1600) || '';
+      const image = photos[0] || photoUrlByRef(p.photos?.[0]?.photo_reference, 4800) || '';
       const matched = primaryCategory(d || p);
       const basePoints = matched ? matched.points : 0;
       const finalPoints = Math.round(basePoints * multiplier);
@@ -663,15 +735,16 @@ exports.getRestaurantsByCategory = async (req, res) => {
       return res.status(400).json({ success: false, error: 'lat/lng required' });
     }
 
-    // Shared cached candidate pool — identical set served to /explore/category
-    // for the same (lat,lng,cat). Radius filter applied per request.
-    const candidates = await getCategoryCandidates({ cat, lat, lng, radius });
-
     // Pagination — only run details() for the visible page (Google API cost +
     // latency scales with details() calls). Default page=1, pageSize=20.
     const page = Math.max(1, parseInt(req.query.page, 10) || 1);
     const pageSize = Math.max(1, Math.min(50, parseInt(req.query.pageSize, 10) || 20));
     const offset = (page - 1) * pageSize;
+
+    // Shared cached candidate pool — pool expands lazily as user paginates.
+    // We ask for enough places to cover current page + a buffer of one extra page.
+    const requiredCount = (page + 1) * pageSize;
+    const candidates = await getCategoryCandidates({ cat, lat, lng, radius, requiredCount });
     const top = candidates.slice(offset, offset + pageSize);
     const totalCount = candidates.length;
     const hasMore = offset + top.length < totalCount;
@@ -691,7 +764,7 @@ exports.getRestaurantsByCategory = async (req, res) => {
         const photos = buildPhotosArray(d, 8);        // ✅ multiple photos
         const image =
           photos[0] ||
-          photoUrlByRef(p.photos?.[0]?.photo_reference, 1600) ||
+          photoUrlByRef(p.photos?.[0]?.photo_reference, 4800) ||
           '';
 
         const lat2 = p.geometry?.location?.lat ?? d?.geometry?.location?.lat ?? 0;
