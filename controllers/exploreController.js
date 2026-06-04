@@ -167,6 +167,32 @@ const CATEGORIES = [
 
 function findCat(key) { return CATEGORIES.find(c => c.key === key); }
 
+// Trending pool — separate from the per-category grid pools because Google's
+// trending signal is a single textSearch query, not a type-bucketed search.
+// We cache per (lat-cell, lng-cell) for 5min so a hot location only pays
+// one Google call per window.
+async function getTrendingCandidates({ lat, lng, radius }) {
+  const cacheKey = `trending|${lat.toFixed(3)}|${lng.toFixed(3)}`;
+  const hit = CATEGORY_CACHE.get(cacheKey);
+  if (hit && Date.now() - hit.ts < CATEGORY_CACHE_TTL_MS) return hit.sortedPool;
+
+  const raw = await textSearch({ query: 'trending places near me', lat, lng, radius });
+  const radiusMiles = metersToMiles(radius);
+  const sortedPool = [];
+  for (const p of (raw || [])) {
+    if (!p?.place_id || !p.geometry?.location) continue;
+    const distMeters = haversineMeters({ lat, lng }, p.geometry.location);
+    if (metersToMiles(distMeters) > radiusMiles) continue;
+    p._hybridScore = (p.user_ratings_total || 0) / (1 + distMeters / 1000);
+    sortedPool.push(p);
+  }
+  // Preserve Google's trending order — DO NOT re-sort. Google's ranking already
+  // reflects "trending" signals we don't have access to. Hybrid score kept only
+  // as a tiebreaker if a UI ever needs it.
+  CATEGORY_CACHE.set(cacheKey, { ts: Date.now(), sortedPool });
+  return sortedPool;
+}
+
 // Determine the PRIMARY category for a place. No name-based inference.
 // Strict primary_type ONLY for venue-events because Google tags `night_club`
 // loosely on restaurants/museums; for everything else, lenient types[] match.
@@ -238,7 +264,10 @@ const CATEGORY_ALIASES = {
   'rooftop-bars':        'bars',
   'outdoor-activities':  'outdoors',
   'popular-restaurants': 'restaurants',
-  'trending':            'restaurants',
+  // 'trending' is NOT aliased — it routes to a dedicated trending path that
+  // uses Google's textSearch('trending places near me') instead of the grid pool.
+  // Both /explore/category/trending/places and /restaurants/category/trending/places
+  // detect the key and short-circuit to getTrendingCandidates().
   'popular':             'restaurants',
   'events':              'venue-events',
 };
@@ -279,8 +308,6 @@ function mapPlace(p, lat, lng, points) {
 exports.getCategoryPlaces = async (req, res) => {
   try {
     const { key } = req.params;
-    const cat = getCategory(key);
-    if (!cat) return res.status(404).json({ error: 'Unknown category' });
 
     const lat = parseFloat(req.query.lat);
     const lng = parseFloat(req.query.lng);
@@ -288,6 +315,14 @@ exports.getCategoryPlaces = async (req, res) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ error: 'lat/lng required' });
     }
+
+    // Trending short-circuit — different data source (Google textSearch).
+    if (key === 'trending') {
+      return _renderTrendingPlaces(req, res, lat, lng, radius);
+    }
+
+    const cat = getCategory(key);
+    if (!cat) return res.status(404).json({ error: 'Unknown category' });
 
     // Pagination — default page=1, pageSize=20. Pool expands lazily as user
     // paginates so cold first page stays fast.
@@ -780,10 +815,6 @@ exports.getRestaurantCategories = async (req, res) => {
 exports.getRestaurantsByCategory = async (req, res) => {
   try {
     const { key } = req.params;
-    // Use the canonical 5-bucket category (with aliases for legacy keys
-    // trending/popular/events/rooftop-bars/outdoor-activities/popular-restaurants).
-    const cat = getCategory(key);
-    if (!cat) return res.status(404).json({ success: false, error: 'Unknown category' });
 
     const lat = parseFloat(req.query.lat);
     const lng = parseFloat(req.query.lng);
@@ -792,6 +823,16 @@ exports.getRestaurantsByCategory = async (req, res) => {
     if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
       return res.status(400).json({ success: false, error: 'lat/lng required' });
     }
+
+    // Trending short-circuit — different data source (Google textSearch).
+    if (key === 'trending') {
+      return _renderTrendingRestaurants(req, res, lat, lng, radius);
+    }
+
+    // Use the canonical 5-bucket category (with aliases for legacy keys
+    // popular/events/rooftop-bars/outdoor-activities/popular-restaurants).
+    const cat = getCategory(key);
+    if (!cat) return res.status(404).json({ success: false, error: 'Unknown category' });
 
     // Pagination — only run details() for the visible page (Google API cost +
     // latency scales with details() calls). Default page=1, pageSize=20.
@@ -876,6 +917,95 @@ exports.getRestaurantsByCategory = async (req, res) => {
     return res.status(500).json({ success: false, error: 'Failed to load restaurants' });
   }
 };
+
+// Shared trending renderer for /explore/category/trending/places.
+// Same response envelope as getCategoryPlaces (places[] + page/pageSize/etc),
+// data source = Google textSearch('trending places near me').
+async function _renderTrendingPlaces(req, res, lat, lng, radius) {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.max(1, Math.min(50, parseInt(req.query.pageSize, 10) || 20));
+  const offset = (page - 1) * pageSize;
+
+  const candidates = await getTrendingCandidates({ lat, lng, radius });
+  const totalCount = candidates.length;
+  const slice = candidates.slice(offset, offset + pageSize);
+  // mapPlace expects per-place `points`. Use restaurants bucket (4) as the
+  // default trending bucket — it's the most common award value, and clients
+  // typically don't filter trending by points anyway.
+  const items = slice.map(p => ({ ...mapPlace(p, lat, lng, 4), category: 'Trending' }));
+
+  return res.json({
+    category: { key: 'trending', title: 'Trending', points: 4 },
+    page,
+    pageSize,
+    totalCount,
+    hasMore: offset + items.length < totalCount,
+    places: items,
+    nextPageToken: null,
+  });
+}
+
+// Shared trending renderer for /restaurants/category/trending/places.
+// Same response envelope + enrichment as getRestaurantsByCategory.
+async function _renderTrendingRestaurants(req, res, lat, lng, radius) {
+  const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+  const pageSize = Math.max(1, Math.min(50, parseInt(req.query.pageSize, 10) || 20));
+  const offset = (page - 1) * pageSize;
+
+  const candidates = await getTrendingCandidates({ lat, lng, radius });
+  const totalCount = candidates.length;
+  const top = candidates.slice(offset, offset + pageSize);
+  const hasMore = offset + top.length < totalCount;
+
+  const restaurants = await Promise.all(top.map(async (p) => {
+    const placeId = p.place_id;
+    let d = null;
+    try { d = await details(placeId); } catch (_) { d = null; }
+
+    const photos = buildPhotosArray(d, 8);
+    const image = photos[0] || photoUrlByRef(p.photos?.[0]?.photo_reference, 4800) || '';
+    const lat2 = p.geometry?.location?.lat ?? d?.geometry?.location?.lat ?? 0;
+    const lng2 = p.geometry?.location?.lng ?? d?.geometry?.location?.lng ?? 0;
+    const openNow = d?.opening_hours?.open_now ?? p.opening_hours?.open_now;
+    const matched = primaryCategory(d || p);
+    const points = matched ? matched.points : 4;
+
+    return {
+      id: String(placeId),
+      name: d?.name || p.name || '',
+      address: d?.formatted_address || p.vicinity || '',
+      phone: d?.formatted_phone_number || d?.international_phone_number || '',
+      website: d?.website || '',
+      googleMapsUrl: d?.url || '',
+      lat: Number(lat2),
+      lng: Number(lng2),
+      image,
+      photos,
+      category: 'Trending',
+      points,
+      priceLevel: d?.price_level ?? null,
+      priceRange: priceLevelToRange(d?.price_level) || '',
+      openNow: openNow ?? null,
+      status: openNowToStatus(openNow),
+      openingHours: d?.opening_hours?.weekday_text || [],
+      rating: Number(d?.rating ?? p.rating ?? 0),
+      totalReviews: Number(d?.user_ratings_total ?? p.user_ratings_total ?? 0),
+      businessStatus: d?.business_status || null,
+      types: d?.types || p.types || [],
+    };
+  }));
+
+  return res.json({
+    success: true,
+    category: { key: 'trending', title: 'Trending' },
+    radius,
+    page,
+    pageSize,
+    totalCount,
+    hasMore,
+    restaurants,
+  });
+}
 
 function startOfWeekMonday(d = new Date()) {
   const date = new Date(d);
