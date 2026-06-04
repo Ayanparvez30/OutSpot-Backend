@@ -95,28 +95,31 @@ const CATEGORIES = [
 
 function findCat(key) { return CATEGORIES.find(c => c.key === key); }
 
-// Determine the PRIMARY category for a place using ONLY Google's primary_type
-// + types[]. No name-based inference. Places API (New) provides a single
-// authoritative primary_type per place which we trust directly:
-//   Starbucks → primary_type: 'cafe' → Cafes
-//   McDonald's → primary_type: 'fast_food_restaurant' → Restaurants
-//   Royale → primary_type: 'night_club' → Venue Events
+// Determine the PRIMARY category for a place. No name-based inference.
+// Strict primary_type ONLY for venue-events because Google tags `night_club`
+// loosely on restaurants/museums; for everything else, lenient types[] match.
+// Cafe/restaurant overlap (Starbucks=cafe+restaurant vs McDonald's=cafe+restaurant)
+// is resolved by Google's `primary_type` — no name regex.
 function primaryCategory(place) {
   const types = Array.isArray(place?.types) ? place.types : [];
   const tset = new Set(types);
   const primaryType = place?.primary_type || null;
 
-  // 1) Venue Events (clubs) — primary_type must match exactly
+  // 1) Venue Events — STRICT primary_type (filters out restaurants tagged night_club)
   if (findCat('venue-events').googleTypes.includes(primaryType)) return findCat('venue-events');
-  // 2) Outdoors — primary_type match
-  if (findCat('outdoors').googleTypes.includes(primaryType)) return findCat('outdoors');
-  // 3) Bars — primary_type match
-  if (findCat('bars').googleTypes.includes(primaryType)) return findCat('bars');
-  // 4) Cafes — primary_type match
-  if (findCat('cafes').googleTypes.includes(primaryType)) return findCat('cafes');
-  // 5) Restaurants — primary_type match OR any restaurant-family type in types[]
-  if (findCat('restaurants').googleTypes.includes(primaryType)) return findCat('restaurants');
-  if (tset.has('restaurant') || tset.has('meal_takeaway') || tset.has('meal_delivery')) return findCat('restaurants');
+  // 2) Outdoors — lenient types[] match
+  if (findCat('outdoors').googleTypes.some(t => tset.has(t))) return findCat('outdoors');
+  // 3) Bars — lenient types[] match
+  if (findCat('bars').googleTypes.some(t => tset.has(t))) return findCat('bars');
+
+  // 4) Cafe vs Restaurant — when both tags present, primary_type wins (Google's call)
+  const isCafe = tset.has('cafe');
+  const isRest = tset.has('restaurant') || tset.has('meal_takeaway') || tset.has('meal_delivery');
+  if (isCafe && isRest) {
+    return primaryType === 'cafe' ? findCat('cafes') : findCat('restaurants');
+  }
+  if (isCafe) return findCat('cafes');
+  if (isRest) return findCat('restaurants');
 
   return null;
 }
