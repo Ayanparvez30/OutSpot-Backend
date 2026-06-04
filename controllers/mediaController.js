@@ -676,8 +676,20 @@ exports.removeStory = async (req, res) => {
       return res.json({ message: 'Story archived (others have saved it), removed from your feed.' });
     }
 
-    // no refs → safe to hard-delete
+    // no refs → safe to hard-delete the row
+    const mediaUrl = story.mediaUrl;
     await prisma.story.delete({ where: { id: story.id } });
+
+    // Orphan-only S3 cleanup — fires AFTER the row is gone, so if the same
+    // mediaUrl was used by another story/clone, that other row keeps the S3
+    // object alive. Fire-and-forget so the API response stays fast.
+    if (mediaUrl) {
+      const { deleteS3IfOrphan } = require('../utils/s3Cleanup');
+      deleteS3IfOrphan(mediaUrl).then(r => {
+        if (r.ok) console.log(`[removeStory] S3 orphan deleted: ${mediaUrl}`);
+      }).catch(e => console.error('[removeStory] s3 cleanup error', e));
+    }
+
     return res.json({ message: 'Story removed successfully.' });
   } catch (error) {
     console.error('removeStory error:', error);

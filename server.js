@@ -90,20 +90,35 @@ const STORY_TTL_MINUTES = Number(
 // dev: every minute; prod: top of hour
 const CRON_EXPR = process.env.NODE_ENV === 'development' ? '* * * * *' : '0 * * * *';
 
-cron.schedule(CRON_EXPR, async () => { 
+cron.schedule(CRON_EXPR, async () => {
   try {
     const expiry = new Date(Date.now() - STORY_TTL_MINUTES * 60 * 1000);
 
     // ✅ DO NOT delete stories that are referenced by any SavedStory (SAVED or VAULT)
-    const result = await prisma.story.deleteMany({
+    // Capture URLs BEFORE deleting so we can attempt orphan S3 cleanup after.
+    const doomed = await prisma.story.findMany({
       where: {
         status: 'ACTIVE',
         createdAt: { lt: expiry },
-        savedBy: { none: {} } // keep if has any saved/vault link
-      }
+        savedBy: { none: {} },
+      },
+      select: { id: true, mediaUrl: true },
     });
 
-    console.log(`✅ Expired stories deleted (kept saved/vault): ${result.count}`);
+    if (doomed.length === 0) {
+      console.log('✅ Expired stories: 0');
+      return;
+    }
+
+    const ids = doomed.map(s => s.id);
+    await prisma.story.deleteMany({ where: { id: { in: ids } } });
+    console.log(`✅ Expired stories deleted: ${ids.length}`);
+
+    // Orphan-only S3 cleanup — checks every URL column in every table first.
+    const { deleteS3IfOrphanBulk } = require('./utils/s3Cleanup');
+    const urls = [...new Set(doomed.map(s => s.mediaUrl).filter(Boolean))];
+    const cleanup = await deleteS3IfOrphanBulk(urls);
+    console.log(`✅ S3 cleanup: deleted=${cleanup.deleted} kept=${cleanup.kept} failed=${cleanup.failed}`);
   } catch (e) {
     console.error('❌ Cron error:', e);
   }
