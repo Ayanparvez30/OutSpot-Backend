@@ -272,11 +272,15 @@ function initSocket(server) {
         // Calculate expiresAt if chat has disappearing messages enabled
         // View-once (disappearingSeconds === 1): sentinel date, deleted 5s after recipient reads
         const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
+        const GLOBAL_CHAT_TTL_MS = 12 * 60 * 60 * 1000; // global messages disappear 12h after being sent
         let expiresAt = null;
         if (chat.disappearingSeconds === 1) {
           expiresAt = VIEW_ONCE_SENTINEL;
         } else if (chat.disappearingSeconds) {
           expiresAt = new Date(Date.now() + chat.disappearingSeconds * 1000);
+        } else if (isGlobalVariant) {
+          // Each global message expires independently, 12h from its own send time
+          expiresAt = new Date(Date.now() + GLOBAL_CHAT_TTL_MS);
         }
 
         const message = await prisma.message.create({
@@ -386,15 +390,18 @@ function initSocket(server) {
 
         // Send push notification to offline users (wake-up only, no delivery marking)
         // Delivery is confirmed solely by client emitting 'messageDelivered' via socket
-        const sender = await prisma.user.findUnique({ where: { id: senderId } });
-        if (sender) {
-          sendPushNotificationToOfflineUsers(
-            chatId,
-            senderId,
-            sender.firstName,
-            sender.lastName,
-            content || ''
-          );
+        // Global chat sends NO notifications — only personal & group chats notify.
+        if (!isGlobalVariant) {
+          const sender = await prisma.user.findUnique({ where: { id: senderId } });
+          if (sender) {
+            sendPushNotificationToOfflineUsers(
+              chatId,
+              senderId,
+              sender.firstName,
+              sender.lastName,
+              content || ''
+            );
+          }
         }
       } catch (error) {
         console.error('❌ Error sending message:', error);

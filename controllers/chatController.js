@@ -199,11 +199,15 @@ exports.sendTextMessage = async (req, res) => {
 
     // Calculate expiresAt for disappearing messages
     const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
+    const GLOBAL_CHAT_TTL_MS = 12 * 60 * 60 * 1000; // global messages disappear 12h after being sent
     let expiresAt = null;
     if (chat.disappearingSeconds === 1) {
       expiresAt = VIEW_ONCE_SENTINEL;
     } else if (chat.disappearingSeconds) {
       expiresAt = new Date(Date.now() + chat.disappearingSeconds * 1000);
+    } else if (isGlobalVariant) {
+      // Each global message expires independently, 12h from its own send time
+      expiresAt = new Date(Date.now() + GLOBAL_CHAT_TTL_MS);
     }
 
     const message = await prisma.message.create({
@@ -285,21 +289,24 @@ exports.sendTextMessage = async (req, res) => {
       console.error("sendTextMessage socket error:", socketErr);
     }
 
-    // Push notifications for offline users
-    try {
-      const { sendPushToOfflineUsers } = require("../utils/socket");
-      const sender = await prisma.user.findUnique({ where: { id: userId } });
-      if (sender) {
-        sendPushToOfflineUsers(
-          chatId,
-          userId,
-          sender.firstName,
-          sender.lastName,
-          content || ""
-        );
+    // Push notifications for offline users.
+    // Global chat sends NO notifications — only personal & group chats notify.
+    if (!isGlobalVariant) {
+      try {
+        const { sendPushToOfflineUsers } = require("../utils/socket");
+        const sender = await prisma.user.findUnique({ where: { id: userId } });
+        if (sender) {
+          sendPushToOfflineUsers(
+            chatId,
+            userId,
+            sender.firstName,
+            sender.lastName,
+            content || ""
+          );
+        }
+      } catch (pushErr) {
+        console.error("sendTextMessage push notification error:", pushErr);
       }
-    } catch (pushErr) {
-      console.error("sendTextMessage push notification error:", pushErr);
     }
 
     return res.json({ success: true, message: formatted });
