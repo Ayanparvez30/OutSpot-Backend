@@ -274,13 +274,25 @@ exports.getCategoryPlaces = async (req, res) => {
       return res.status(400).json({ error: 'lat/lng required' });
     }
 
-    // Shared candidate fetch — same set served to /restaurants/category for
-    // the same (lat,lng,radius,cat) within cache TTL.
-    const candidates = await getCategoryCandidates({ cat, lat, lng, radius });
-    const items = candidates.map(p => ({ ...mapPlace(p, lat, lng, cat.points), category: cat.title }));
+    // Pagination — default page=1, pageSize=20. Pool expands lazily as user
+    // paginates so cold first page stays fast.
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.max(1, Math.min(50, parseInt(req.query.pageSize, 10) || 20));
+    const offset = (page - 1) * pageSize;
+    const requiredCount = (page + 1) * pageSize;
+
+    const candidates = await getCategoryCandidates({ cat, lat, lng, radius, requiredCount });
+    const totalCount = candidates.length;
+    const slice = candidates.slice(offset, offset + pageSize);
+    const items = slice.map(p => ({ ...mapPlace(p, lat, lng, cat.points), category: cat.title }));
+    const hasMore = offset + items.length < totalCount;
 
     res.json({
       category: { key: cat.key, title: cat.title, points: cat.points },
+      page,
+      pageSize,
+      totalCount,
+      hasMore,
       places: items,
       nextPageToken: null,
     });

@@ -208,15 +208,22 @@ async function nearbyByDistanceAll({ lat, lng, type, radius, maxPages = 3 }) { /
 
 // --------------- Photo URL (new v1 media endpoint) ---------------
 // Accepts either new "places/.../photos/..." name OR legacy `photoreference` string.
-function photoUrlByRef(photoRef, maxwidth = 800) {
+// Requests BOTH maxWidthPx AND maxHeightPx at Google's max (4800) so landscape
+// and portrait photos both come back at full available resolution. Google
+// scales the photo to fit within the box and serves at the source resolution
+// (so we never get less than what Google has).
+function photoUrlByRef(photoRef, maxwidth = 4800) {
   const key = process.env.GOOGLE_MAPS_API_KEY;
   if (!photoRef || !key) return null;
+  // Clamp to Google's API ceiling — anything higher gets 400.
+  const wPx = Math.min(4800, Math.max(1, maxwidth));
+  const hPx = 4800;
   // New v1 format: name = "places/<placeId>/photos/<photoId>"
   if (typeof photoRef === 'string' && photoRef.startsWith('places/')) {
-    return `${NEW_BASE}/${photoRef}/media?maxWidthPx=${maxwidth}&key=${key}`;
+    return `${NEW_BASE}/${photoRef}/media?maxWidthPx=${wPx}&maxHeightPx=${hPx}&key=${key}`;
   }
   // Legacy fallback (kept in case any old photo_reference still floats through caches)
-  return `${LEGACY_BASE}/photo?maxwidth=${maxwidth}&photoreference=${photoRef}&key=${key}`;
+  return `${LEGACY_BASE}/photo?maxwidth=${wPx}&photoreference=${photoRef}&key=${key}`;
 }
 
 // --------------- Place details (new v1) ---------------
