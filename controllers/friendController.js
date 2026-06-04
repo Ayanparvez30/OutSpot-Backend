@@ -17,6 +17,43 @@ const firstAvatar = (minimeArr) =>
     ? (minimeArr[0]?.avatarUrl || "")
     : "";
 
+// Batched: for a viewer and a list of target user ids, return a Map of
+// id -> friendshipStatus computed RELATIVE TO THE VIEWER.
+// Status: "SELF" | "ACCEPTED" | "PENDING_SENT" | "PENDING_RECEIVED" | "NONE".
+// One query for the whole list — used to badge friend-of-friend lists, search, etc.
+async function getViewerFriendshipStatusMap(viewerId, targetIds) {
+  const map = new Map();
+  const others = [...new Set(targetIds)].filter((id) => id !== viewerId);
+  // Default everyone to NONE; the viewer themselves is SELF.
+  for (const id of targetIds) {
+    map.set(id, id === viewerId ? "SELF" : "NONE");
+  }
+  if (others.length === 0) return map;
+
+  const links = await prisma.friendship.findMany({
+    where: {
+      OR: [
+        { requesterId: viewerId, receiverId: { in: others } },
+        { receiverId: viewerId, requesterId: { in: others } },
+      ],
+    },
+    select: { requesterId: true, receiverId: true, status: true },
+  });
+
+  for (const fr of links) {
+    const otherId = fr.requesterId === viewerId ? fr.receiverId : fr.requesterId;
+    if (fr.status === "ACCEPTED") {
+      map.set(otherId, "ACCEPTED");
+    } else if (fr.status === "PENDING") {
+      map.set(
+        otherId,
+        fr.requesterId === viewerId ? "PENDING_SENT" : "PENDING_RECEIVED"
+      );
+    }
+  }
+  return map;
+}
+
 const REASON_RANK = { CONTACT: 5, MUTUAL: 4, COMMUNITY: 3, POPULAR: 2, NEW_USER: 1 };
 
 const getMatchScore = (user, q) => {
@@ -1374,6 +1411,8 @@ exports.getFriendProfile = async (req, res) => {
 
     const fofIds = allFriendUsers.map((u) => u.id);
     const fofWeeklyMap = await getWeeklyPointsForUsers(fofIds);
+    // Badge each friend-of-friend with the VIEWER's own relationship status.
+    const fofStatusMap = await getViewerFriendshipStatusMap(currentUserId, fofIds);
 
     let friendFriends = allFriendUsers.map((u) => ({
       id: u.id,
@@ -1383,6 +1422,7 @@ exports.getFriendProfile = async (req, res) => {
       avatarUrl: u.minime?.[0]?.avatarUrl || "",
       totalPoints: u.totalPoints || 0,
       thisWeekPoints: fofWeeklyMap.get(u.id) || 0,
+      friendshipStatus: fofStatusMap.get(u.id) || "NONE",
     }));
 
     const sortBy = (req.query.sortBy || "").toString();
@@ -1569,6 +1609,9 @@ exports.getUserProfile = async (req, res) => {
 
       // Fetch weekly points efficiently (like getFriendList)
       const weekPointsMap = await getWeeklyPointsForUsers(friendIds);
+      // These are the TARGET's friends — badge each with the VIEWER's own
+      // relationship so the UI knows if a friend-of-friend is mine or not.
+      const viewerStatusMap = await getViewerFriendshipStatusMap(currentUserId, friendIds);
       friends = friendsRaw.map((friend) => ({
         id: friend.id,
         username: friend.username,
@@ -1577,6 +1620,7 @@ exports.getUserProfile = async (req, res) => {
         avatarUrl: friend.minime?.[0]?.avatarUrl || null,
         totalPoints: friend.totalPoints || 0,
         thisWeekPoints: weekPointsMap.get(friend.id) || 0,
+        friendshipStatus: viewerStatusMap.get(friend.id) || "NONE",
         profileUrl: `/api/users/${friend.id}/profile`,
       }));
 
