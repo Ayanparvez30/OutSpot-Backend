@@ -122,7 +122,17 @@ function mapNewToLegacy(p) {
     website: p.websiteUri || '',
     url: p.googleMapsUri || '',
     editorial_summary: p.editorialSummary ? { overview: p.editorialSummary.text } : undefined,
-    reviews: p.reviews || [],
+    // Normalize reviews to legacy shape — new API returns text/author as nested
+    // objects { text, languageCode } which crashes Flutter expecting strings.
+    reviews: (p.reviews || []).map(r => ({
+      author_name: r.authorAttribution?.displayName || '',
+      profile_photo_url: r.authorAttribution?.photoUri || null,
+      author_url: r.authorAttribution?.uri || null,
+      rating: r.rating || 0,
+      text: r.text?.text || r.originalText?.text || '',
+      relative_time_description: r.relativePublishTimeDescription || '',
+      time: r.publishTime || null,
+    })),
     serves_beer: p.servesBeer,
     serves_breakfast: p.servesBreakfast,
     serves_brunch: p.servesBrunch,

@@ -499,7 +499,7 @@ exports.getPlaceDetail = async (req, res) => {
       priceRange: priceLevelToRange(d.price_level) || '',
       openNow,
       status: openNowToStatus(openNow),
-      weekdayText: d.opening_hours?.weekday_text || [],
+      openingHours: d.opening_hours?.weekday_text || [],
       rating: Number(d.rating ?? 0),
       totalReviews: Number(d.user_ratings_total ?? 0),
       reviews,
@@ -677,7 +677,7 @@ exports.getRestaurantsByCategory = async (req, res) => {
           priceRange: priceLevelToRange(d?.price_level) || '',
           openNow: openNow ?? null,
           status,
-          weekdayText: d?.opening_hours?.weekday_text || [],
+          openingHours: d?.opening_hours?.weekday_text || [],
 
           rating: Number(d?.rating ?? p.rating ?? 0),
           totalReviews: Number(d?.user_ratings_total ?? p.user_ratings_total ?? 0),
@@ -886,7 +886,7 @@ out.push({
   priceRange: priceLevelToRange(d?.price_level) || '',
   openNow: d?.opening_hours?.open_now ?? null,
   status: openNowToStatus(d?.opening_hours?.open_now),
-  weekdayText: d?.opening_hours?.weekday_text || [],
+  openingHours: d?.opening_hours?.weekday_text || [],
 
   rating: Number(d?.rating ?? 0),
   totalReviews: Number(d?.user_ratings_total ?? 0),
