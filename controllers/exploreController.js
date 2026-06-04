@@ -93,44 +93,30 @@ const CATEGORIES = [
     googleTypes: ['restaurant', 'meal_takeaway', 'meal_delivery'] },
 ];
 
-// Name patterns suggesting "this is coffee-focused" — used to disambiguate when
-// Google tags a place as BOTH cafe and restaurant (McDonald's vs Starbucks both
-// get those tags identically; only the name distinguishes them).
-const COFFEE_NAME_RE = /coffee|caf[eé]|espresso|barista|roastery|donut|doughnut|pastry|brewhouse|\bbrew\b|bakery/i;
-
 function findCat(key) { return CATEGORIES.find(c => c.key === key); }
 
-// Determine the PRIMARY category for a place. Walks priority list. For the
-// cafe/restaurant overlap (McDonald's, Dunkin, Starbucks all tagged both), uses
-// name + bakery tag as tiebreaker so:
-//   Starbucks ("...Coffee Company") -> Cafes
-//   McDonald's ("McDonald's")        -> Restaurants
-//   Dunkin (cafe + bakery)           -> Cafes
+// Determine the PRIMARY category for a place using ONLY Google's primary_type
+// + types[]. No name-based inference. Places API (New) provides a single
+// authoritative primary_type per place which we trust directly:
+//   Starbucks → primary_type: 'cafe' → Cafes
+//   McDonald's → primary_type: 'fast_food_restaurant' → Restaurants
+//   Royale → primary_type: 'night_club' → Venue Events
 function primaryCategory(place) {
   const types = Array.isArray(place?.types) ? place.types : [];
   const tset = new Set(types);
-  const name = String(place?.name || '');
   const primaryType = place?.primary_type || null;
 
-  // 1) Venue Events — STRICT. Google tags `night_club` loosely (restaurants/museums
-  // hosting events get the tag), so require it to be the PRIMARY type. A real
-  // dance club has primary_type='night_club'; Earls Kitchen has primary_type='restaurant'.
+  // 1) Venue Events (clubs) — primary_type must match exactly
   if (findCat('venue-events').googleTypes.includes(primaryType)) return findCat('venue-events');
-  // 2) Outdoors
-  if (findCat('outdoors').googleTypes.some(t => tset.has(t))) return findCat('outdoors');
-  // 3) Bars
-  if (findCat('bars').googleTypes.some(t => tset.has(t))) return findCat('bars');
-
-  // 4) Cafe vs Restaurant disambiguation
-  const isCafe = tset.has('cafe');
-  const isRest = tset.has('restaurant') || tset.has('meal_takeaway') || tset.has('meal_delivery');
-  const isBakery = tset.has('bakery');
-  const nameLooksCoffee = COFFEE_NAME_RE.test(name);
-
-  if (isCafe && (isBakery || nameLooksCoffee)) return findCat('cafes');
-  if (isCafe && isRest) return findCat('restaurants'); // fast-food w/ McCafe-style cafe tag
-  if (isCafe) return findCat('cafes');
-  if (isRest) return findCat('restaurants');
+  // 2) Outdoors — primary_type match
+  if (findCat('outdoors').googleTypes.includes(primaryType)) return findCat('outdoors');
+  // 3) Bars — primary_type match
+  if (findCat('bars').googleTypes.includes(primaryType)) return findCat('bars');
+  // 4) Cafes — primary_type match
+  if (findCat('cafes').googleTypes.includes(primaryType)) return findCat('cafes');
+  // 5) Restaurants — primary_type match OR any restaurant-family type in types[]
+  if (findCat('restaurants').googleTypes.includes(primaryType)) return findCat('restaurants');
+  if (tset.has('restaurant') || tset.has('meal_takeaway') || tset.has('meal_delivery')) return findCat('restaurants');
 
   return null;
 }
@@ -447,10 +433,7 @@ exports.getPlaceDetail = async (req, res) => {
     for (const t of placeTypes) {
       if (TYPE_TO_SECTIONS[t]) TYPE_TO_SECTIONS[t].forEach(s => sections.add(s));
     }
-    // Keyword-based fallback from name
-    const nameLower = (d.name || '').toLowerCase();
-    if (nameLower.includes('rooftop')) sections.add('Rooftop Bars');
-    if (nameLower.includes('cafe') || nameLower.includes('coffee')) sections.add('Cafes');
+    // (Name-based guessing removed — sections derive ONLY from Google's types[].)
 
     // ---------- Cuisine taxonomy split into 4 buckets ----------
     // cuisine = origin/style of food (American, Pizza, Sushi, etc) — from types
@@ -504,17 +487,10 @@ exports.getPlaceDetail = async (req, res) => {
     if (d.serves_wine) drinks.add('Wine');
     if (d.serves_cocktails) drinks.add('Cocktails');
     if (d.serves_coffee) drinks.add('Coffee');
-    // Dietary
+    // Dietary — ONLY real Google flags. servesVegetarianFood is the only
+    // dietary boolean Google exposes. Vegan/Gluten-Free/Halal/Kosher are NOT
+    // returned by Places API — so we omit them entirely rather than guess.
     if (d.serves_vegetarian_food) dietary.add('Vegetarian');
-    // Dietary keyword scan over editorial summary + reviews
-    const dietaryHaystack = (
-      (d.editorial_summary?.overview || '') + ' ' +
-      (d.reviews || []).map(r => r.text || '').join(' ')
-    ).toLowerCase();
-    if (/\bvegan\b/.test(dietaryHaystack)) dietary.add('Vegan');
-    if (/gluten[- ]?free/.test(dietaryHaystack)) dietary.add('Gluten-Free');
-    if (/\bhalal\b/.test(dietaryHaystack)) dietary.add('Halal');
-    if (/\bkosher\b/.test(dietaryHaystack)) dietary.add('Kosher');
 
     // Enforce no-overlap rule: sections wins, strip from cuisine/meals/drinks/dietary
     for (const s of sections) {
