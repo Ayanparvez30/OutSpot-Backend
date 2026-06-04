@@ -152,8 +152,13 @@ const CATEGORIES = [
     googleTypes: ['night_club', 'karaoke', 'comedy_club', 'live_music_venue', 'concert_hall', 'performing_arts_theater'],
     textQueries: ['popular nightclubs', 'karaoke bars', 'comedy clubs', 'concerts near me', 'live music venues'] },
   { key: 'outdoors',     title: 'Outdoors',     icon: '🌳', points: 3, imageKey: 'outdoors',
-    googleTypes: ['park', 'campground', 'tourist_attraction', 'hiking_area', 'national_park', 'botanical_garden', 'sports_complex', 'sports_club', 'beach'],
-    textQueries: ['parks', 'hiking trails', 'sports clubs'] },
+    googleTypes: [
+      'park', 'campground', 'tourist_attraction', 'hiking_area', 'national_park', 'botanical_garden', 'beach',
+      'sports_complex', 'sports_club',
+      'bowling_alley', 'aquarium', 'zoo', 'marina', 'amusement_park',
+    ],
+    // Only text queries for activities Places API doesn't expose as supported types.
+    textQueries: ['paintball near me', 'go karting near me', 'boating near me'] },
   { key: 'bars',         title: 'Bars',         icon: '🍻', points: 4, imageKey: 'bars',
     googleTypes: ['bar', 'pub', 'wine_bar', 'bar_and_grill'],
     textQueries: ['popular bars', 'irish pubs', 'cocktail bars'] },
