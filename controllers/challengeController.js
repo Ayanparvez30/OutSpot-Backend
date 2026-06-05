@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 
 const uploadToS3 = require('../utils/s3Upload');
 const { addPointsWithMultiplier } = require('../utils/points');
+const realtime = require('../utils/realtime');
 const {
   verifySubmissionImage,
   checkTimeConstraints,
@@ -419,6 +420,12 @@ exports.submitToChallenge = async (req, res) => {
 
         return { submission, newCount, awarded };
       }, { timeout: 15000 });
+
+      // Realtime (after commit): challenge card state + points if awarded
+      realtime.toUser(userId, 'challenge.submitted', { challengeId: challenge.id });
+      if (result.awarded) {
+        realtime.toUser(userId, 'user.points_changed', { userId });
+      }
 
       return res.json({
         message: 'Submission saved',

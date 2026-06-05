@@ -163,6 +163,17 @@ function initSocket(server) {
         console.error('❌ Error auto-joining chats:', err);
       }
 
+      // 🚀 Auto-join community rooms (for non-chat community.* realtime signals)
+      try {
+        const memberships = await prisma.communityMember.findMany({
+          where: { userId },
+          select: { communityId: true },
+        });
+        memberships.forEach(m => socket.join(`community:${m.communityId}`));
+      } catch (err) {
+        console.error('❌ Error auto-joining community rooms:', err);
+      }
+
       socket.emit('socket:ready', { userId });
     }
 

@@ -3,6 +3,7 @@ const { S3Client, PutObjectCommand } = require('@aws-sdk/client-s3');
 const path = require('path');
 const multer = require('multer');
 const uploadToS3 = require('../utils/s3Upload');
+const realtime = require('../utils/realtime');
 
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
@@ -1165,6 +1166,10 @@ exports.addUsersToGroup = async (req, res) => {
     console.error('Socket notification error:', socketErr);
   }
 
+  // Realtime: group member list / participant count refresh + added users' own lists
+  realtime.toGroup(chat.id, 'group.member_added', { chatId: chat.id, addedUserIds: toAdd });
+  realtime.toUsers(toAdd, 'group.member_added', { chatId: chat.id });
+
   return res.json({ message: 'Users added to the group chat' });
 };
 
@@ -1199,6 +1204,10 @@ exports.removeUserFromGroup = async (req, res) => {
   }
 
   await prisma.userOnChat.delete({ where: { id: target.id } });
+
+  // Realtime: remaining members refresh + removed user's own group/chat list
+  realtime.toGroup(chat.id, 'group.member_removed', { chatId: chat.id, userId: targetUserId });
+  realtime.toUser(targetUserId, 'group.member_removed', { chatId: chat.id, userId: targetUserId });
 
   return res.json({ message: 'User removed from group.' });
 };
@@ -1235,6 +1244,9 @@ exports.leaveGroup = async (req, res) => {
 
     await tx.userOnChat.delete({ where: { id: myRow.id } });
   });
+
+  // Realtime: remaining members refresh member list / participant count
+  realtime.toGroup(chat.id, 'group.member_left', { chatId: chat.id, userId: currentUserId });
 
   return res.json({ message: 'You left the group.' });
 };

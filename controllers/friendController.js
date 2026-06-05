@@ -4,6 +4,7 @@ const nodemailer = require('nodemailer');
 const prisma = new PrismaClient();
 const { notifyUser } = require('../utils/notificationService');
 const { deleteFromS3 } = require('../utils/s3Upload');
+const realtime = require('../utils/realtime');
 
 // ✅ NEW: single source of truth for weekly points (sums pointsLedger.finalPoints since Monday)
 const {
@@ -294,6 +295,11 @@ exports.sendFriendRequest = async (req, res) => {
       // Continue with success response even if notification fails
     }
 
+    // Realtime: receiver refreshes pending-requests badge / list
+    realtime.toUser(targetUserId, 'friend.request_received', {
+      fromUserId: currentUserId,
+    });
+
     return res.json({ message: "Friend request sent." });
   } catch (error) {
     console.error("Send friend request error:", error);
@@ -412,6 +418,13 @@ exports.acceptFriendRequest = async (req, res) => {
       console.error("acceptFriendRequest chat create error:", chatErr);
     }
 
+    // Realtime: both sides refresh friend list / profile counts / map markers
+    realtime.toUsers([receiverId, requesterId], 'friend.request_accepted', {
+      friendId: receiverId,
+      otherId: requesterId,
+      chatId,
+    });
+
     return res.json({ message: "Friend request accepted.", chatId });
   } catch (err) {
     console.error("acceptFriendRequest error:", err);
@@ -511,6 +524,12 @@ exports.unfriend = async (req, res) => {
       io.to(`user:${friendUserId}`).emit('messagesDeleted', { chatId: cid, messageIds: [] });
     }
   } catch (_) { /* socket not ready */ }
+
+  // Realtime: both sides refresh friend list / counts / map markers
+  realtime.toUsers([currentUserId, friendUserId], 'friend.removed', {
+    otherId: friendUserId,
+    removedBy: currentUserId,
+  });
 
   return res.json({ message: "Unfriended successfully.", deletedChatIds: chatIds });
 };

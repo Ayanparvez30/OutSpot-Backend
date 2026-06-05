@@ -4,6 +4,7 @@ const prisma = new PrismaClient();
 
 // ✅ weekly points single source of truth (pointsLedger.finalPoints)
 const { getWeeklyPointsForUsers } = require('../utils/weeklyPoints');
+const realtime = require('../utils/realtime');
 
 // -------------------- helpers --------------------
 const toRad = (d) => (d * Math.PI) / 180;
@@ -37,6 +38,7 @@ exports.updateLocation = async (req, res) => {
     if (!last) {
       await prisma.location.create({ data: { userId, latitude, longitude } });
       await prisma.locationHistory.create({ data: { userId, latitude, longitude } });
+      realtime.toFriends(userId, 'friend.location_updated', { userId, latitude, longitude }, { throttleMs: 5000 });
       return res.json({ moved: true, created: true });
     }
 
@@ -52,6 +54,7 @@ exports.updateLocation = async (req, res) => {
     await prisma.location.update({ where: { userId }, data: { latitude, longitude } });
     await prisma.locationHistory.create({ data: { userId, latitude, longitude } });
 
+    realtime.toFriends(userId, 'friend.location_updated', { userId, latitude, longitude }, { throttleMs: 5000 });
     return res.json({ moved: true, dist });
   } catch (error) {
     console.error('Error updating location:', error);

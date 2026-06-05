@@ -2,6 +2,7 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const uploadToS3 = require('../utils/s3Upload');
+const realtime = require('../utils/realtime');
 
 
 const { getWeeklyPointsForUsers } = require('../utils/weeklyPoints');
@@ -127,6 +128,9 @@ exports.editCommunity = async (req, res) => {
       where: { communityId: id, isCommunity: true },
       data: { name: updated.name, imageUrl: updated.imageUrl },
     });
+
+    // Realtime: members refresh community name/image wherever shown
+    realtime.toCommunity(id, 'community.details_updated', { communityId: id });
 
     res.json(updated);
   } catch (err) {
@@ -331,6 +335,11 @@ exports.joinCommunity = async (req, res) => {
     const inChat = await prisma.userOnChat.findFirst({ where: { chatId: chat.id, userId } });
     if (!inChat) await prisma.userOnChat.create({ data: { chatId: chat.id, userId } });
 
+    // Realtime: existing members' detail/member-list refresh + joiner's own
+    // NoCommunity/joined-status refresh.
+    realtime.toCommunity(id, 'community.member_added', { communityId: id, userId });
+    realtime.toUser(userId, 'community.member_added', { communityId: id, userId });
+
     res.json({ message: 'Joined community & added to chat' });
   } catch (err) {
     console.error('joinCommunity error:', err);
@@ -375,6 +384,10 @@ exports.leaveCommunity = async (req, res) => {
         data: { userId, communityId: id, action: 'left' },
       }),
     ]);
+
+    // Realtime: remaining members refresh + leaver's own list refresh
+    realtime.toCommunity(id, 'community.member_removed', { communityId: id, userId });
+    realtime.toUser(userId, 'community.member_removed', { communityId: id, userId });
 
     return res.json({ message: 'Left community & chat' });
   } catch (err) {
@@ -430,6 +443,10 @@ exports.removeMember = async (req, res) => {
       }),
     ]);
 
+    // Realtime: remaining members refresh + removed user's own list refresh
+    realtime.toCommunity(id, 'community.member_removed', { communityId: id, userId: targetUserId });
+    realtime.toUser(targetUserId, 'community.member_removed', { communityId: id, userId: targetUserId });
+
     return res.json({ message: 'Member removed from community & chat' });
   } catch (err) {
     console.error('removeMember error:', err);
@@ -457,6 +474,9 @@ exports.deleteCommunity = async (req, res) => {
     }
 
     await prisma.community.delete({ where: { id } });
+
+    // Realtime: members refresh (community gone from their lists)
+    realtime.toCommunity(id, 'community.deleted', { communityId: id });
 
     return res.json({ message: 'Community deleted' });
   } catch (err) {

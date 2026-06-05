@@ -3,6 +3,7 @@ const prisma = new PrismaClient();
 const { verifyApple, verifyGoogle } = require('../utils/iapVerify');
 const { applyClothingToCurrentMinime } = require('../utils/minimeLoadout');
 const { renderCurrentMinime } = require('../utils/minimeGen');
+const realtime = require('../utils/realtime');
 const VALID_SLOTS = ['TOP','BOTTOM','SHOES','GLASSES','ACCESSORY','WATCH','MAKEUP','PURSE','ORNAMENT'];
 
 // Slot mapping per gender for catalog filtering
@@ -546,6 +547,10 @@ exports.equipItem = async (req, res) => {
       minime = await prisma.minime.findUnique({ where: { id: minime.id } });
     }
 
+    // Realtime: my avatar changed everywhere it's shown (own UI + friends' lists/map)
+    realtime.toUser(userId, 'wardrobe.outfit_equipped', { itemId: inv.itemId, slot });
+    realtime.toFriends(userId, 'user.avatar_updated', { userId });
+
     res.json({
       success: true,
       message: 'Equipped',
@@ -631,6 +636,10 @@ exports.purchasePointBundle = async (req, res) => {
 
       return u.totalPoints;
     });
+
+    // Realtime (after commit): points pills everywhere + shop/wardrobe ownership
+    realtime.toUser(userId, 'user.points_changed', { userId });
+    realtime.toUser(userId, 'wardrobe.item_purchased', { productId: bundle.productId });
 
     return res.json({
       success: true,

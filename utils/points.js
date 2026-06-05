@@ -1,6 +1,17 @@
 // utils/points.js
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const realtime = require('./realtime');
+
+// Emit the points-changed signal ONLY for direct (already-committed) calls.
+// When called inside a caller's $transaction (tx !== prisma) we must NOT emit
+// here — the rows aren't committed yet, so a client refetch would read the old
+// total. Those callers emit themselves AFTER their transaction commits.
+function _signalPointsIfCommitted(userId, tx) {
+  if (tx === prisma) {
+    realtime.toUser(userId, 'user.points_changed', { userId }, { throttleMs: 1500 });
+  }
+}
 
 /** tx-aware helper */
 async function getUserMultiplier(userId, tx = prisma) {
@@ -34,6 +45,7 @@ async function addPointsWithMultiplier(userId, basePoints, reason, refId, tx = p
     },
   });
 
+  _signalPointsIfCommitted(userId, tx);
   return { basePoints: base, factor, finalPoints };
 }
 
@@ -53,6 +65,7 @@ async function addPointsDirect(userId, points, reason, refId, tx = prisma) {
       refId,
     },
   });
+  _signalPointsIfCommitted(userId, tx);
   return { basePoints: base, factor: 1, finalPoints: base };
 }
 

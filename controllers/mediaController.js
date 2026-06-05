@@ -7,6 +7,8 @@ const uploadToS3 = require('../utils/s3Upload');
 let getIO;
 try { ({ getIO } = require('../utils/socket')); } catch (_) { /* no-op */ }
 
+const realtime = require('../utils/realtime');
+
 // -------------------- helpers --------------------
 const toBool = (v) => {
   if (typeof v === 'boolean') return v;
@@ -133,6 +135,11 @@ exports.uploadMedia = async (req, res) => {
       }
     } catch (e) {
       console.error('Socket emit failed', e);
+    }
+
+    // Realtime: a profile-visible story lights up friends' Explore feed / map
+    if (story && story.visibility === 'profile') {
+      realtime.toFriends(userId, 'story.posted', { storyId: story.id, userId });
     }
 
     // 5) Response
