@@ -689,6 +689,10 @@ exports.removeStory = async (req, res) => {
       }).catch(e => console.error('[removeStory] s3 cleanup error', e));
     }
 
+    // Realtime: friends' feed/map drop it; owner's other surfaces refresh too
+    realtime.toFriends(userId, 'story.removed', { storyId: story.id, userId });
+    realtime.toUser(userId, 'story.removed', { storyId: story.id, userId });
+
     return res.json({ message: 'Story removed successfully.' });
   } catch (error) {
     console.error('removeStory error:', error);

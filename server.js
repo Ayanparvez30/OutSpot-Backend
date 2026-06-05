@@ -102,7 +102,7 @@ cron.schedule(CRON_EXPR, async () => {
         createdAt: { lt: expiry },
         savedBy: { none: {} },
       },
-      select: { id: true, mediaUrl: true },
+      select: { id: true, mediaUrl: true, userId: true },
     });
 
     if (doomed.length === 0) {
@@ -113,6 +113,18 @@ cron.schedule(CRON_EXPR, async () => {
     const ids = doomed.map(s => s.id);
     await prisma.story.deleteMany({ where: { id: { in: ids } } });
     console.log(`✅ Expired stories deleted: ${ids.length}`);
+
+    // Realtime: each owner's friends (+ the owner) drop the expired story
+    try {
+      const realtime = require('./utils/realtime');
+      const ownerIds = [...new Set(doomed.map(s => s.userId))];
+      for (const ownerId of ownerIds) {
+        realtime.toFriends(ownerId, 'story.expired', { userId: ownerId });
+        realtime.toUser(ownerId, 'story.expired', { userId: ownerId });
+      }
+    } catch (e) {
+      console.error('story.expired realtime emit error:', e);
+    }
 
     // Orphan-only S3 cleanup — checks every URL column in every table first.
     const { deleteS3IfOrphanBulk } = require('./utils/s3Cleanup');
