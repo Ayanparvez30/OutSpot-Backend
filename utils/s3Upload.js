@@ -34,12 +34,19 @@ const uploadToS3 = async (file, folder = "uploads") => {
  */
 const deleteFromS3 = async (fileUrl) => {
   try {
+    if (!fileUrl) return;
     const bucket = process.env.S3_BUCKET_NAME;
-    const region = process.env.AWS_REGION;
-    const prefix = `https://${bucket}.s3.${region}.amazonaws.com/`;
-    if (!fileUrl || !fileUrl.startsWith(prefix)) return;
 
-    const key = fileUrl.slice(prefix.length);
+    // Handle BOTH URL shapes we generate:
+    //   https://{bucket}.s3.{region}.amazonaws.com/{key}   (uploadToS3)
+    //   https://{bucket}.s3.amazonaws.com/{key}             (uploadFileToS3, chat images)
+    // Key = everything after the first ".amazonaws.com/".
+    const marker = '.amazonaws.com/';
+    const idx = fileUrl.indexOf(marker);
+    if (idx === -1) return;
+    const key = decodeURIComponent(fileUrl.slice(idx + marker.length));
+    if (!key) return;
+
     await s3.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
   } catch (_) { /* best-effort */ }
 };
