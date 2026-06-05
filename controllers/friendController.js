@@ -453,6 +453,12 @@ exports.declineFriendRequest = async (req, res) => {
   }
 
   await prisma.friendship.delete({ where: { id: friendRecord.id } });
+
+  // Realtime: the OTHER party silently refreshes their requests/sent list
+  realtime.toUser(otherUserId, 'friend.request_declined', {
+    byUserId: currentUserId,
+  });
+
   return res.json({ message: "Friend request declined (or cancelled)." });
 };
 
