@@ -501,12 +501,14 @@ exports.unfriend = async (req, res) => {
     deleteFromS3(url);
   }
 
-  // Notify both users via socket so they can remove the chat from UI
+  // Notify both users via socket so their chat list refreshes and drops the
+  // deleted chat. Reuse the existing 'messagesDeleted' event (Flutter already
+  // handles it -> fetchChats()) instead of a separate chatDeleted handler.
   try {
     const io = require('../utils/socket').getIO();
     for (const cid of chatIds) {
-      io.to(`user:${currentUserId}`).emit('chatDeleted', { chatId: cid });
-      io.to(`user:${friendUserId}`).emit('chatDeleted', { chatId: cid });
+      io.to(`user:${currentUserId}`).emit('messagesDeleted', { chatId: cid, messageIds: [] });
+      io.to(`user:${friendUserId}`).emit('messagesDeleted', { chatId: cid, messageIds: [] });
     }
   } catch (_) { /* socket not ready */ }
 
