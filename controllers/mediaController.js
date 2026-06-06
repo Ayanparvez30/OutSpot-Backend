@@ -970,6 +970,12 @@ exports.getStoriesFeed = async (req, res) => {
     if (needCommunityOverlap) {
       const groupMap = new Map(); // key: communityId
       for (const item of flat) {
+        // In FILTER='all', friends are surfaced in their own bucket — don't
+        // duplicate the same story under a community group when the poster
+        // also happens to be a friend. (FILTER='communities' keeps the
+        // overlap so the user explicitly asking for community feed still
+        // sees all community-member stories.)
+        if (FILTER === 'all' && isFriendId(item.user.id)) continue;
         for (const cm of item.communities) {
           if (!groupMap.has(cm.id)) groupMap.set(cm.id, { community: cm, stories: [] });
           groupMap.get(cm.id).stories.push(item);
