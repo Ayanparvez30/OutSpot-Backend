@@ -821,6 +821,8 @@ exports.getRecommendedFriends = async (req, res) => {
     select: {
       id: true,
       username: true,
+      firstName: true,
+      lastName: true,
       totalPoints: true,
       minime: {
         select: { avatarUrl: true, isSaved: true, updatedAt: true },
@@ -841,6 +843,8 @@ exports.getRecommendedFriends = async (req, res) => {
         select: {
           id: true,
           username: true,
+          firstName: true,
+          lastName: true,
           minime: {
             select: { avatarUrl: true, isSaved: true, updatedAt: true },
             orderBy: [{ isSaved: "desc" }, { updatedAt: "desc" }],
@@ -852,6 +856,8 @@ exports.getRecommendedFriends = async (req, res) => {
         select: {
           id: true,
           username: true,
+          firstName: true,
+          lastName: true,
           minime: {
             select: { avatarUrl: true, isSaved: true, updatedAt: true },
             orderBy: [{ isSaved: "desc" }, { updatedAt: "desc" }],
@@ -881,6 +887,8 @@ exports.getRecommendedFriends = async (req, res) => {
             select: {
               id: true,
               username: true,
+              firstName: true,
+              lastName: true,
               totalPoints: true,
               minime: {
                 select: { avatarUrl: true, isSaved: true, updatedAt: true },
@@ -901,6 +909,8 @@ exports.getRecommendedFriends = async (req, res) => {
       suggested.set(uId, {
         id: base.id,
         username: base.username,
+        firstName: base.firstName ?? null,
+        lastName: base.lastName ?? null,
         avatarUrl: base.avatarUrl || "",
         totalPoints: base.totalPoints ?? 0,
         thisWeekPoints: 0,
@@ -911,6 +921,8 @@ exports.getRecommendedFriends = async (req, res) => {
     }
     const entry = suggested.get(uId);
 
+    if (entry.firstName == null && base.firstName != null) entry.firstName = base.firstName;
+    if (entry.lastName == null && base.lastName != null) entry.lastName = base.lastName;
     if (!entry.avatarUrl && base.avatarUrl) entry.avatarUrl = base.avatarUrl;
     if (
       (entry.totalPoints == null || entry.totalPoints === 0) &&
@@ -930,6 +942,8 @@ exports.getRecommendedFriends = async (req, res) => {
           entry.mutualFriends.push({
             id: m.id,
             username: m.username,
+            firstName: m.firstName ?? null,
+            lastName: m.lastName ?? null,
             avatarUrl: m.avatarUrl || "",
           });
           seen.add(m.id);
@@ -943,6 +957,8 @@ exports.getRecommendedFriends = async (req, res) => {
     upsert(u.id, {
       id: u.id,
       username: u.username,
+      firstName: u.firstName ?? null,
+      lastName: u.lastName ?? null,
       avatarUrl: firstAvatar(u.minime),
       totalPoints: u.totalPoints || 0,
       reason: { type: "CONTACT", label: "From contact list" },
@@ -960,6 +976,8 @@ exports.getRecommendedFriends = async (req, res) => {
       upsert(otherId, {
         id: otherId,
         username: other.username,
+        firstName: other.firstName ?? null,
+        lastName: other.lastName ?? null,
         avatarUrl: firstAvatar(other.minime),
         reason: {
           type: "MUTUAL",
@@ -967,6 +985,8 @@ exports.getRecommendedFriends = async (req, res) => {
           via: {
             id: mutual.id,
             username: mutual.username,
+            firstName: mutual.firstName ?? null,
+            lastName: mutual.lastName ?? null,
             avatarUrl: firstAvatar(mutual.minime),
           },
         },
@@ -974,6 +994,8 @@ exports.getRecommendedFriends = async (req, res) => {
           {
             id: mutual.id,
             username: mutual.username,
+            firstName: mutual.firstName ?? null,
+            lastName: mutual.lastName ?? null,
             avatarUrl: firstAvatar(mutual.minime),
           },
         ],
@@ -990,6 +1012,8 @@ exports.getRecommendedFriends = async (req, res) => {
     upsert(u.id, {
       id: u.id,
       username: u.username,
+      firstName: u.firstName ?? null,
+      lastName: u.lastName ?? null,
       avatarUrl: firstAvatar(u.minime),
       totalPoints: u.totalPoints || 0,
       reason: {
@@ -1020,6 +1044,8 @@ exports.getRecommendedFriends = async (req, res) => {
     const userSelect = {
       id: true,
       username: true,
+      firstName: true,
+      lastName: true,
       totalPoints: true,
       createdAt: true,
       minime: {
@@ -1111,6 +1137,8 @@ exports.getRecommendedFriends = async (req, res) => {
     .map((s) => ({
       id: s.id,
       username: s.username,
+      firstName: s.firstName ?? null,
+      lastName: s.lastName ?? null,
       avatarUrl: s.avatarUrl || "",
       totalPoints: s.totalPoints,
       thisWeekPoints: s.thisWeekPoints,
