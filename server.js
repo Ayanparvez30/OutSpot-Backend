@@ -1,3 +1,9 @@
+// Default timezone — app launches in Boston, so all server-side date
+// computations (cron triggers, daily/weekly challenge windows, new Date()
+// formatting) align with Eastern Time unless an explicit TZ env var is set.
+// Must be assigned BEFORE any require() that uses time.
+process.env.TZ = process.env.TZ || 'America/New_York';
+
 const express = require('express');
 const http = require('http');
 const path = require('path');
