@@ -72,5 +72,8 @@ router.get('/chats/search', checkAuth, chatController.searchChats);
 router.post('/chats/messages', checkAuth, chatController.sendTextMessage);
 router.post('/chats/confirm-delivery', checkAuth, chatController.confirmDelivery);
 
+// Disappear-on-exit: client signals leaving the conversation screen
+router.post('/chats/:chatId/exit', checkAuth, chatController.exitChat);
+
 module.exports = router;
 

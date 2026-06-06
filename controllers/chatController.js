@@ -952,12 +952,22 @@ const chats = await prisma.chat.findMany({
 
 exports.getMessages = async (req, res) => {
   const { chatId } = req.params;
+  const userId = req.authData.id;
 
   try {
+    const cid = parseInt(chatId, 10);
     const now = new Date();
+    // disappear-on-exit: hide messages this user already cleared by leaving.
+    // Non-immediate chats keep clearedUpToMessageId = 0, so this is a no-op there.
+    const myRow = await prisma.userOnChat.findFirst({
+      where: { userId, chatId: cid },
+      select: { clearedUpToMessageId: true },
+    });
+    const cleared = myRow?.clearedUpToMessageId || 0;
     const messages = await prisma.message.findMany({
       where: {
-        chatId: parseInt(chatId, 10),
+        chatId: cid,
+        id: { gt: cleared },
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
       include: {
@@ -1017,14 +1027,23 @@ exports.getMessages = async (req, res) => {
 // Simple descending pagination
 exports.getMessagesPaginated = async (req, res) => {
   const { chatId } = req.params;
+  const userId = req.authData.id;
   const { page = 1, limit = 20 } = req.query;
   const skip = (parseInt(page, 10) - 1) * parseInt(limit, 10);
 
   try {
+    const cid = parseInt(chatId, 10);
     const now = new Date();
+    // disappear-on-exit per-user filter (no-op for non-immediate chats).
+    const myRow = await prisma.userOnChat.findFirst({
+      where: { userId, chatId: cid },
+      select: { clearedUpToMessageId: true },
+    });
+    const cleared = myRow?.clearedUpToMessageId || 0;
     const messages = await prisma.message.findMany({
       where: {
-        chatId: parseInt(chatId, 10),
+        chatId: cid,
+        id: { gt: cleared },
         OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
       },
       include: {
@@ -2156,5 +2175,24 @@ exports.confirmDelivery = async (req, res) => {
   } catch (error) {
     console.error('confirmDelivery error:', error);
     return res.status(500).json({ error: 'Failed to confirm delivery' });
+  }
+};
+
+// Disappear-on-exit: reliable HTTP backup to the socket 'exitChat' event.
+// Call when leaving the conversation screen. No-op unless the chat is in
+// disappear-immediately mode. Per-user — does not affect other members.
+exports.exitChat = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const chatId = parseInt(req.params.chatId, 10);
+    if (!chatId || !Number.isInteger(chatId)) {
+      return res.status(400).json({ message: 'Invalid chatId' });
+    }
+    const { clearChatOnExit } = require('../utils/socket');
+    await clearChatOnExit(userId, chatId);
+    return res.json({ message: 'Exited chat' });
+  } catch (error) {
+    console.error('exitChat error:', error);
+    return res.status(500).json({ message: 'Failed to exit chat' });
   }
 };

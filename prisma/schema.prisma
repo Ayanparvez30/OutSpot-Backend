@@ -307,6 +307,7 @@ model UserOnChat {
   joinedAt DateTime @default(now())
   lastSeenMessageId      Int?
   lastDeliveredMessageId Int?
+  clearedUpToMessageId   Int @default(0) // disappear-on-exit: messages with id <= this are hidden from this user
 
   isMuted  Boolean  @default(false)
   mutedAt  DateTime?

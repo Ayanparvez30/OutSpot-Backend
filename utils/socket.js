@@ -195,6 +195,28 @@ function initSocket(server) {
       console.log(`🔵 User joined chat_${cid}`);
     });
 
+    // Mark the conversation the user is ACTIVELY viewing. Switching to another
+    // chat counts as exiting the previous one (disappear-on-exit).
+    socket.on('enterChat', async (chatId) => {
+      const cid = parseInt(chatId, 10);
+      if (!cid || !Number.isInteger(cid)) return;
+      const prev = socket.data.activeChatId;
+      if (prev && prev !== cid) {
+        await clearChatOnExit(socket.data.userId, prev);
+      }
+      socket.data.activeChatId = cid;
+      socket.join(`chat_${cid}`);
+    });
+
+    // User left the conversation screen → hide its messages for THIS user only
+    // (no-op unless the chat is in disappear-immediately mode).
+    socket.on('exitChat', async (chatId) => {
+      const cid = parseInt(chatId, 10) || socket.data.activeChatId;
+      if (!cid) return;
+      if (socket.data.activeChatId === cid) socket.data.activeChatId = null;
+      await clearChatOnExit(socket.data.userId, cid);
+    });
+
     socket.on('sendMessage', async (data) => {
       let { chatId, content, senderId, imageUrl } = data || {};
 
@@ -499,59 +521,21 @@ function initSocket(server) {
           lastSeenMessageId: lastId,
         });
 
-        // View-once: delete read messages 5s after recipient views them
-        const chat = await prisma.chat.findUnique({
-          where: { id: cid },
-          select: { disappearingSeconds: true },
-        });
-
-        if (chat && chat.disappearingSeconds === 1) {
-          const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
-          // Only target messages marked with the view-once sentinel
-          const viewOnceMessages = await prisma.message.findMany({
-            where: {
-              chatId: cid,
-              id: { lte: lastId },
-              isSystem: false,
-              expiresAt: VIEW_ONCE_SENTINEL,
-              senderId: { not: uid },
-            },
-            select: { id: true, imageUrl: true },
-          });
-
-          if (viewOnceMessages.length > 0) {
-            const msgIds = viewOnceMessages.map(m => m.id);
-            const imageUrls = viewOnceMessages.map(m => m.imageUrl).filter(Boolean);
-
-            // Schedule deletion after 5 seconds
-            setTimeout(async () => {
-              try {
-                await prisma.message.deleteMany({
-                  where: { id: { in: msgIds } },
-                });
-
-                // Delete S3 images
-                const { deleteFromS3 } = require('../utils/s3Upload');
-                for (const url of imageUrls) deleteFromS3(url);
-
-                io.to(`chat_${cid}`).emit('messagesDeleted', {
-                  chatId: cid,
-                  messageIds: msgIds,
-                });
-              } catch (e) {
-                console.error('View-once delete error:', e);
-              }
-            }, 5000);
-          }
-        }
+        // NOTE: disappear-immediately (disappearingSeconds === 1) is now handled
+        // on chat EXIT per-user (clearChatOnExit), not 5s-after-read. See exitChat.
       } catch (error) {
         console.error('❌ Error in markMessageAsRead:', error);
         socket.emit('markMessageAsReadError', { error: 'Failed to mark messages as read' });
       }
     });
 
-    socket.on('disconnect', () => {
+    socket.on('disconnect', async () => {
       console.log('❌ Socket disconnected:', socket.id);
+      // App killed / network lost while viewing a chat → treat as exit so
+      // disappear-immediately messages get hidden for this user too.
+      if (socket.data.activeChatId && socket.data.userId) {
+        await clearChatOnExit(socket.data.userId, socket.data.activeChatId);
+      }
     });
   });
 
@@ -563,4 +547,69 @@ function getIO() {
   return ioInstance;
 }
 
-module.exports = { initSocket, getIO, sendPushToOfflineUsers: sendPushNotificationToOfflineUsers };
+// Disappear-on-exit: when a user leaves a chat (navigate away / switch / app
+// kill / disconnect), hide that chat's messages from THIS user only by advancing
+// their per-user clearedUpToMessageId. No-op unless the chat is in
+// disappear-immediately mode (disappearingSeconds === 1). When ALL members have
+// passed a message (min clearedUpToMessageId), it's hard-deleted + S3 cleaned.
+// Other features are untouched: non-immediate chats keep clearedUpToMessageId = 0.
+async function clearChatOnExit(userId, chatId) {
+  try {
+    const cid = parseInt(chatId, 10);
+    const uid = parseInt(userId, 10);
+    if (!cid || !uid) return;
+
+    const chat = await prisma.chat.findUnique({
+      where: { id: cid },
+      select: {
+        disappearingSeconds: true,
+        users: { select: { userId: true, clearedUpToMessageId: true } },
+      },
+    });
+    if (!chat || chat.disappearingSeconds !== 1) return; // only immediate mode
+
+    const latest = await prisma.message.findFirst({
+      where: { chatId: cid },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+    const latestId = latest?.id || 0;
+    if (latestId === 0) return;
+
+    const me = chat.users.find(u => u.userId === uid);
+    if (!me) return; // not a member
+    const myCleared = me.clearedUpToMessageId || 0;
+    const newCleared = Math.max(myCleared, latestId);
+    if (newCleared !== myCleared) {
+      await prisma.userOnChat.updateMany({
+        where: { userId: uid, chatId: cid },
+        data: { clearedUpToMessageId: newCleared },
+      });
+    }
+
+    // Hard-delete messages every member has already passed (gone for all).
+    const clearedVals = chat.users.map(m =>
+      m.userId === uid ? newCleared : (m.clearedUpToMessageId || 0)
+    );
+    const minCleared = clearedVals.length ? Math.min(...clearedVals) : 0;
+    if (minCleared > 0) {
+      const doomed = await prisma.message.findMany({
+        where: { chatId: cid, id: { lte: minCleared } },
+        select: { id: true, imageUrl: true },
+      });
+      if (doomed.length) {
+        const ids = doomed.map(m => m.id);
+        await prisma.message.deleteMany({ where: { id: { in: ids } } });
+        const { deleteFromS3 } = require('../utils/s3Upload');
+        for (const m of doomed) if (m.imageUrl) deleteFromS3(m.imageUrl);
+        try {
+          ioInstance && ioInstance.to(`chat_${cid}`).emit('messagesDeleted', { chatId: cid, messageIds: ids });
+        } catch (_) { /* socket not ready */ }
+      }
+    }
+  } catch (e) {
+    console.error('clearChatOnExit error:', e);
+  }
+}
+
+module.exports = { initSocket, getIO, clearChatOnExit, sendPushToOfflineUsers: sendPushNotificationToOfflineUsers };
