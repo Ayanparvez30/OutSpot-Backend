@@ -57,6 +57,8 @@ async function notifyUser(userId, type, title, description, data = {}) {
         console.log(`⚠️ FCM delivery failed for user ${userId}:`, fcmError.message);
         console.log(`   Notification still saved to database`);
       }
+    } else if (user && user.notificationEnabled === false) {
+      console.log(`ℹ️ User ${userId} has notifications OFF, skipping push (in-app saved)`);
     } else {
       console.log(`ℹ️ User ${userId} has no FCM token, skipping push`);
     }

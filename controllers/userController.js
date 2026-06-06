@@ -484,13 +484,28 @@ async function getNotificationSetting(req, res) {
   }
 }
 
-// POST set notification master switch. Body: { enabled: boolean }.
-// When off, NO FCM push of any kind is delivered to this user.
+// POST set notification master switch.
+// Accepts the flag under `enabled` OR `notificationEnabled`, and coerces common
+// shapes (boolean, "true"/"false", 1/0, "1"/"0") so a client that sends a string
+// or the alternate key still persists correctly (the toggle must never silently
+// fail to ON). When off, NO FCM push of any kind is delivered to this user.
+function coerceBool(v) {
+  if (typeof v === 'boolean') return v;
+  if (typeof v === 'number') return v === 1 ? true : v === 0 ? false : null;
+  if (typeof v === 'string') {
+    const s = v.trim().toLowerCase();
+    if (s === 'true' || s === '1') return true;
+    if (s === 'false' || s === '0') return false;
+  }
+  return null;
+}
+
 async function setNotificationSetting(req, res) {
   try {
     const userId = req.authData.id;
-    const { enabled } = req.body;
-    if (typeof enabled !== 'boolean') {
+    const raw = req.body?.enabled ?? req.body?.notificationEnabled;
+    const enabled = coerceBool(raw);
+    if (enabled === null) {
       return res.status(400).json({ error: 'enabled (boolean) is required' });
     }
     await prisma.user.update({
