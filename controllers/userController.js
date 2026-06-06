@@ -602,6 +602,39 @@ async function submitForPoints(req, res) {
   if (!req.file) return res.status(400).json({ error: 'No media uploaded' });
 
   try {
+    // ---- 1-hour rate limit ----
+    // Per spec: a user can only submit-for-points once per hour, regardless of
+    // place. Cheap query (single findFirst with createdAt index) runs BEFORE
+    // any other validation so spam attempts cost almost nothing. Env override
+    // SUBMIT_RATE_LIMIT_MINUTES lets us tune without redeploy.
+    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 60);
+    if (RATE_LIMIT_MINUTES > 0) {
+      const rateWindowAgo = new Date(Date.now() - RATE_LIMIT_MINUTES * 60 * 1000);
+      const lastSubmit = await prisma.locationPoint.findFirst({
+        where: { userId, createdAt: { gte: rateWindowAgo } },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      if (lastSubmit) {
+        const elapsedMs = Date.now() - lastSubmit.createdAt.getTime();
+        const remainingMs = RATE_LIMIT_MINUTES * 60 * 1000 - elapsedMs;
+        const retryAfterSec = Math.max(1, Math.ceil(remainingMs / 1000));
+        const mins = Math.floor(retryAfterSec / 60);
+        const secs = retryAfterSec % 60;
+        const retryIn = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+        res.set('Retry-After', String(retryAfterSec));
+        return res.status(429).json({
+          awarded: false,
+          reason: 'rate-limited',
+          message: `You can only submit once every ${RATE_LIMIT_MINUTES} minutes. Try again in ${retryIn}.`,
+          rateLimitMinutes: RATE_LIMIT_MINUTES,
+          retryAfterSeconds: retryAfterSec,
+          retryIn,
+          lastSubmitAt: lastSubmit.createdAt,
+        });
+      }
+    }
+
     // De-duplicate: same placeId or same coordinates within 12h window
     const DUP_WINDOW_HOURS = 12;
     const DUP_WINDOW_MS = DUP_WINDOW_HOURS * 60 * 60 * 1000;
