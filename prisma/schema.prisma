@@ -350,10 +350,17 @@ enum ChallengeFrequency {
   DAILY 
   WEEKLY 
   }
-enum PointsTier { 
-  SILVER 
-  GOLD 
-  }
+enum PointsTier {
+  SILVER
+  GOLD
+}
+
+enum ChallengeDifficulty {
+  EASY
+  MEDIUM
+  HARD
+  MULTI_STEP
+}
 model Challenge {
   id             Int      @id @default(autoincrement())
   title          String
@@ -378,6 +385,10 @@ model Challenge {
   // season = 'summer' | 'fall' | 'winter' | 'spring' → only served in that season; null = any season.
   weekendOnly Boolean @default(false)
   season      String?
+
+  // Effort tier — informs the recommended `points` value at create time and
+  // can be shown as a badge in the UI. Nullable so legacy rows don't break.
+  difficulty  ChallengeDifficulty?
 
   @@unique([title, frequency]) // <— add this
 }
