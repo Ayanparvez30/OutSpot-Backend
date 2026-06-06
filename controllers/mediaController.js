@@ -956,13 +956,13 @@ exports.getStoriesFeed = async (req, res) => {
     // helpers
     const isFriendId = (uid) => friendIds.has(uid);
 
-    // Friends bucket (flat, without community fields)
+    // Friends bucket — KEEP overlap communities + tag relation so frontend can
+    // overlay a community badge on the friend avatar when there's overlap.
     const friendsOnly = flat
       .filter(it => isFriendId(it.user.id))
       .map(it => ({
         ...it,
-        communityNames: [], // friends সেকশনে কমিউনিটি ডেটা নয়
-        communities: []
+        relation: (it.communities && it.communities.length) ? 'friend-and-community' : 'friend',
       }));
 
     // Communities grouped (শুধু needCommunityOverlap হলে)
@@ -976,9 +976,15 @@ exports.getStoriesFeed = async (req, res) => {
         // overlap so the user explicitly asking for community feed still
         // sees all community-member stories.)
         if (FILTER === 'all' && isFriendId(item.user.id)) continue;
+        // Tag each item with its viewer-relative relation so frontend can pick
+        // the right avatar treatment (friend halo vs community-only badge).
+        const tagged = {
+          ...item,
+          relation: isFriendId(item.user.id) ? 'friend-and-community' : 'community-only',
+        };
         for (const cm of item.communities) {
           if (!groupMap.has(cm.id)) groupMap.set(cm.id, { community: cm, stories: [] });
-          groupMap.get(cm.id).stories.push(item);
+          groupMap.get(cm.id).stories.push(tagged);
         }
       }
       const myIds = myCommunityIds;
@@ -990,31 +996,89 @@ exports.getStoriesFeed = async (req, res) => {
         );
     }
 
-    // ---- Response switch ----
+    // ---- Pagination ----
+    // pageSize defaults to 20, capped at 50. Three modes:
+    //   (default)             → initial load: every bucket sliced to its first
+    //                            pageSize items, each carries its own hasMore.
+    //   bucket=friends&page=N → next page of the friends bucket only.
+    //   bucket=community&communityId=X&page=N → next page of one community group.
+    // Flutter's horizontal scroller per row drives the bucket-scoped calls.
+    const reqBucket = (req.query.bucket || '').toString().toLowerCase();
+    const reqCommunityId = Number.isFinite(parseInt(req.query.communityId, 10)) ? parseInt(req.query.communityId, 10) : null;
+    const page = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.max(1, Math.min(50, parseInt(req.query.pageSize, 10) || 20));
+    const offset = (page - 1) * pageSize;
+    const slicePage = (arr) => ({
+      page, pageSize,
+      totalCount: arr.length,
+      hasMore: offset + pageSize < arr.length,
+      items: arr.slice(offset, offset + pageSize),
+    });
+
+    // ---- Bucket-scoped load-more responses ----
+    if (reqBucket === 'friends') {
+      const p = slicePage(friendsOnly);
+      return res.json({
+        filter: FILTER, bucket: 'friends',
+        page: p.page, pageSize: p.pageSize, totalCount: p.totalCount, hasMore: p.hasMore,
+        stories: p.items,
+      });
+    }
+    if (reqBucket === 'community' && reqCommunityId != null) {
+      const grp = communitiesGrouped.find(g => g.community.id === reqCommunityId);
+      const arr = grp ? grp.stories : [];
+      const p = slicePage(arr);
+      return res.json({
+        filter: FILTER, bucket: 'community',
+        community: grp ? grp.community : { id: reqCommunityId, name: null, imageUrl: null },
+        page: p.page, pageSize: p.pageSize, totalCount: p.totalCount, hasMore: p.hasMore,
+        stories: p.items,
+      });
+    }
+
+    // ---- Initial-load responses (every bucket sliced to first page) ----
+    const friendsFirst = slicePage(friendsOnly);
+    const communitiesGroupedPaged = communitiesGrouped.map(g => {
+      const p = slicePage(g.stories);
+      return {
+        community: g.community,
+        page: p.page, pageSize: p.pageSize, totalCount: p.totalCount, hasMore: p.hasMore,
+        stories: p.items,
+      };
+    });
+
     if (FILTER === 'all') {
       return res.json({
         filter: FILTER,
-        friends: friendsOnly,          // ← ফ্রেন্ডদের স্টোরি আলাদা নামে
-        communitiesGrouped,            // ← একই কমিউনিটির সবাই একসাথে
-        myCommunities                  // ← চাইলে হেডারে দেখাতে পারো
+        pageSize,
+        friends: {
+          page: friendsFirst.page, pageSize: friendsFirst.pageSize,
+          totalCount: friendsFirst.totalCount, hasMore: friendsFirst.hasMore,
+          stories: friendsFirst.items,
+        },
+        communitiesGrouped: communitiesGroupedPaged,
+        myCommunities,
       });
     }
 
     if (FILTER === 'friends') {
       return res.json({
-        filter: FILTER,
-        stories: friendsOnly,          // ← শুধু ফ্রেন্ডদের ফ্ল্যাট লিস্ট
+        filter: FILTER, pageSize,
+        page: friendsFirst.page, totalCount: friendsFirst.totalCount, hasMore: friendsFirst.hasMore,
+        stories: friendsFirst.items,
         communitiesGrouped: [],
-        myCommunities: []
+        myCommunities: [],
       });
     }
 
-    // FILTER === 'communities'
+    // FILTER === 'communities' — same flat slice + grouped paged
+    const flatFirst = slicePage(flat);
     return res.json({
-      filter: FILTER,
-      stories: flat,                   // কমিউনিটি-ওভারল্যাপ স্টোরি (ফ্ল্যাট)
-      communitiesGrouped,
-      myCommunities
+      filter: FILTER, pageSize,
+      page: flatFirst.page, totalCount: flatFirst.totalCount, hasMore: flatFirst.hasMore,
+      stories: flatFirst.items,
+      communitiesGrouped: communitiesGroupedPaged,
+      myCommunities,
     });
   } catch (error) {
     console.error('getStoriesFeed error:', error);
