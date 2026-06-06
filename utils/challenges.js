@@ -91,17 +91,49 @@ async function maybeNotify(prisma, userId, assign, freq, zone) {
   }
 }
 async function getAssignedChallenge(prisma, userId, frequency, zone, now = new Date()) {
-  const list = await prisma.challenge.findMany({ where: { frequency }, orderBy: { id: 'asc' } });
-  if (!list.length) return { challenge: null, windowKey: null };
+  const list = await prisma.challenge.findMany({
+    where: { frequency, isActive: true },
+    orderBy: { id: 'asc' },
+  });
+  // Apply scheduling constraints (weekend-only, seasonal) BEFORE seeded pick
+  // so the user never gets shown a challenge that isn't valid today.
+  const ctx = nowContext(zone, now);
+  const eligible = list.filter(c => challengeMatchesNow(c, ctx));
+  if (!eligible.length) return { challenge: null, windowKey: null };
   const windowKey = frequency === 'DAILY' ? dateKeyInZone(now, zone) : weekKeyInZone(now, zone);
   const seed = `${frequency}:${windowKey}`;
-  const challenge = seededPick(list, seed);
+  const challenge = seededPick(eligible, seed);
 
   // Create notifications for assigned challenges if not already present
   await maybeNotify(prisma, userId, { challenge }, frequency, zone);
 
   return { challenge, windowKey };
 }
+// Current weekday + season in the app timezone — used to filter out
+// challenges whose scheduling constraint doesn't match today.
+function nowContext(zone, now = new Date()) {
+  const dt = DateTime.fromJSDate(now, { zone });
+  const weekday = dt.weekday % 7; // luxon: 1=Mon..7=Sun; %7 → Mon=1..Sat=6, Sun=0
+  const isWeekend = weekday === 0 || weekday === 6;
+  const month = dt.month; // 1-12
+  let season;
+  if (month >= 6 && month <= 8) season = 'summer';
+  else if (month >= 9 && month <= 11) season = 'fall';
+  else if (month === 12 || month <= 2) season = 'winter';
+  else season = 'spring';
+  return { weekday, isWeekend, month, season };
+}
+
+// True when a challenge row passes the scheduling constraints for `nowCtx`.
+// weekendOnly=true rows are blocked Mon-Fri. season='summer' rows are blocked
+// outside summer. Unset / null constraints always pass.
+function challengeMatchesNow(challenge, nowCtx) {
+  if (!challenge) return false;
+  if (challenge.weekendOnly && !nowCtx.isWeekend) return false;
+  if (challenge.season && challenge.season !== nowCtx.season) return false;
+  return true;
+}
+
 function timeRemainingMs(frequency, zone, now = new Date()) {
   const dt = DateTime.fromJSDate(now, { zone });
   if (frequency === 'DAILY') {
@@ -120,4 +152,6 @@ module.exports = {
   weekKeyInZone,
   getAssignedChallenge,
   timeRemainingMs,
+  nowContext,
+  challengeMatchesNow,
 };

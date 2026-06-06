@@ -371,6 +371,14 @@ model Challenge {
   isActive    Boolean @default(true)
   isFeatured  Boolean @default(false)
 
+  // Scheduling constraints — backend won't surface a challenge when its
+  // constraint is violated. Both fields default to "always" so legacy rows
+  // keep showing as before.
+  // weekendOnly = true → only served Sat/Sun (Boston TZ).
+  // season = 'summer' | 'fall' | 'winter' | 'spring' → only served in that season; null = any season.
+  weekendOnly Boolean @default(false)
+  season      String?
+
   @@unique([title, frequency]) // <— add this
 }
 
