@@ -44,7 +44,16 @@ async function validatePlaceDistance({ placeId, userLat, userLng, maxMeters }) {
     userLng >= viewport.southwest.lng && userLng <= viewport.northeast.lng;
 
   if (insideViewport || dist <= maxMeters) {
-    return { ok: true, distMeters: dist, placeName, placeLat, placeLng };
+    // Pass through Google's price + popularity signals so the caller can
+    // compute the points award without making a second details() call.
+    return {
+      ok: true,
+      distMeters: dist,
+      placeName, placeLat, placeLng,
+      priceLevel: d?.price_level ?? null,        // 0..4 (legacy ints from googlePlaces mapping)
+      userRatingsTotal: d?.user_ratings_total ?? null,
+      rating: d?.rating ?? null,
+    };
   }
 
   const rounded = Math.round(dist);

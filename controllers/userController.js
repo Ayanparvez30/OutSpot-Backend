@@ -701,6 +701,7 @@ async function submitForPoints(req, res) {
     // Server-side place validation — runs BEFORE S3 upload so rejected
     // submissions don't burn bandwidth/storage. Skipped only if no placeId
     // (legacy free-form submissions).
+    let placeCheck = null;
     if (placeId) {
       const MAX_PLACE_DISTANCE_METERS = Number(process.env.MAX_PLACE_DISTANCE_METERS || 40);
       const uLat = parseFloat(latitude);
@@ -729,11 +730,22 @@ async function submitForPoints(req, res) {
           }
           return res.status(400).json({ awarded: false, reason: check.reason, message: check.message });
         }
+        placeCheck = check; // priceLevel + userRatingsTotal are carried through
       }
     }
 
     const mediaUrl = await uploadToS3(req.file, 'points');
-    const basePoints = 5;
+    // Award points based on the place's Google price level (or popularity for
+    // free/no-data places). If no placeId was supplied or the lookup didn't
+    // yield a usable price signal, fall back to the legacy flat 5pt award so
+    // historical submission flows keep working.
+    const { pointsForPlace } = require('../utils/pointsForPlace');
+    const basePoints = placeCheck
+      ? pointsForPlace({
+          priceLevel: placeCheck.priceLevel,
+          userRatingsTotal: placeCheck.userRatingsTotal,
+        })
+      : 5;
 
     const lp = await prisma.locationPoint.create({
       data: {
