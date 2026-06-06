@@ -80,6 +80,7 @@ async function sendPushNotificationToOfflineUsers(chatId, senderId, senderFirstN
       if (user.id === senderId) continue;
       if (isUserOnline(user.id)) continue;
       if (!user.fcmToken) continue;
+      if (user.notificationEnabled === false) continue; // master switch off => no push
       if (userOnChat.isMuted) continue;
 
       const notificationPayload = {

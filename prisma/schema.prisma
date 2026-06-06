@@ -37,6 +37,7 @@ model User {
   invitesSent      Referral[]        @relation("UserInvites")
   invitesReceived  Referral[]        @relation("UserReferred")
   fcmToken         String?
+  notificationEnabled Boolean         @default(true) // master switch: off => no FCM push at all
   notifications     Notification[]
   messages          Message[]
   chats             UserOnChat[]

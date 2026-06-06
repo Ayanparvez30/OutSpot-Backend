@@ -46,6 +46,8 @@ router.post('/minime/:id/set-active', checkAuth, userController.setActiveMinime)
 router.get('/minime/current', checkAuth, userController.getCurrentMinime);
 router.get('/minime/locker', checkAuth, userController.getMiniMeLocker);
 router.post('/me/privacy', checkAuth, userController.updatePrivacy);
+router.get('/me/notification-setting', checkAuth, userController.getNotificationSetting);
+router.post('/me/notification-setting', checkAuth, userController.setNotificationSetting);
 // routes/userRoutes.js
 router.get("/users/:userId/stats", checkAuth, userController.getUserStatsByUserId);
 router.get("/users/:userId/visited-spots", checkAuth, userController.getUserVisitedSpots);

@@ -468,6 +468,42 @@ async function updatePrivacy(req, res) {
   res.json({ message: `Profile privacy set to ${!!isPrivate}` });
 }
 
+// GET current notification master switch (null/undefined => true by default)
+async function getNotificationSetting(req, res) {
+  try {
+    const userId = req.authData.id;
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: { notificationEnabled: true },
+    });
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    return res.json({ notificationEnabled: user.notificationEnabled !== false });
+  } catch (err) {
+    console.error('getNotificationSetting error:', err);
+    return res.status(500).json({ error: 'Failed to load notification setting' });
+  }
+}
+
+// POST set notification master switch. Body: { enabled: boolean }.
+// When off, NO FCM push of any kind is delivered to this user.
+async function setNotificationSetting(req, res) {
+  try {
+    const userId = req.authData.id;
+    const { enabled } = req.body;
+    if (typeof enabled !== 'boolean') {
+      return res.status(400).json({ error: 'enabled (boolean) is required' });
+    }
+    await prisma.user.update({
+      where: { id: userId },
+      data: { notificationEnabled: enabled },
+    });
+    return res.json({ notificationEnabled: enabled });
+  } catch (err) {
+    console.error('setNotificationSetting error:', err);
+    return res.status(500).json({ error: 'Failed to update notification setting' });
+  }
+}
+
 async function updateBio(req, res) {
   const userId = req.authData.id;
   const { bio } = req.body;
@@ -1310,6 +1346,8 @@ module.exports = {
   getUserProfile,
   getProfile,
   updatePrivacy,
+  getNotificationSetting,
+  setNotificationSetting,
   updateBio,
   updateName,
 

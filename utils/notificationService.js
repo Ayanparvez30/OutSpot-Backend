@@ -33,7 +33,9 @@ async function notifyUser(userId, type, title, description, data = {}) {
     // 2) Load recipient for FCM token
     const user = await prisma.user.findUnique({ where: { id: userId } });
 
-    if (user?.fcmToken) {
+    // Master notification switch: skip ALL FCM push if the user turned it off.
+    // null/undefined is treated as ON (default). In-app record is still saved.
+    if (user?.fcmToken && user.notificationEnabled !== false) {
       const message = {
         token: user.fcmToken,
         notification: { title, body: description },
