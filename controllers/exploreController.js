@@ -2,6 +2,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const { nearbyPage, nearbyAll, nearbyByDistance, nearbyByDistanceAll, details, textSearch, photoUrlByRef } = require('../utils/googlePlaces');
 const { addPointsWithMultiplier } = require('../utils/points');
+const { pointsForPlace } = require('../utils/pointsForPlace');
 
 const toRad = d => (d * Math.PI) / 180;
 const haversineMeters = (a, b) => {
@@ -147,11 +148,12 @@ async function getCategoryCandidates({ cat, lat, lng, radius, requiredCount = 10
 // Priority order matters. Walk top-down — first match wins.
 // A Starbucks tagged ['cafe','food','restaurant'] hits Cafes first → primary=Cafes,
 // excluded from Restaurants results. A pub tagged ['bar','restaurant'] → primary=Bars.
+// Points removed from each bucket — per-place dynamic via pointsForPlace().
 const CATEGORIES = [
-  { key: 'venue-events', title: 'Venue Events', icon: '🎤', points: 4, imageKey: 'venue-events',
+  { key: 'venue-events', title: 'Venue Events', icon: '🎤', imageKey: 'venue-events',
     googleTypes: ['night_club', 'karaoke', 'comedy_club', 'live_music_venue', 'concert_hall', 'performing_arts_theater'],
     textQueries: ['popular nightclubs', 'karaoke bars', 'comedy clubs', 'concerts near me', 'live music venues'] },
-  { key: 'outdoors',     title: 'Outdoors',     icon: '🌳', points: 3, imageKey: 'outdoors',
+  { key: 'outdoors',     title: 'Outdoors',     icon: '🌳', imageKey: 'outdoors',
     googleTypes: [
       'park', 'campground', 'tourist_attraction', 'hiking_area', 'national_park', 'botanical_garden', 'beach',
       'sports_complex', 'sports_club',
@@ -159,13 +161,13 @@ const CATEGORIES = [
     ],
     // Only text queries for activities Places API doesn't expose as supported types.
     textQueries: ['paintball near me', 'go karting near me', 'boating near me'] },
-  { key: 'bars',         title: 'Bars',         icon: '🍻', points: 4, imageKey: 'bars',
+  { key: 'bars',         title: 'Bars',         icon: '🍻', imageKey: 'bars',
     googleTypes: ['bar', 'pub', 'wine_bar', 'bar_and_grill'],
     textQueries: ['popular bars', 'irish pubs', 'cocktail bars'] },
-  { key: 'cafes',        title: 'Cafes',        icon: '☕', points: 3, imageKey: 'cafes',
+  { key: 'cafes',        title: 'Cafes',        icon: '☕', imageKey: 'cafes',
     googleTypes: ['cafe', 'coffee_shop'],
     textQueries: ['best coffee shops', 'popular cafes'] },
-  { key: 'restaurants',  title: 'Restaurants',  icon: '🍽️', points: 4, imageKey: 'restaurants',
+  { key: 'restaurants',  title: 'Restaurants',  icon: '🍽️', imageKey: 'restaurants',
     googleTypes: ['restaurant', 'meal_takeaway', 'meal_delivery', 'fast_food_restaurant', 'fine_dining_restaurant', 'brunch_restaurant', 'breakfast_restaurant'],
     textQueries: ['popular restaurants', 'best restaurants', 'fine dining'] },
 ];
@@ -281,11 +283,17 @@ const getCategory = key => {
   return CATEGORIES.find(c => c.key === resolved);
 };
 
-// helper: map raw Google place to response object
-function mapPlace(p, lat, lng, points) {
+// helper: map raw Google place to response object.
+// Points computed from Google price_level + user_ratings_total per launch spec
+// (see utils/pointsForPlace.js). No static per-category points.
+function mapPlace(p, lat, lng) {
   const placeLat = p.geometry?.location?.lat ?? 0;
   const placeLng = p.geometry?.location?.lng ?? 0;
   const openNow = p.opening_hours?.open_now ?? null;
+  const points = pointsForPlace({
+    priceLevel: p.price_level,
+    userRatingsTotal: p.user_ratings_total,
+  });
   return {
     placeId: p.place_id,
     name: p.name,
@@ -339,11 +347,13 @@ exports.getCategoryPlaces = async (req, res) => {
     const candidates = await getCategoryCandidates({ cat, lat, lng, radius, requiredCount });
     const totalCount = candidates.length;
     const slice = candidates.slice(offset, offset + pageSize);
-    const items = slice.map(p => ({ ...mapPlace(p, lat, lng, cat.points), category: cat.title }));
+    const items = slice.map(p => ({ ...mapPlace(p, lat, lng), category: cat.title }));
     const hasMore = offset + items.length < totalCount;
 
     res.json({
-      category: { key: cat.key, title: cat.title, points: cat.points },
+      // category.points = null — bucket has no fixed point value. Per-place
+      // `points` (inside places[]) is the source of truth (price_level × reviews).
+      category: { key: cat.key, title: cat.title, points: null },
       page,
       pageSize,
       totalCount,
@@ -374,7 +384,7 @@ exports.getCategoryMorePlaces = async (req, res) => {
     }
 
     const page = await nearbyPage({ pagetoken });
-    const items = (page.results || []).map(p => mapPlace(p, lat, lng, cat.points));
+    const items = (page.results || []).map(p => mapPlace(p, lat, lng));
     items.sort((a, b) => (a.distanceMiles || 0) - (b.distanceMiles || 0) || (b.rating || 0) - (a.rating || 0));
 
     res.json({
@@ -407,9 +417,7 @@ exports.recordVisit = async (req, res) => {
     }
     placeId = placeId.trim();
 
-    // points per category (fallback to 5)
     const cat = categoryKey ? getCategory(categoryKey) : null;
-    const points = cat?.points ?? 5;
 
     // --------------------------
     // ✅ server-side place validate
@@ -420,6 +428,8 @@ exports.recordVisit = async (req, res) => {
     let placeLng = null;
     let placeNameFromGoogle = null;
     let viewport = null;  // { northeast: {lat,lng}, southwest: {lat,lng} } or null
+    let placePriceLevel = null;
+    let placeReviewCount = null;
 
     try {
       const d = await details(placeId);
@@ -427,6 +437,8 @@ exports.recordVisit = async (req, res) => {
       placeLng = d?.geometry?.location?.lng ?? null;
       placeNameFromGoogle = d?.name ?? null;
       viewport = d?.geometry?.viewport || null;
+      placePriceLevel = d?.price_level ?? null;
+      placeReviewCount = d?.user_ratings_total ?? null;
     } catch (e) {
       return res.status(502).json({
         awarded: false,
@@ -513,6 +525,13 @@ exports.recordVisit = async (req, res) => {
     }
 
     /* ---------- 3) Create + award ---------- */
+    // Points from Google price_level + user_ratings_total per launch spec
+    // (pointsForPlace handles null/no-data fallback via review-count tiers).
+    const points = pointsForPlace({
+      priceLevel: placePriceLevel,
+      userRatingsTotal: placeReviewCount,
+    });
+
     const created = await prisma.locationPoint.create({
       data: {
         userId,
@@ -747,10 +766,12 @@ exports.searchPlaces = async (req, res) => {
       const photos = buildPhotosArray(d, 8);
       const image = photos[0] || photoUrlByRef(p.photos?.[0]?.photo_reference, 4800) || '';
       const matched = primaryCategory(d || p);
-      // When a category is enforced, use ITS points (filter guarantees match).
-      // Otherwise use the place's own bucket points (global search).
       const bucket = categoryFilter || matched;
-      const basePoints = bucket ? bucket.points : 0;
+      // Points from Google price_level + reviews (per launch spec).
+      const basePoints = pointsForPlace({
+        priceLevel: d?.price_level ?? p.price_level,
+        userRatingsTotal: d?.user_ratings_total ?? p.user_ratings_total,
+      });
       const finalPoints = Math.round(basePoints * multiplier);
       const openNow = d?.opening_hours?.open_now ?? p.opening_hours?.open_now;
       const placeLat = p.geometry?.location?.lat ?? d?.geometry?.location?.lat ?? 0;
@@ -892,7 +913,11 @@ exports.getRestaurantsByCategory = async (req, res) => {
           photos,
 
           category: cat.title,
-          points: cat.points,
+          // Per-place points from Google price_level + reviews (launch spec).
+          points: pointsForPlace({
+            priceLevel: d?.price_level ?? p.price_level,
+            userRatingsTotal: d?.user_ratings_total ?? p.user_ratings_total,
+          }),
           priceLevel: d?.price_level ?? null,
           priceRange: priceLevelToRange(d?.price_level) || '',
           openNow: openNow ?? null,
@@ -934,13 +959,12 @@ async function _renderTrendingPlaces(req, res, lat, lng, radius) {
   const candidates = await getTrendingCandidates({ lat, lng, radius });
   const totalCount = candidates.length;
   const slice = candidates.slice(offset, offset + pageSize);
-  // mapPlace expects per-place `points`. Use restaurants bucket (4) as the
-  // default trending bucket — it's the most common award value, and clients
-  // typically don't filter trending by points anyway.
-  const items = slice.map(p => ({ ...mapPlace(p, lat, lng, 4), category: 'Trending' }));
+  // Points computed per-place from Google signals via mapPlace.
+  const items = slice.map(p => ({ ...mapPlace(p, lat, lng), category: 'Trending' }));
 
   return res.json({
-    category: { key: 'trending', title: 'Trending', points: 4 },
+    // category.points = null — per-place card is the source of truth.
+    category: { key: 'trending', title: 'Trending', points: null },
     page,
     pageSize,
     totalCount,
@@ -972,8 +996,11 @@ async function _renderTrendingRestaurants(req, res, lat, lng, radius) {
     const lat2 = p.geometry?.location?.lat ?? d?.geometry?.location?.lat ?? 0;
     const lng2 = p.geometry?.location?.lng ?? d?.geometry?.location?.lng ?? 0;
     const openNow = d?.opening_hours?.open_now ?? p.opening_hours?.open_now;
-    const matched = primaryCategory(d || p);
-    const points = matched ? matched.points : 4;
+    // Points from Google price_level + reviews (per launch spec).
+    const points = pointsForPlace({
+      priceLevel: d?.price_level ?? p.price_level,
+      userRatingsTotal: d?.user_ratings_total ?? p.user_ratings_total,
+    });
 
     return {
       id: String(placeId),
