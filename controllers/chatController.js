@@ -1650,8 +1650,11 @@ exports.markChatAsRead = async (req, res) => {
         setTimeout(async () => {
           try {
             await prisma.message.deleteMany({ where: { id: { in: msgIds } } });
-            const { deleteFromS3 } = require('../utils/s3Upload');
-            for (const url of imageUrls) deleteFromS3(url);
+            // Orphan-only S3 cleanup — same URL may live on a SavedStory clone
+            // or other table; skip the S3 delete when still referenced.
+            const { deleteS3IfOrphanBulk } = require('../utils/s3Cleanup');
+            const uniqUrls = [...new Set(imageUrls)];
+            if (uniqUrls.length) await deleteS3IfOrphanBulk(uniqUrls);
             const io = require('../utils/socket').getIO();
             io.to(`chat_${cid}`).emit('messagesDeleted', { chatId: cid, messageIds: msgIds });
           } catch (e) {

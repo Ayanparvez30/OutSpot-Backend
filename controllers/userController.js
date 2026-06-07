@@ -876,7 +876,6 @@ async function getAchievementStatus(req, res) {
 // ------------ ACCOUNT DELETE ------------
 async function deleteAccount(req, res) {
   const userId = req.authData.id;
-  const { deleteFromS3 } = require('../utils/s3Upload');
 
   try {
     const user = await prisma.user.findUnique({
@@ -955,9 +954,14 @@ async function deleteAccount(req, res) {
     // 4) Delete user from DB — all cascade relations handle cleanup
     await prisma.user.delete({ where: { id: userId } });
 
-    // 4) Clean up S3 files (best-effort, non-blocking)
-    for (const url of s3Urls) {
-      deleteFromS3(url);
+    // 5) Orphan-only S3 cleanup — these URLs may still be referenced by
+    // SavedStory clones owned by OTHER users; the guard keeps S3 alive for
+    // those rows and only deletes truly orphaned objects. Best-effort,
+    // non-blocking.
+    if (s3Urls.length) {
+      const { deleteS3IfOrphanBulk } = require('../utils/s3Cleanup');
+      deleteS3IfOrphanBulk([...new Set(s3Urls)])
+        .catch(err => console.error('account-delete S3 cleanup error', err));
     }
 
     return res.json({ message: 'Account deleted everywhere' });

@@ -3,7 +3,7 @@ const { PrismaClient } = require('@prisma/client');
 const nodemailer = require('nodemailer');
 const prisma = new PrismaClient();
 const { notifyUser } = require('../utils/notificationService');
-const { deleteFromS3 } = require('../utils/s3Upload');
+const { deleteS3IfOrphanBulk } = require('../utils/s3Cleanup');
 const realtime = require('../utils/realtime');
 
 // ✅ NEW: single source of truth for weekly points (sums pointsLedger.finalPoints since Monday)
@@ -515,9 +515,11 @@ exports.unfriend = async (req, res) => {
       : []),
   ]);
 
-  // Clean up S3 images (best-effort, non-blocking)
-  for (const url of imageUrls) {
-    deleteFromS3(url);
+  // Orphan-only S3 cleanup — same URL might be referenced by a Story or
+  // SavedStory clone. Best-effort, non-blocking.
+  if (imageUrls.length) {
+    deleteS3IfOrphanBulk([...new Set(imageUrls)])
+      .catch(err => console.error('unfriend S3 cleanup error', err));
   }
 
   // Notify both users via socket so their chat list refreshes and drops the
@@ -689,9 +691,11 @@ exports.blockUser = async (req, res) => {
     }),
   ]);
 
-  // Clean up S3 images (best-effort, non-blocking)
-  for (const url of imageUrls) {
-    deleteFromS3(url);
+  // Orphan-only S3 cleanup — same URL might be referenced by a Story or
+  // SavedStory clone. Best-effort, non-blocking.
+  if (imageUrls.length) {
+    deleteS3IfOrphanBulk([...new Set(imageUrls)])
+      .catch(err => console.error('block S3 cleanup error', err));
   }
 
   // Notify both users to remove chat from UI

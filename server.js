@@ -164,10 +164,15 @@ cron.schedule(MSG_CLEANUP_CRON, async () => {
 
     console.log(`🗑️  Disappearing messages cleaned up: ${expired.length}`);
 
-    // Delete S3 images (best-effort)
-    const { deleteFromS3 } = require('./utils/s3Upload');
-    for (const m of expired) {
-      if (m.imageUrl) deleteFromS3(m.imageUrl);
+    // Orphan-only S3 cleanup — same upload may also live on a Story (e.g.
+    // user sent a photo to chat AND posted it as a story), so a blind
+    // deleteFromS3 would kill the still-alive story's image. Guarded version
+    // skips S3 delete if any other table row still references the URL.
+    const { deleteS3IfOrphanBulk } = require('./utils/s3Cleanup');
+    const msgUrls = [...new Set(expired.map(m => m.imageUrl).filter(Boolean))];
+    if (msgUrls.length) {
+      const c = await deleteS3IfOrphanBulk(msgUrls);
+      console.log(`✅ Message S3 cleanup: deleted=${c.deleted} kept=${c.kept} failed=${c.failed}`);
     }
 
     // Group by chatId and emit per-chat messagesDeleted events

@@ -605,8 +605,11 @@ async function clearChatOnExit(userId, chatId) {
       if (doomed.length) {
         const ids = doomed.map(m => m.id);
         await prisma.message.deleteMany({ where: { id: { in: ids } } });
-        const { deleteFromS3 } = require('../utils/s3Upload');
-        for (const m of doomed) if (m.imageUrl) deleteFromS3(m.imageUrl);
+        // Orphan-only S3 cleanup — same upload may back a SavedStory clone;
+        // skip the S3 delete when any other row references it.
+        const { deleteS3IfOrphanBulk } = require('../utils/s3Cleanup');
+        const urls = [...new Set(doomed.map(m => m.imageUrl).filter(Boolean))];
+        if (urls.length) deleteS3IfOrphanBulk(urls).catch(err => console.error('socket clear-up S3 cleanup error', err));
         try {
           ioInstance && ioInstance.to(`chat_${cid}`).emit('messagesDeleted', { chatId: cid, messageIds: ids });
         } catch (_) { /* socket not ready */ }
