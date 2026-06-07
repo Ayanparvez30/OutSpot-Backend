@@ -281,20 +281,24 @@ function collectOutfitImageUrls(outfit) {
 
 // ---------- compress image ----------
 async function compressForMobile(rawBuffer) {
+  // Avatars are transparent character cutouts — the visible "edge" is the alpha
+  // boundary, so it's very sensitive to downscaling + chroma/alpha compression.
+  // Keep gpt-image-1's native 1024×1536 (no downscale) and use high-quality webp
+  // so cutout edges stay crisp. Trade a bigger file for sharp edges (intended).
   const compressed = await sharp(rawBuffer)
-    .resize(768, 1152, { fit: 'inside', withoutEnlargement: true })
-    .sharpen({ sigma: 0.5 })          // counteract downscale blur
+    .resize(1024, 1536, { fit: 'inside', withoutEnlargement: true }) // cap only; native = no-op
+    .sharpen({ sigma: 0.6 })          // light edge crispening
     .webp({
-      quality: 85,
-      alphaQuality: 95,               // clean transparent edges
-      effort: 4,                       // balanced compression (nearly same size, faster encode)
-      smartSubsample: true,            // better color detail
+      quality: 92,                    // was 85 — sharper detail/edges
+      alphaQuality: 100,              // was 95 — pristine transparent-cutout edge
+      effort: 6,                      // was 4 — best quality per byte
+      smartSubsample: true,
     })
     .toBuffer();
 
   const originalKB = (rawBuffer.length / 1024).toFixed(0);
   const compressedKB = (compressed.length / 1024).toFixed(0);
-  console.log(`  Image compressed: ${originalKB} KB → ${compressedKB} KB (webp 768×1152)`);
+  console.log(`  Image compressed: ${originalKB} KB → ${compressedKB} KB (webp 1024×1536 q92)`);
 
   return compressed;
 }
@@ -512,6 +516,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
       prompt,
       size: '1024x1536',
       background: 'transparent',
+      quality: 'high', // sharpest source render (was default/auto) — crisper edges
     });
   } else {
     // Fallback to generate only if ALL fetches failed
@@ -521,6 +526,7 @@ exports.renderCurrentMinime = async (userId, opts = {}) => {
       prompt,
       size: '1024x1536',
       background: 'transparent',
+      quality: 'high', // sharpest source render (was default/auto) — crisper edges
     });
   }
 

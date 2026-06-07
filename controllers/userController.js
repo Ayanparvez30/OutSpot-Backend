@@ -153,15 +153,16 @@ async function uploadAvatarWithMulter(req, res) {
     const file = req.files?.[0];
     if (!file) return response.response_with_code(res, 400, 'No image uploaded');
 
-    // Compress selfie before uploading to S3
+    // Compress selfie before uploading to S3. This is the FACE REFERENCE fed to
+    // gpt-image-1, so keep it high-res + high-quality → sharper face in the avatar.
     const originalKB = (file.buffer.length / 1024).toFixed(0);
     const compressed = await sharp(file.buffer)
-      .resize(768, 1152, { fit: 'inside', withoutEnlargement: true })
-      .sharpen({ sigma: 0.5 })
-      .webp({ quality: 85, alphaQuality: 95, effort: 6, smartSubsample: true })
+      .resize(1024, 1536, { fit: 'inside', withoutEnlargement: true }) // was 768×1152
+      .sharpen({ sigma: 0.6 })
+      .webp({ quality: 92, alphaQuality: 100, effort: 6, smartSubsample: true }) // was q85/a95
       .toBuffer();
     const compressedKB = (compressed.length / 1024).toFixed(0);
-    console.log(`[SELFIE] Compressed: ${originalKB} KB → ${compressedKB} KB (webp)`);
+    console.log(`[SELFIE] Compressed: ${originalKB} KB → ${compressedKB} KB (webp 1024×1536 q92)`);
 
     const compressedFile = {
       originalname: file.originalname.replace(/\.[^.]+$/, '.webp'),
