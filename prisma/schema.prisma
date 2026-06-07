@@ -8,56 +8,56 @@ datasource db {
 }
 
 model User {
-  id               Int               @id @default(autoincrement())
-  username         String            @unique
-  email            String?           @unique
-  phone            String?           @unique
-  password         String
-  isVerified       Boolean           @default(false)
-  otp              String?
-  otpExpiresAt     DateTime?
-  authorization    String?
-  createdAt        DateTime          @default(now())
-  updatedAt        DateTime          @updatedAt
-  isProfilePrivate Boolean           @default(false)
+  id                  Int               @id @default(autoincrement())
+  username            String            @unique
+  email               String?           @unique
+  phone               String?           @unique
+  password            String
+  isVerified          Boolean           @default(false)
+  otp                 String?
+  otpExpiresAt        DateTime?
+  authorization       String?
+  createdAt           DateTime          @default(now())
+  updatedAt           DateTime          @updatedAt
+  isProfilePrivate    Boolean           @default(false)
   // Profile Onboarding
-  firstName        String?
-  lastName         String?
-  bio              String?
-  bodyType         String?
-  bodyShapeUrl     String?
-  selfieUrl        String?   @db.Text  // canonical selfie — never lost when drafts are deleted
-  communities      CommunityMember[]
-  syncedContacts   ContactSync[]
-    // 👇 Referral fields
-  referralCode     String            @unique @default(cuid())
-  referredById     Int?
-  referredBy       User?             @relation("UserReferredBy", fields: [referredById], references: [id], onDelete: SetNull)
-  referredUsers    User[]            @relation("UserReferredBy")
-  invitesSent      Referral[]        @relation("UserInvites")
-  invitesReceived  Referral[]        @relation("UserReferred")
-  fcmToken         String?
-  notificationEnabled Boolean         @default(true) // master switch: off => no FCM push at all
-  notifications     Notification[]
-  messages          Message[]
-  chats             UserOnChat[]
-  minime            Minime[]
-  communitiesCreated Community[]  @relation("UserCreatedCommunities")
-  media              Media[]      @relation("UserMedia")
-  stories            Story[]
-  savedStories       SavedStory[]
+  firstName           String?
+  lastName            String?
+  bio                 String?
+  bodyType            String?
+  bodyShapeUrl        String?
+  selfieUrl           String?           @db.Text // canonical selfie — never lost when drafts are deleted
+  communities         CommunityMember[]
+  syncedContacts      ContactSync[]
+  // 👇 Referral fields
+  referralCode        String            @unique @default(cuid())
+  referredById        Int?
+  referredBy          User?             @relation("UserReferredBy", fields: [referredById], references: [id], onDelete: SetNull)
+  referredUsers       User[]            @relation("UserReferredBy")
+  invitesSent         Referral[]        @relation("UserInvites")
+  invitesReceived     Referral[]        @relation("UserReferred")
+  fcmToken            String?
+  notificationEnabled Boolean           @default(true) // master switch: off => no FCM push at all
+  notifications       Notification[]
+  messages            Message[]
+  chats               UserOnChat[]
+  minime              Minime[]
+  communitiesCreated  Community[]       @relation("UserCreatedCommunities")
+  media               Media[]           @relation("UserMedia")
+  stories             Story[]
+  savedStories        SavedStory[]
 
-  friendRequestsSent     Friendship[]    @relation("friendRequestsSent")
-  friendRequestsReceived Friendship[]    @relation("friendRequestsReceived")
-  blocks                 Block[]         @relation("blocks")
-  blockedBy              Block[]         @relation("blocked")
-  totalPoints            Int             @default(0)
+  friendRequestsSent     Friendship[]          @relation("friendRequestsSent")
+  friendRequestsReceived Friendship[]          @relation("friendRequestsReceived")
+  blocks                 Block[]               @relation("blocks")
+  blockedBy              Block[]               @relation("blocked")
+  totalPoints            Int                   @default(0)
   Location               Location?
-  submissions  Submission[]
-  completions  ChallengeCompletion[]
+  submissions            Submission[]
+  completions            ChallengeCompletion[]
   locationPoints         LocationPoint[]
-  firebaseUid   String? 
-  LocationHistory LocationHistory[]
+  firebaseUid            String?
+  LocationHistory        LocationHistory[]
 
   ChatImage ChatImage[]
 
@@ -69,19 +69,21 @@ model User {
 
   actedNotifications Notification[] @relation("NotificationActor")
 
-  
-  pointsLedger PointsLedger[]
-  inventory UserInventory[]
-  multipliers ActiveMultiplier[]
+  pointsLedger         PointsLedger[]
+  inventory            UserInventory[]
+  multipliers          ActiveMultiplier[]
   pointBundlePurchases PointBundlePurchase[]
   communityHistory     CommunityHistory[]
-  notificationRedDot   Boolean @default(false)
+  notificationRedDot   Boolean               @default(false)
 
   // Admin panel fields
-  isActive   Boolean  @default(true)
-  isBanned   Boolean  @default(false)
-  bannedAt   DateTime?
-  banReason  String?
+  isActive  Boolean   @default(true)
+  isBanned  Boolean   @default(false)
+  bannedAt  DateTime?
+  banReason String?
+
+  @@index([selfieUrl(length: 191)]) // orphan-guard scan (TEXT col → needs prefix)
+  @@index([bodyShapeUrl]) // orphan-guard scan
 }
 
 model Minime {
@@ -104,8 +106,11 @@ model Minime {
   updatedAt DateTime @updatedAt
 
   userId Int
- 
-  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([avatarUrl(length: 191)]) // orphan-guard scan (TEXT col → needs prefix)
+  @@index([selfieUrl]) // orphan-guard scan
 }
 
 model Media {
@@ -123,6 +128,7 @@ model Media {
   sender    User       @relation("UserMedia", fields: [senderId], references: [id], onDelete: Cascade)
   community Community? @relation(fields: [communityId], references: [id], onDelete: Cascade)
 }
+
 enum StoryVisibility {
   private
   profile
@@ -139,6 +145,7 @@ enum StoryStatus {
   SAVED
   VAULT
 }
+
 enum CarSaleStatus {
   ACTIVE
   SOLD
@@ -151,31 +158,31 @@ model Story {
   mediaUrl   String
   type       StoryType
   visibility StoryVisibility
-  status     StoryStatus       @default(DRAFT)
-  createdAt  DateTime          @default(now())
+  status     StoryStatus     @default(DRAFT)
+  createdAt  DateTime        @default(now())
   latitude   Float?
   longitude  Float?
 
-  user    User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
   savedBy SavedStory[]
 
   @@index([status, createdAt])
   @@index([userId, createdAt])
+  @@index([mediaUrl]) // orphan-guard scan
 }
 
 model SavedStory {
-  id        Int      @id @default(autoincrement())
+  id        Int         @id @default(autoincrement())
   userId    Int
   storyId   Int
   status    StoryStatus
-  createdAt DateTime @default(now())
+  createdAt DateTime    @default(now())
 
   user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   story Story @relation(fields: [storyId], references: [id], onDelete: Cascade)
 
-  @@unique([userId, storyId, status])   
+  @@unique([userId, storyId, status])
 }
-
 
 model Location {
   id        Int      @id @default(autoincrement())
@@ -194,39 +201,41 @@ model LocationHistory {
   longitude Float
   createdAt DateTime @default(now())
 }
+
 // schema.prisma — add to LocationPoint
 model LocationPoint {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id     Int  @id @default(autoincrement())
+  userId Int
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  mediaUrl   String
-  placeId    String?
-  placeName  String?
-  placeType  String?
-  latitude   Float?
-  longitude  Float?
-  points     Int      @default(5)
+  mediaUrl  String
+  placeId   String?
+  placeName String?
+  placeType String?
+  latitude  Float?
+  longitude Float?
+  points    Int     @default(5)
 
-  createdAt  DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@index([userId, createdAt])
   @@index([userId, placeId, createdAt]) // 👈 fast same-place checks
+  @@index([mediaUrl]) // orphan-guard scan
 }
 
 model Notification {
-  id          Int       @id @default(autoincrement())
+  id          Int              @id @default(autoincrement())
   userId      Int
   actorId     Int?
   type        NotificationType
   title       String
   description String?
   data        Json?
-  isRead      Boolean   @default(false)
-  createdAt   DateTime  @default(now())
+  isRead      Boolean          @default(false)
+  createdAt   DateTime         @default(now())
 
   // relations
-  user  User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user  User  @relation(fields: [userId], references: [id], onDelete: Cascade)
   actor User? @relation("NotificationActor", fields: [actorId], references: [id], onDelete: SetNull)
 
   // indexes
@@ -253,64 +262,63 @@ model Chat {
   community   Community?   @relation(fields: [communityId], references: [id], onDelete: Cascade)
   users       UserOnChat[]
 
-  messages  Message[]
-  imageUrl    String?
-  disappearingSeconds Int?   // null = off; seconds until messages expire (e.g. 86400 = 24h)
-  updatedAt DateTime  @updatedAt
-  createdAt DateTime  @default(now())
-
+  messages            Message[]
+  imageUrl            String?
+  disappearingSeconds Int? // null = off; seconds until messages expire (e.g. 86400 = 24h)
+  updatedAt           DateTime  @updatedAt
+  createdAt           DateTime  @default(now())
 
   createdById Int?
   createdBy   User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
 }
 
 model Message {
-  id       Int     @id @default(autoincrement())
-  content  String? @db.LongText
-  sender   User    @relation(fields: [senderId], references: [id], onDelete: Cascade)
-  senderId Int
-  chat     Chat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  chatId   Int
-  imageUrl String?
-  isSystem  Boolean  @default(false) // system alert messages (e.g. "disappearing messages turned on")
-  expiresAt DateTime?                // null = permanent; set when chat has disappearingSeconds
+  id        Int       @id @default(autoincrement())
+  content   String?   @db.LongText
+  sender    User      @relation(fields: [senderId], references: [id], onDelete: Cascade)
+  senderId  Int
+  chat      Chat      @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId    Int
+  imageUrl  String?
+  isSystem  Boolean   @default(false) // system alert messages (e.g. "disappearing messages turned on")
+  expiresAt DateTime? // null = permanent; set when chat has disappearingSeconds
 
   createdAt DateTime @default(now())
 
-  @@index([expiresAt])  // fast cleanup query
+  @@index([expiresAt]) // fast cleanup query
+  @@index([imageUrl]) // orphan-guard scan
 }
-
 
 model ChatImage {
   id      Int    @id @default(autoincrement())
   userId  Int
   fileUrl String
   user    User   @relation(fields: [userId], references: [id], onDelete: Cascade)
-}
 
+  @@index([fileUrl]) // orphan-guard scan
+}
 
 enum ChatRole {
   ADMIN
   MEMBER
 }
 
-
 model UserOnChat {
-  id       Int     @id @default(autoincrement())
-  user     User    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userId   Int
-  chat     Chat    @relation(fields: [chatId], references: [id], onDelete: Cascade)
-  chatId   Int
+  id     Int  @id @default(autoincrement())
+  user   User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userId Int
+  chat   Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  chatId Int
 
   // NEW ↓
-  role     ChatRole @default(MEMBER)
-  joinedAt DateTime @default(now())
+  role                   ChatRole @default(MEMBER)
+  joinedAt               DateTime @default(now())
   lastSeenMessageId      Int?
   lastDeliveredMessageId Int?
-  clearedUpToMessageId   Int @default(0) // disappear-on-exit: messages with id <= this are hidden from this user
+  clearedUpToMessageId   Int      @default(0) // disappear-on-exit: messages with id <= this are hidden from this user
 
-  isMuted  Boolean  @default(false)
-  mutedAt  DateTime?
+  isMuted Boolean   @default(false)
+  mutedAt DateTime?
 
   @@unique([userId, chatId])
   @@index([chatId, role]) // handy for permission checks like “who are admins in this chat?”
@@ -346,10 +354,12 @@ enum FriendshipStatus {
   PENDING
   ACCEPTED
 }
-enum ChallengeFrequency { 
-  DAILY 
-  WEEKLY 
-  }
+
+enum ChallengeFrequency {
+  DAILY
+  WEEKLY
+}
+
 enum PointsTier {
   SILVER
   GOLD
@@ -361,22 +371,23 @@ enum ChallengeDifficulty {
   HARD
   MULTI_STEP
 }
+
 model Challenge {
-  id             Int      @id @default(autoincrement())
+  id             Int                   @id @default(autoincrement())
   title          String
   description    String
   type           String?
   frequency      ChallengeFrequency
-  points         Int      @default(10)
-  tier           PointsTier @default(SILVER)
-  requiredPhotos Int      @default(1)
-  createdAt      DateTime  @default(now())
-  updatedAt      DateTime  @updatedAt
+  points         Int                   @default(10)
+  tier           PointsTier            @default(SILVER)
+  requiredPhotos Int                   @default(1)
+  createdAt      DateTime              @default(now())
+  updatedAt      DateTime              @updatedAt
   submissions    Submission[]
   completions    ChallengeCompletion[]
 
-  isActive    Boolean @default(true)
-  isFeatured  Boolean @default(false)
+  isActive   Boolean @default(true)
+  isFeatured Boolean @default(false)
 
   // Scheduling constraints — backend won't surface a challenge when its
   // constraint is violated. Both fields default to "always" so legacy rows
@@ -388,48 +399,51 @@ model Challenge {
 
   // Effort tier — informs the recommended `points` value at create time and
   // can be shown as a badge in the UI. Nullable so legacy rows don't break.
-  difficulty  ChallengeDifficulty?
+  difficulty ChallengeDifficulty?
 
   @@unique([title, frequency]) // <— add this
 }
 
 model Submission {
-  id                  Int       @id @default(autoincrement())
-  userId              Int
-  challengeId         Int
-  mediaUrl            String
-  verificationStatus  String    @default("PENDING")
-  rejectionReason     String?   @db.Text
-  imageHash           String?
-  createdAt           DateTime  @default(now())
-  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  challenge           Challenge @relation(fields: [challengeId], references: [id])
+  id                 Int       @id @default(autoincrement())
+  userId             Int
+  challengeId        Int
+  mediaUrl           String
+  verificationStatus String    @default("PENDING")
+  rejectionReason    String?   @db.Text
+  imageHash          String?
+  createdAt          DateTime  @default(now())
+  user               User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge          Challenge @relation(fields: [challengeId], references: [id])
+
   @@index([userId, challengeId, createdAt])
   @@index([userId, imageHash])
+  @@index([mediaUrl]) // orphan-guard scan
 }
-
 
 model ChallengeCompletion {
-  id           Int      @id @default(autoincrement())
-  userId       Int
-  challengeId  Int
-  windowKey    String
-  createdAt    DateTime @default(now())
-  user         User      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  challenge    Challenge @relation(fields: [challengeId], references: [id])
+  id          Int       @id @default(autoincrement())
+  userId      Int
+  challengeId Int
+  windowKey   String
+  createdAt   DateTime  @default(now())
+  user        User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  challenge   Challenge @relation(fields: [challengeId], references: [id])
+
   @@unique([userId, challengeId, windowKey])
 }
+
 model Community {
-  id          Int               @id @default(autoincrement())
-  name        String
-  
-  imageUrl    String?
-  creatorId   Int
-  creator     User              @relation("UserCreatedCommunities", fields: [creatorId], references: [id], onDelete: Cascade)
-  members     CommunityMember[]
-  history     CommunityHistory[]
-  chats       Chat[]
-  media       Media[] // ✅ inverse of Media.community
+  id   Int    @id @default(autoincrement())
+  name String
+
+  imageUrl  String?
+  creatorId Int
+  creator   User               @relation("UserCreatedCommunities", fields: [creatorId], references: [id], onDelete: Cascade)
+  members   CommunityMember[]
+  history   CommunityHistory[]
+  chats     Chat[]
+  media     Media[] // ✅ inverse of Media.community
 }
 
 model CommunityMember {
@@ -442,15 +456,14 @@ model CommunityMember {
   community Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
 
   @@unique([userId, communityId])
-    @@index([userId, communityId])
-
+  @@index([userId, communityId])
 }
 
 model CommunityHistory {
   id          Int      @id @default(autoincrement())
   userId      Int
   communityId Int
-  action      String   // 'joined' or 'left'
+  action      String // 'joined' or 'left'
   createdAt   DateTime @default(now())
 
   user      User      @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -470,17 +483,17 @@ model ContactSync {
 }
 
 model Report {
-  id          Int      @id @default(autoincrement())
-  reporterId  Int
-  reportedId  Int
-  status      String   @default("PENDING")  // PENDING, Reviewed, Resolved
-  reason      String?
-  adminNote   String?
-  reviewedAt  DateTime?
-  createdAt   DateTime @default(now())
+  id         Int       @id @default(autoincrement())
+  reporterId Int
+  reportedId Int
+  status     String    @default("PENDING") // PENDING, Reviewed, Resolved
+  reason     String?
+  adminNote  String?
+  reviewedAt DateTime?
+  createdAt  DateTime  @default(now())
 
-  reporter    User     @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
-  reported    User     @relation("Reported", fields: [reportedId], references: [id], onDelete: Cascade)
+  reporter User @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
+  reported User @relation("Reported", fields: [reportedId], references: [id], onDelete: Cascade)
 }
 
 enum ShopSlot {
@@ -488,18 +501,18 @@ enum ShopSlot {
   BOTTOM
   SHOES
   GLASSES
-  ACCESSORY   // legacy — keep for existing paid items
-  WATCH       // masculine accessory
-  MAKEUP      // feminine accessory → lipstick
-  PURSE       // feminine accessory → bag
-  ORNAMENT    // feminine accessory → jewelry
+  ACCESSORY // legacy — keep for existing paid items
+  WATCH // masculine accessory
+  MAKEUP // feminine accessory → lipstick
+  PURSE // feminine accessory → bag
+  ORNAMENT // feminine accessory → jewelry
 }
 
 model BodyShape {
   id        Int      @id @default(autoincrement())
-  gender    String                  // 'masculine' | 'feminine'
-  height    String                  // 'S' | 'M' | 'L'
-  weight    Int                     // 1-4
+  gender    String // 'masculine' | 'feminine'
+  height    String // 'S' | 'M' | 'L'
+  weight    Int // 1-4
   imageUrl  String   @db.Text
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
@@ -509,31 +522,32 @@ model BodyShape {
 }
 
 model ShopItem {
-  id        Int       @id @default(autoincrement())
-  slot      ShopSlot
-  name      String
-  brand     String?
-  imageUrl  String    @db.Text
-  priceUsd  Decimal   @default(0.00) @db.Decimal(10,2)
+  id              Int      @id @default(autoincrement())
+  slot            ShopSlot
+  name            String
+  brand           String?
+  imageUrl        String   @db.Text
+  priceUsd        Decimal  @default(0.00) @db.Decimal(10, 2)
   // any renderer / style info for avatar
-  payload   Json?     // e.g. { "shirt": "Blue Hawaiian" }
-  isFeatured Boolean   @default(false)
-  gender    String?   // 'masculine' | 'feminine' | null (null = both)
-  appleProductId  String?   @unique   // App Store IAP SKU
-  googleProductId String?   @unique   // Play Store IAP SKU
+  payload         Json? // e.g. { "shirt": "Blue Hawaiian" }
+  isFeatured      Boolean  @default(false)
+  gender          String? // 'masculine' | 'feminine' | null (null = both)
+  appleProductId  String?  @unique // App Store IAP SKU
+  googleProductId String?  @unique // Play Store IAP SKU
 
-  createdAt DateTime  @default(now())
-  updatedAt DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   inventories UserInventory[]
-    @@unique([slot, name])
+
+  @@unique([slot, name])
 }
 
 model UserInventory {
-  id        Int      @id @default(autoincrement())
-  userId    Int
-  itemId    Int
-  equipped  Boolean  @default(false)
+  id         Int      @id @default(autoincrement())
+  userId     Int
+  itemId     Int
+  equipped   Boolean  @default(false)
   acquiredAt DateTime @default(now())
 
   user User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -543,57 +557,58 @@ model UserInventory {
 }
 
 model MultiplierProduct {
-  id        Int      @id @default(autoincrement())
-  productId String   @unique // IAP SKU (Apple/Google)
-  factor    Float    // e.g. 1.5, 2, 2.5
-  hours     Int      // 1, 12, etc.
-  priceUsd  Decimal? @db.Decimal(10,2)  // optional — actual price comes from store
-  appleProductId  String?   @unique   // App Store IAP SKU
-  googleProductId String?   @unique   // Play Store IAP SKU
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              Int      @id @default(autoincrement())
+  productId       String   @unique // IAP SKU (Apple/Google)
+  factor          Float // e.g. 1.5, 2, 2.5
+  hours           Int // 1, 12, etc.
+  priceUsd        Decimal? @db.Decimal(10, 2) // optional — actual price comes from store
+  appleProductId  String?  @unique // App Store IAP SKU
+  googleProductId String?  @unique // Play Store IAP SKU
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model ActiveMultiplier {
-  id           Int      @id @default(autoincrement())
-  userId       Int
-  factor       Float
-  startedAt    DateTime @default(now())
-  endsAt       DateTime
-  source       String   // "IAP"
-  productId    String?  // reference MultiplierProduct.productId
-  receiptTxId  String?  // platform transaction id for idempotency
+  id          Int      @id @default(autoincrement())
+  userId      Int
+  factor      Float
+  startedAt   DateTime @default(now())
+  endsAt      DateTime
+  source      String // "IAP"
+  productId   String? // reference MultiplierProduct.productId
+  receiptTxId String? // platform transaction id for idempotency
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([userId, endsAt])
   @@unique([userId, receiptTxId])
+  @@index([userId, endsAt])
 }
 
 model PointsLedger {
-  id         Int      @id @default(autoincrement())
-  userId     Int
-  basePoints Int
-  appliedMultiplier Float @default(1)
-  finalPoints Int
-  reason     String?   // "CHALLENGE_COMPLETION", "LOCATION_UPLOAD", etc.
-  refId      Int?      // optional foreign ref
-  createdAt  DateTime  @default(now())
+  id                Int      @id @default(autoincrement())
+  userId            Int
+  basePoints        Int
+  appliedMultiplier Float    @default(1)
+  finalPoints       Int
+  reason            String? // "CHALLENGE_COMPLETION", "LOCATION_UPLOAD", etc.
+  refId             Int? // optional foreign ref
+  createdAt         DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
 }
+
 model PointBundleProduct {
-  id        Int      @id @default(autoincrement())
-  productId String   @unique          // e.g. "bundle_10", "bundle_50"
-  points    Int
-  priceUsd  Decimal? @db.Decimal(10,2)  // optional — actual price comes from store
-  isActive  Boolean  @default(true)
-  appleProductId  String?   @unique   // App Store IAP SKU
-  googleProductId String?   @unique   // Play Store IAP SKU
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id              Int      @id @default(autoincrement())
+  productId       String   @unique // e.g. "bundle_10", "bundle_50"
+  points          Int
+  priceUsd        Decimal? @db.Decimal(10, 2) // optional — actual price comes from store
+  isActive        Boolean  @default(true)
+  appleProductId  String?  @unique // App Store IAP SKU
+  googleProductId String?  @unique // Play Store IAP SKU
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 }
 
 model PointBundlePurchase {
@@ -601,8 +616,8 @@ model PointBundlePurchase {
   userId      Int
   productId   String
   points      Int
-  priceUsd    Decimal  @db.Decimal(10,2)
-  receiptTxId String?  @unique        // Apple/Google tx id (optional) – idempotency
+  priceUsd    Decimal  @db.Decimal(10, 2)
+  receiptTxId String?  @unique // Apple/Google tx id (optional) – idempotency
   createdAt   DateTime @default(now())
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -617,15 +632,15 @@ enum ReferralStatus {
 }
 
 model Referral {
-  id         Int             @id @default(autoincrement())
+  id         Int            @id @default(autoincrement())
   inviterId  Int
   inviteeId  Int
-  status     ReferralStatus  @default(PENDING)
-  createdAt  DateTime        @default(now())
+  status     ReferralStatus @default(PENDING)
+  createdAt  DateTime       @default(now())
   rewardedAt DateTime?
 
-  inviter    User @relation("UserInvites",  fields: [inviterId], references: [id], onDelete: Cascade)
-  invitee    User @relation("UserReferred", fields: [inviteeId], references: [id], onDelete: Cascade)
+  inviter User @relation("UserInvites", fields: [inviterId], references: [id], onDelete: Cascade)
+  invitee User @relation("UserReferred", fields: [inviteeId], references: [id], onDelete: Cascade)
 
   @@unique([inviterId, inviteeId])
   @@unique([inviteeId]) // ➜ একজন ইউজার মাত্র ১বারই রেফার্ড হতে পারবে
@@ -645,7 +660,7 @@ model AdminUser {
 model PremadeAvatar {
   id        Int      @id @default(autoincrement())
   label     String
-  gender    String                        // "male" | "female"
+  gender    String // "male" | "female"
   imageUrl  String   @db.Text
   sortOrder Int      @default(0)
   isActive  Boolean  @default(true)
