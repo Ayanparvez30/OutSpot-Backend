@@ -445,6 +445,7 @@ async function getProfile(req, res) {
         bodyType: true,
         bodyShapeUrl: true,
         totalPoints: true,
+        isProfilePrivate: true, // RAW lock state for the settings toggle
         minime: { where: { isSaved: true }, orderBy: { updatedAt: 'desc' }, take: 1, select: { avatarUrl: true } }
       }
     });

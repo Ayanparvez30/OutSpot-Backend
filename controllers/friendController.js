@@ -1755,6 +1755,7 @@ exports.getUserProfile = async (req, res) => {
       isSelf,
       isFriend,
       isPrivate, // true only when target is private AND viewer is neither self nor friend
+      isProfilePrivate: !!user.isProfilePrivate, // RAW lock state (true even for self) — for the settings toggle
       friendshipStatus, // "NONE" | "ACCEPTED" | "PENDING_SENT" | "PENDING_RECEIVED"
       friendCount,
       spotsVisited,
