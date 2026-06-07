@@ -287,18 +287,15 @@ async function compressForMobile(rawBuffer) {
   // so cutout edges stay crisp. Trade a bigger file for sharp edges (intended).
   const compressed = await sharp(rawBuffer)
     .resize(1024, 1536, { fit: 'inside', withoutEnlargement: true }) // cap only; native = no-op
-    .sharpen({ sigma: 0.6 })          // light edge crispening
     .webp({
-      quality: 92,                    // was 85 — sharper detail/edges
-      alphaQuality: 100,              // was 95 — pristine transparent-cutout edge
-      effort: 6,                      // was 4 — best quality per byte
-      smartSubsample: true,
+      lossless: true,   // exact preservation of the generated avatar — zero quality drop
+      effort: 6,        // best lossless compression (smaller file, same pixels)
     })
     .toBuffer();
 
   const originalKB = (rawBuffer.length / 1024).toFixed(0);
   const compressedKB = (compressed.length / 1024).toFixed(0);
-  console.log(`  Image compressed: ${originalKB} KB → ${compressedKB} KB (webp 1024×1536 q92)`);
+  console.log(`  Image compressed: ${originalKB} KB → ${compressedKB} KB (webp lossless 1024×1536)`);
 
   return compressed;
 }
