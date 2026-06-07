@@ -585,6 +585,11 @@ async function clearChatOnExit(userId, chatId) {
         where: { userId: uid, chatId: cid },
         data: { clearedUpToMessageId: newCleared },
       });
+      // Refresh THIS user's chat list so the disappeared message stops showing
+      // as the last-message preview (single exit doesn't hard-delete).
+      try {
+        ioInstance && ioInstance.to(`user:${uid}`).emit('messagesDeleted', { chatId: cid, messageIds: [] });
+      } catch (_) { /* socket not ready */ }
     }
 
     // Hard-delete messages every member has already passed (gone for all).

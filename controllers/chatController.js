@@ -913,7 +913,13 @@ const chats = await prisma.chat.findMany({
       const currentUserOnChat = chat.users.find(u => u.userId === currentUserId);
       const isMuted = currentUserOnChat?.isMuted || false;
       const unreadCount = isMuted ? 0 : (unreadCountsMap.get(chat.id) || 0);
-      const latestMessage = chat.messages.length > 0 ? chat.messages[0] : null;
+      // disappear-on-exit: messages this user cleared by leaving must not show
+      // as the chat-list preview (keeps the list consistent with the open chat).
+      const myCleared = currentUserOnChat?.clearedUpToMessageId || 0;
+      const latestMessage =
+        chat.messages.length > 0 && chat.messages[0].id > myCleared
+          ? chat.messages[0]
+          : null;
 
       // Derive a clear chatType: 'personal' | 'group' | 'community'
       const chatType = chat.isCommunity ? 'community'
