@@ -206,6 +206,40 @@ cron.schedule('0 2 * * *', async () => {
 const { midnightChallengeScheduler } = require('./schedulers/midnightChallengeScheduler');
 midnightChallengeScheduler.start();
 
+// ---- Challenge reminder pushes (a few hours before window closes) ----
+const { sendDailyReminders, sendWeeklyReminders } = require('./utils/challengeReminders');
+// Daily reminder — 20:00 Boston (TZ = America/New_York set at top of file)
+cron.schedule('0 20 * * *', async () => {
+  try {
+    const r = await sendDailyReminders();
+    console.log(`📬 Daily reminder: sent=${r.sent} candidates=${r.candidates} done=${r.alreadyDone} already=${r.alreadyReminded} noChallenge=${r.noChallenge}`);
+  } catch (e) { console.error('❌ Daily reminder cron error:', e.message); }
+});
+// Weekly reminder — Sat 18:00 Boston (~30 hours before Mon 00:00 roll)
+cron.schedule('0 18 * * 6', async () => {
+  try {
+    const r = await sendWeeklyReminders();
+    console.log(`📬 Weekly reminder: sent=${r.sent} candidates=${r.candidates} done=${r.alreadyDone} already=${r.alreadyReminded} noChallenge=${r.noChallenge}`);
+  } catch (e) { console.error('❌ Weekly reminder cron error:', e.message); }
+});
+
+// ---- Leaderboard cash-prize reminders ----
+const { sendLeaderboardReminders, REMINDER_TYPES: LB_TYPES } = require('./utils/leaderboardReminder');
+// Mid-week — Wed 18:00 Boston: "climb the board"
+cron.schedule('0 18 * * 3', async () => {
+  try {
+    const r = await sendLeaderboardReminders(LB_TYPES.MIDWEEK);
+    console.log(`🏆 Leaderboard MID-WEEK: sent=${r.sent} candidates=${r.candidates} already=${r.alreadyReminded}`);
+  } catch (e) { console.error('❌ Leaderboard midweek cron error:', e.message); }
+});
+// Final day — Sun 10:00 Boston: "last chance for prize"
+cron.schedule('0 10 * * 0', async () => {
+  try {
+    const r = await sendLeaderboardReminders(LB_TYPES.FINAL);
+    console.log(`🏆 Leaderboard FINAL: sent=${r.sent} candidates=${r.candidates} already=${r.alreadyReminded}`);
+  } catch (e) { console.error('❌ Leaderboard final cron error:', e.message); }
+});
+
 const server = http.createServer(app);
 const { initSocket } = require('./utils/socket');
 initSocket(server);
