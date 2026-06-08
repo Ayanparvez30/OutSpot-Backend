@@ -926,6 +926,13 @@ const chats = await prisma.chat.findMany({
         : chat.isGroup ? 'group'
         : 'personal';
 
+      // Per-user effective sort time: max of latest-message time and THIS user's
+      // joinedAt. Ensures a newly-accepted friend chat / freshly-joined community
+      // chat appears at top for the joining user without reordering for others.
+      const lastMsgAt = latestMessage?.createdAt ? new Date(latestMessage.createdAt).getTime() : 0;
+      const joinedAtMs = currentUserOnChat?.joinedAt ? new Date(currentUserOnChat.joinedAt).getTime() : 0;
+      const _sortTime = Math.max(lastMsgAt, joinedAtMs);
+
       return {
         ...chat,
         chatType,
@@ -945,9 +952,14 @@ const chats = await prisma.chat.findMany({
             .filter(u => u.userId !== latestMessage.senderId && u.lastDeliveredMessageId && u.lastDeliveredMessageId >= latestMessage.id)
             .map(u => u.userId),
         } : null,
-        totalMessages: chat._count.messages
+        totalMessages: chat._count.messages,
+        _sortTime,
       };
     });
+
+    // Re-sort per-user: newest activity OR newest join. Drop internal field.
+    enrichedChats.sort((a, b) => (b._sortTime || 0) - (a._sortTime || 0));
+    enrichedChats.forEach(c => { delete c._sortTime; });
 
     res.json(enrichedChats);
   } catch (error) {
@@ -1918,6 +1930,13 @@ exports.getMyGroupChats = async (req, res) => {
           .map(u => u.userId);
       }
 
+      // Per-user effective sort time: max of latest-message and joinedAt.
+      // See getMyChats for rationale.
+      const currentUserOnChat = chat.users.find(u => u.userId === currentUserId);
+      const lastMsgAt = latestMessage?.createdAt ? new Date(latestMessage.createdAt).getTime() : 0;
+      const joinedAtMs = currentUserOnChat?.joinedAt ? new Date(currentUserOnChat.joinedAt).getTime() : 0;
+      const _sortTime = Math.max(lastMsgAt, joinedAtMs);
+
       return {
         id: chat.id,
         name: chat.name,
@@ -1937,8 +1956,12 @@ exports.getMyGroupChats = async (req, res) => {
         isMuted: chat.users.find(u => u.userId === currentUserId)?.isMuted || false,
         latestMessage: latestMessage ? { ...latestMessage, readBy, deliveredTo } : null,
         totalMessages: chat._count.messages,
+        _sortTime,
       };
     });
+
+    enrichedChats.sort((a, b) => (b._sortTime || 0) - (a._sortTime || 0));
+    enrichedChats.forEach(c => { delete c._sortTime; });
 
     res.json(enrichedChats);
   } catch (error) {

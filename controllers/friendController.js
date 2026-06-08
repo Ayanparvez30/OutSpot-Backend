@@ -391,6 +391,12 @@ exports.acceptFriendRequest = async (req, res) => {
 
       if (exactMatch) {
         chatId = exactMatch.id;
+        // Re-friend case: bump joinedAt for both sides so the existing chat
+        // bubbles to the top of each user's list (matches "new chat" UX).
+        await prisma.userOnChat.updateMany({
+          where: { chatId, userId: { in: [receiverId, requesterId] } },
+          data: { joinedAt: new Date() },
+        });
       } else {
         const chat = await prisma.chat.create({
           data: {
