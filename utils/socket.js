@@ -178,6 +178,15 @@ function initSocket(server) {
       socket.emit('socket:ready', { userId });
     }
 
+    // Fallback room-join — for clients that connect WITHOUT query.userId and
+    // emit `joinUser` after auth instead. No-op if already joined via query.
+    socket.on('joinUser', (uid) => {
+      const parsed = parseInt(uid, 10);
+      if (!parsed || !Number.isInteger(parsed)) return;
+      socket.data.userId = socket.data.userId || parsed;
+      socket.join(`user:${parsed}`);
+    });
+
     // Auto-join new chat rooms when notified by the server
     socket.on('joinNewChat', (chatId) => {
       const cid = parseInt(chatId, 10);

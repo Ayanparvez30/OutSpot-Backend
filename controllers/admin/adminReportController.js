@@ -1,4 +1,5 @@
 const { PrismaClient } = require('@prisma/client');
+const { notifyUser } = require('../../utils/notificationService');
 const prisma = new PrismaClient();
 
 exports.listReports = async (req, res) => {
@@ -93,14 +94,13 @@ exports.takeAction = async (req, res) => {
 
     switch (action) {
       case 'warn':
-        await prisma.notification.create({
-          data: {
-            userId,
-            type: 'NEW_CHALLENGE',
-            title: 'Admin Warning',
-            description: 'You have received a warning for reported behavior.',
-          },
-        });
+        // Route through notifyUser so the red-dot persist + socket emit fire too.
+        await notifyUser(
+          userId,
+          'NEW_CHALLENGE',
+          'Admin Warning',
+          'You have received a warning for reported behavior.'
+        );
         break;
       case 'ban':
         await prisma.user.update({

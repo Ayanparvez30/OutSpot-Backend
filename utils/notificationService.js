@@ -24,13 +24,25 @@ async function notifyUser(userId, type, title, description, data = {}) {
       }
     });
 
-    // 2) Set notificationRedDot to true for the user
+    // 2) Set notificationRedDot to true for the user (closed-app case — survives
+    //    socket emit miss; client GETs the dot on next open).
     await prisma.user.update({
       where: { id: userId },
       data: { notificationRedDot: true }
     });
 
-    // 2) Load recipient for FCM token
+    // 3) Realtime: tell the user's socket room there's a new notification
+    //    so the bell dot lights up instantly when the app is open. Delivery
+    //    is best-effort — DB persist above guarantees the dot for closed app.
+    try {
+      const { getIO } = require('./socket');
+      const io = getIO();
+      if (io) io.to(`user:${userId}`).emit('notification', { hasUnread: true });
+    } catch (emitErr) {
+      console.log('ℹ️ socket emit skipped:', emitErr.message);
+    }
+
+    // 4) Load recipient for FCM token
     const user = await prisma.user.findUnique({ where: { id: userId } });
 
     // Master notification switch: skip ALL FCM push if the user turned it off.
