@@ -57,6 +57,59 @@ async function getViewerFriendshipStatusMap(viewerId, targetIds) {
 
 const REASON_RANK = { CONTACT: 5, MUTUAL: 4, COMMUNITY: 3, POPULAR: 2, NEW_USER: 1 };
 
+// Edit distance (typo tolerance) — small strings only.
+function levenshtein(a, b) {
+  if (a === b) return 0;
+  if (!a.length) return b.length;
+  if (!b.length) return a.length;
+  let prev = Array.from({ length: b.length + 1 }, (_, i) => i);
+  for (let i = 1; i <= a.length; i++) {
+    const cur = [i];
+    for (let j = 1; j <= b.length; j++) {
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      cur[j] = Math.min(prev[j] + 1, cur[j - 1] + 1, prev[j - 1] + cost);
+    }
+    prev = cur;
+  }
+  return prev[b.length];
+}
+
+// Best fuzzy similarity (0..1) of `token` against a field — substring = 1,
+// else slides the token across the field and uses 1 - editDistance/len, so a
+// typo'd "sohana" still scores high against "shohana".
+function fuzzyTokenSim(token, field) {
+  if (!token || !field) return 0;
+  if (field.includes(token)) return 1;
+  const tl = token.length;
+  if (field.length <= tl) {
+    return 1 - levenshtein(token, field) / Math.max(tl, field.length);
+  }
+  let best = 0;
+  for (let i = 0; i + tl <= field.length; i++) {
+    const win = field.slice(i, i + tl + 1); // allow 1 extra char (insertions)
+    const sim = 1 - levenshtein(token, win) / Math.max(tl, win.length);
+    if (sim > best) best = sim;
+    if (best === 1) break;
+  }
+  return best;
+}
+
+// Average fuzzy similarity across all query tokens (each → its best field).
+function fuzzyScore(tokens, fields) {
+  if (!tokens.length) return 0;
+  let total = 0;
+  for (const t of tokens) {
+    let tokBest = 0;
+    for (const f of fields) {
+      const s = fuzzyTokenSim(t, f);
+      if (s > tokBest) tokBest = s;
+      if (tokBest === 1) break;
+    }
+    total += tokBest;
+  }
+  return total / tokens.length;
+}
+
 const getMatchScore = (user, q) => {
   const qLower = q.toLowerCase().trim();
   const tokens = qLower.split(/\s+/).filter(Boolean);
@@ -129,20 +182,27 @@ exports.searchUsers = async (req, res) => {
       sameCommunityMembers.map((m) => m.userId)
     );
 
-    // Predictive, multi-word search across username + first/last name.
-    // Each typed word must appear (as a substring) in at least one of the
-    // name/username fields → "shohana moni" matches firstName=shohana,
-    // lastName=moni; "sho" matches partially; "avin" matches username.
+    // Predictive + typo-tolerant, multi-word search across username + first/last
+    // name. Each word pulls candidates via substring (contains) OR same first
+    // letter (startsWith) — the latter widens the pool so a typo'd "sohana" still
+    // fetches "shohana", which the fuzzy (edit-distance) pass below then ranks.
     const tokens = searchTerm.split(/\s+/).filter(Boolean);
-    const tokenConditions = tokens.map((t) => ({
-      OR: [
+    const tokenConditions = tokens.map((t) => {
+      const c = t[0];
+      const or = [
         { firstName: { contains: t } },
         { lastName: { contains: t } },
         { username: { contains: t } },
-      ],
-    }));
+      ];
+      if (c) {
+        or.push({ firstName: { startsWith: c } });
+        or.push({ lastName: { startsWith: c } });
+        or.push({ username: { startsWith: c } });
+      }
+      return { OR: or };
+    });
 
-    // users
+    // users (candidate pool — fuzzy-filtered after fetch)
     const users = await prisma.user.findMany({
       where: {
         AND: [
@@ -163,7 +223,7 @@ exports.searchUsers = async (req, res) => {
           orderBy: { updatedAt: 'desc' },
         },
       },
-      take: 30,
+      take: 200,
     });
 
     // batch weekly points from ledger
@@ -185,8 +245,17 @@ exports.searchUsers = async (req, res) => {
         const isMutualFriend = friendship?.status === "ACCEPTED";
         const isInSameCommunity = sameCommunityUserIds.has(user.id);
 
+        // typo-tolerant relevance: best fuzzy similarity of the query tokens
+        // against this user's username + first/last/full name (0..1)
+        const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
+        const fields = [user.username, user.firstName, user.lastName, fullName]
+          .filter(Boolean)
+          .map((f) => f.toLowerCase());
+        const fuzzy = fuzzyScore(tokens, fields);
+
         const score =
           getMatchScore(user, searchTerm) +
+          fuzzy * 50 +
           (isMutualFriend ? 20 : 0) +
           (isInSameCommunity ? 10 : 0);
 
@@ -200,18 +269,25 @@ exports.searchUsers = async (req, res) => {
           thisWeekPoints: weekPointsMap.get(user.id) || 0,
           friendshipStatus: friendship?.status || null,
           profileUrl: `/api/users/${user.id}/profile`,
+          fuzzy,
           score,
         };
       })
     );
 
-    // sort by score
-    enriched.sort((a, b) => b.score - a.score);
+    // Drop weak candidates pulled in only by the broad first-letter prefix
+    // (keep real substring hits and close typo matches), then sort + cap.
+    const FUZZY_MIN = 0.62;
+    const results = enriched
+      .filter((u) => u.fuzzy >= FUZZY_MIN || getMatchScore(u, searchTerm) > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, 30)
+      .map(({ fuzzy, ...rest }) => rest); // drop internal field
 
     return res.status(200).json({
       success: true,
       message: "Search results",
-      data: enriched,
+      data: results,
     });
   } catch (error) {
     console.error("Search error:", error);
