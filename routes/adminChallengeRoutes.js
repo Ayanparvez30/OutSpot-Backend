@@ -6,13 +6,22 @@ const prisma = new PrismaClient();
 const { checkAuth } = require('../middlewares/authMiddleware');
 const requireAdmin = require('../middlewares/requireAdmin');
 const { getAssignedChallenge, resolveZone } = require('../utils/challenges');
+const { pointsForDifficulty } = require('../utils/challengeDifficulty');
 // CREATE
 router.post('/admin/challenges', checkAuth, requireAdmin, async (req, res) => {
   try {
     const rawFreq = String(req.body.frequency || 'DAILY').toUpperCase();
     const frequency = rawFreq === 'WEEKLY' ? 'WEEKLY' : 'DAILY';
     const tier  = req.body.tier || (frequency === 'WEEKLY' ? 'GOLD' : 'SILVER');
-    const points = parseInt(req.body.points ?? (frequency === 'WEEKLY' ? 50 : 10), 10);
+
+    // Difficulty → points: EASY 10 / MEDIUM 15 / HARD 20 / MULTI_STEP 25.
+    // Explicit body.points always wins; otherwise difficulty sets it; else
+    // fall back to the frequency default.
+    const difficulty = req.body.difficulty ? String(req.body.difficulty).toUpperCase() : null;
+    const diffPoints = pointsForDifficulty(difficulty); // null if absent/invalid
+    const points = req.body.points != null
+      ? parseInt(req.body.points, 10)
+      : (diffPoints != null ? diffPoints : (frequency === 'WEEKLY' ? 50 : 10));
     const requiredPhotos = parseInt(req.body.requiredPhotos ?? 1, 10);
 
     const created = await prisma.challenge.create({
@@ -24,6 +33,7 @@ router.post('/admin/challenges', checkAuth, requireAdmin, async (req, res) => {
         tier,
         points,
         requiredPhotos,
+        difficulty: diffPoints != null ? difficulty : null, // store only valid enum values
       },
     });
     res.json(created);
@@ -44,6 +54,17 @@ router.put('/admin/challenges/:id', checkAuth, requireAdmin, async (req, res) =>
       points: req.body.points != null ? parseInt(req.body.points, 10) : undefined,
       requiredPhotos: req.body.requiredPhotos != null ? parseInt(req.body.requiredPhotos, 10) : undefined,
     };
+
+    // Difficulty change → store it and, unless points are explicitly set,
+    // realign points to the difficulty (EASY 10/MEDIUM 15/HARD 20/MULTI_STEP 25).
+    if (req.body.difficulty != null) {
+      const difficulty = String(req.body.difficulty).toUpperCase();
+      const diffPoints = pointsForDifficulty(difficulty);
+      if (diffPoints != null) {
+        data.difficulty = difficulty;
+        if (req.body.points == null) data.points = diffPoints;
+      }
+    }
     if (req.body.frequency) {
       const rawFreq = String(req.body.frequency).toUpperCase();
       data.frequency = rawFreq === 'WEEKLY' ? 'WEEKLY' : 'DAILY';
