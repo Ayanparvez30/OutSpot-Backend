@@ -15,6 +15,12 @@ router.get('/challenges/weekly',  checkAuth, challengeController.getWeeklyChalle
 // /challenges/filter?status=all|in_progress|completed|incomplete&frequency=both|daily|weekly
 router.get('/challenges/filter',  checkAuth, challengeController.getFilteredChallenges);
 
+// ---- Full history for the In Progress + Completed tabs ----
+// /challenges/history?tab=in_progress|completed
+//                    [&frequency=all|daily|weekly]
+//                    [&page=1&pageSize=20]
+router.get('/challenges/history', checkAuth, challengeController.getChallengeHistory);
+
 // ---- Submit (file field must be 'media') ----
 router.post('/challenges/submit', checkAuth, upload.single('media'), challengeController.submitToChallenge);
 

@@ -758,3 +758,149 @@ exports.getMySubmission = async (req, res) => {
     return res.status(500).json({ error: 'Failed to fetch my submissions' });
   }
 };
+
+// ------------------ History (In Progress + Completed tabs) ------------------
+//
+// GET /api/challenges/history?tab=in_progress|completed
+//                            [&frequency=all|daily|weekly]
+//                            [&page=1&pageSize=20]
+//
+// Returns the user's full submission history aggregated per
+// (challenge, window). Window = the day for DAILY challenges, the Sunday-start
+// week for WEEKLY — using the same zone helpers that drive assignment, so
+// historical buckets line up with the original assignment windows.
+//
+// Item shape mirrors getFilteredChallenges so the existing card widget on
+// Flutter renders these unchanged. Extras (submissionMediaUrls, submittedAt)
+// are appended for the history view's photo strip; old clients ignore them.
+//
+// Why no schema change:
+//   • Submission rows already carry { userId, challengeId, mediaUrl, createdAt }
+//   • Orphan-guard already keeps each Submission.mediaUrl alive forever
+//     ([utils/s3Cleanup.js:26]) — every user's photos are preserved per-user
+//   • Nothing in the codebase ever deletes Submission rows except User cascade
+//     on account-delete, so this is true long-term history.
+exports.getChallengeHistory = async (req, res) => {
+  try {
+    const userId = req.authData.id;
+    const tab = String(req.query.tab || 'completed').toLowerCase();
+    if (tab !== 'in_progress' && tab !== 'completed') {
+      return res.status(400).json({ error: "tab must be 'in_progress' or 'completed'" });
+    }
+    const freqFilter = String(req.query.frequency || 'all').toLowerCase();
+    if (!['all', 'daily', 'weekly'].includes(freqFilter)) {
+      return res.status(400).json({ error: "frequency must be 'all', 'daily', or 'weekly'" });
+    }
+    const page     = Math.max(1, parseInt(req.query.page, 10) || 1);
+    const pageSize = Math.max(1, Math.min(100, parseInt(req.query.pageSize, 10) || 20));
+
+    const zone = currentZone(req);
+    const now  = new Date();
+
+    // 1) Pull every submission the user has made, newest first, with the
+    // challenge meta needed to compute windowKey + status.
+    const whereClause = {
+      userId,
+      ...(freqFilter !== 'all'
+        ? { challenge: { frequency: freqFilter === 'daily' ? 'DAILY' : 'WEEKLY' } }
+        : {}),
+    };
+    const submissions = await prisma.submission.findMany({
+      where: whereClause,
+      include: {
+        challenge: {
+          select: {
+            id: true, title: true, description: true, frequency: true,
+            tier: true, points: true, requiredPhotos: true,
+          },
+        },
+      },
+      orderBy: { createdAt: 'desc' },
+    });
+
+    // 2) Group by (challengeId, windowKey).
+    const groups = new Map(); // key → { challenge, windowKey, submissions[] }
+    for (const s of submissions) {
+      if (!s.challenge) continue;
+      const wk = s.challenge.frequency === 'DAILY'
+        ? dateKeyInZone(s.createdAt, zone)
+        : weekKeyInZone(s.createdAt, zone);
+      const gKey = `${s.challengeId}|${wk}`;
+      let g = groups.get(gKey);
+      if (!g) {
+        g = { challenge: s.challenge, windowKey: wk, submissions: [] };
+        groups.set(gKey, g);
+      }
+      g.submissions.push(s);
+    }
+
+    // 3) Build cards and filter by tab.
+    const currentDailyKey  = dateKeyInZone(now, zone);
+    const currentWeeklyKey = weekKeyInZone(now, zone);
+
+    const cards = [];
+    for (const g of groups.values()) {
+      const requiredCount = g.challenge.requiredPhotos || 1;
+      const uploadedCount = g.submissions.length;
+      const status =
+        uploadedCount >= requiredCount ? 'completed'
+        : uploadedCount > 0            ? 'in_progress'
+        : 'incomplete';
+
+      if (tab === 'completed'  && status !== 'completed')  continue;
+      if (tab === 'in_progress' && status !== 'in_progress') continue;
+
+      const isCurrentWindow =
+        (g.challenge.frequency === 'DAILY'  && g.windowKey === currentDailyKey) ||
+        (g.challenge.frequency === 'WEEKLY' && g.windowKey === currentWeeklyKey);
+
+      // Most-recent submission first inside the group → submittedAt reflects
+      // the latest activity (sort key + display).
+      const latestAt = g.submissions[0].createdAt;
+
+      cards.push({
+        id: g.challenge.id,
+        title: g.challenge.title,
+        preview: (g.challenge.description || '').slice(0, 120),
+        frequency: g.challenge.frequency,
+        tier: g.challenge.tier,
+        points: g.challenge.points,
+        requiredCount,
+        uploadedCount,
+        status,
+        // 0 for past-window cards — no time left to add more photos
+        timeRemainingMs: isCurrentWindow
+          ? timeRemainingMs(g.challenge.frequency, zone, now)
+          : 0,
+        windowKey: g.windowKey,
+        zone,
+        // Extras for the history view (FE may ignore safely):
+        submittedAt: latestAt,
+        // Photos this user uploaded for this window — preserved forever.
+        submissionMediaUrls: g.submissions
+          .map((s) => s.mediaUrl)
+          .filter(Boolean)
+          .reverse(), // oldest→newest order for a clean strip
+      });
+    }
+
+    // 4) Sort by submittedAt desc (newest activity first).
+    cards.sort((a, b) => new Date(b.submittedAt) - new Date(a.submittedAt));
+
+    // 5) Paginate.
+    const total = cards.length;
+    const start = (page - 1) * pageSize;
+    const items = cards.slice(start, start + pageSize);
+
+    return res.json({
+      items,
+      total,
+      page,
+      pageSize,
+      hasMore: start + items.length < total,
+    });
+  } catch (err) {
+    console.error('getChallengeHistory error:', err);
+    return res.status(500).json({ error: 'Failed to fetch challenge history' });
+  }
+};
