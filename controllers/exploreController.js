@@ -250,12 +250,15 @@ const RESTAURANT_CATEGORIES = [
 
 const getRestaurantCategory = (key) => RESTAURANT_CATEGORIES.find((c) => c.key === key);
 
+// Google price_level (0..4) → dollar signs. Must stay in lockstep with
+// pointsForPlace: 0=free (no $), 1=$, 2=$$, 3=$$$, 4=$$$$. Was off by one, so a
+// $$ place like Cheers (level 2) showed "$$$" while correctly awarding 20 pts.
 function priceLevelToRange(level) {
-  if (level === 0) return '$';
-  if (level === 1) return '$$';
-  if (level === 2) return '$$$';
-  if (level === 3) return '$$$$';
-  return '';
+  if (level === 1) return '$';
+  if (level === 2) return '$$';
+  if (level === 3) return '$$$';
+  if (level === 4) return '$$$$';
+  return ''; // 0 (free) or null → no price tier
 }
 
 function openNowToStatus(openNow) {
