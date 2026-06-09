@@ -1,5 +1,6 @@
 const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
+const { pointsForDifficulty } = require('../../utils/challengeDifficulty');
 
 exports.listChallenges = async (req, res) => {
   try {
@@ -52,16 +53,21 @@ exports.createForm = (req, res) => {
 
 exports.createChallenge = async (req, res) => {
   try {
-    const { title, description, type, frequency, points, tier, requiredPhotos } = req.body;
+    const { title, description, type, frequency, points, tier, requiredPhotos, difficulty } = req.body;
+    // Difficulty → points (EASY 10/MEDIUM 15/HARD 20/MULTI_STEP 25). Explicit
+    // points win; otherwise difficulty sets them; else default 10.
+    const diff = difficulty ? String(difficulty).toUpperCase() : null;
+    const diffPoints = pointsForDifficulty(diff);
     await prisma.challenge.create({
       data: {
         title,
         description,
         type: type || null,
         frequency: frequency || 'DAILY',
-        points: parseInt(points) || 10,
+        points: parseInt(points) || diffPoints || 10,
         tier: tier || 'SILVER',
         requiredPhotos: parseInt(requiredPhotos) || 1,
+        difficulty: diffPoints != null ? diff : null,
       },
     });
     req.flash('success', 'Challenge created.');
@@ -95,7 +101,9 @@ exports.editForm = async (req, res) => {
 exports.updateChallenge = async (req, res) => {
   try {
     const id = parseInt(req.params.id);
-    const { title, description, type, frequency, points, tier, requiredPhotos } = req.body;
+    const { title, description, type, frequency, points, tier, requiredPhotos, difficulty } = req.body;
+    const diff = difficulty ? String(difficulty).toUpperCase() : null;
+    const diffPoints = pointsForDifficulty(diff);
     await prisma.challenge.update({
       where: { id },
       data: {
@@ -103,9 +111,11 @@ exports.updateChallenge = async (req, res) => {
         description,
         type: type || null,
         frequency: frequency || undefined,
-        points: parseInt(points) || undefined,
+        // explicit points win; else realign to difficulty if one was chosen
+        points: parseInt(points) || (diffPoints != null ? diffPoints : undefined),
         tier: tier || undefined,
         requiredPhotos: parseInt(requiredPhotos) || undefined,
+        difficulty: diffPoints != null ? diff : undefined,
       },
     });
     req.flash('success', 'Challenge updated.');
