@@ -477,6 +477,23 @@ exports.declineFriendRequest = async (req, res) => {
 
   await prisma.friendship.delete({ where: { id: friendRecord.id } });
 
+  // Clear the receiver's stale "X sent you a friend request" in-app notification
+  // row so cancel reverts cleanly. FCM banner already on device is OS-managed
+  // and can't be recalled — tapping it now just opens an empty pending state.
+  // requesterId is the sender (request_received was sent TO friendRecord.receiverId
+  // with actorId=friendRecord.requesterId), so we delete on the receiver side.
+  try {
+    await prisma.notification.deleteMany({
+      where: {
+        userId: friendRecord.receiverId,
+        type: 'FRIEND_REQUEST',
+        actorId: friendRecord.requesterId,
+      },
+    });
+  } catch (cleanupErr) {
+    console.error('declineFriendRequest notification cleanup error:', cleanupErr);
+  }
+
   // Realtime: the OTHER party silently refreshes their requests/sent list
   realtime.toUser(otherUserId, 'friend.request_declined', {
     byUserId: currentUserId,
@@ -569,42 +586,34 @@ exports.unfriend = async (req, res) => {
 exports.getFriendList = async (req, res) => {
   const currentUserId = req.authData.id;
 
-  const friendships = await prisma.friendship.findMany({
-    where: {
-      status: "ACCEPTED",
-      OR: [{ requesterId: currentUserId }, { receiverId: currentUserId }],
+  const userSelect = {
+    id: true,
+    username: true,
+    firstName: true,
+    lastName: true,
+    totalPoints: true,
+    minime: {
+      select: { avatarUrl: true },
+      where: { isSaved: true },
+      orderBy: { updatedAt: "desc" },
     },
-    include: {
-      requester: {
-        select: {
-          id: true,
-          username: true,
-          firstName: true,
-          lastName: true,
-          totalPoints: true,
-          minime: {
-            select: { avatarUrl: true },
-            where: { isSaved: true },
-            orderBy: { updatedAt: "desc" },
-          },
-        },
+  };
+
+  // Fetch accepted friends + outgoing PENDING in parallel — single endpoint,
+  // single list, no merge logic on the client.
+  const [friendships, outgoingPending] = await Promise.all([
+    prisma.friendship.findMany({
+      where: {
+        status: "ACCEPTED",
+        OR: [{ requesterId: currentUserId }, { receiverId: currentUserId }],
       },
-      receiver: {
-        select: {
-          id: true,
-          username: true,
-          firstName: true,
-          lastName: true,
-          totalPoints: true,
-          minime: {
-            select: { avatarUrl: true },
-            where: { isSaved: true },
-            orderBy: { updatedAt: "desc" },
-          },
-        },
-      },
-    },
-  });
+      include: { requester: { select: userSelect }, receiver: { select: userSelect } },
+    }),
+    prisma.friendship.findMany({
+      where: { requesterId: currentUserId, status: "PENDING" },
+      include: { receiver: { select: userSelect } },
+    }),
+  ]);
 
   const friendsRaw = friendships.map((fr) =>
     fr.requesterId === currentUserId ? fr.receiver : fr.requester
@@ -613,7 +622,7 @@ exports.getFriendList = async (req, res) => {
 
   const weekPointsMap = await getWeeklyPointsForUsers(friendIds);
 
-  const friends = friendsRaw.map((friend) => ({
+  const accepted = friendsRaw.map((friend) => ({
     id: friend.id,
     username: friend.username,
     firstName: friend.firstName,
@@ -622,12 +631,27 @@ exports.getFriendList = async (req, res) => {
     totalPoints: friend.totalPoints || 0,
     thisWeekPoints: weekPointsMap.get(friend.id) || 0,
     profileUrl: `/api/users/${friend.id}/profile`,
+    status: "ACCEPTED",
+  }));
+
+  // Outgoing pending — same shape, status="PENDING_SENT". UI shows the
+  // "Pending accept" chip in place of the points row.
+  const pendingSent = outgoingPending.map(({ receiver: u }) => ({
+    id: u.id,
+    username: u.username,
+    firstName: u.firstName,
+    lastName: u.lastName,
+    avatarUrl: u.minime?.[0]?.avatarUrl || null,
+    totalPoints: u.totalPoints || 0,
+    thisWeekPoints: 0,
+    profileUrl: `/api/users/${u.id}/profile`,
+    status: "PENDING_SENT",
   }));
 
   return res.status(200).json({
     success: true,
     message: "Friends fetched successfully",
-    data: friends,
+    data: [...accepted, ...pendingSent],
   });
 };
 
