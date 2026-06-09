@@ -730,24 +730,29 @@ exports.searchPlaces = async (req, res) => {
     }
     const limit = Math.min(parseInt(req.query.limit || '20', 10), 20);
 
-    // Category is REQUIRED. Search runs ONLY against the lazy-expanded 9-cell
-    // grid pool for that category — same cache that /restaurants/category and
-    // /explore/category use, so a category screen view + a search there share
-    // one Google fetch within the 5min TTL. Zero textSearch calls.
-    const categoryKey = req.query.category ? String(req.query.category).trim() : null;
-    const categoryFilter = categoryKey ? getCategory(categoryKey) : null;
-    if (!categoryFilter) {
-      return res.status(400).json({ success: false, error: 'category query param required (bars|cafes|restaurants|outdoors|venue-events)' });
+    // Text-relevant search across ALL categories, kept within OUR taxonomy.
+    // We run a type-LESS Google Text Search (location-biased) so the query
+    // matches by name/relevance, then classify each result into our canonical
+    // buckets and DROP anything that doesn't fall into one of them. So "cheers"
+    // finds the bar even though the map screen defaults to ?category=restaurants.
+    // NOTE: the ?category= param is the browse-screen default, NOT a search
+    // filter — it is intentionally IGNORED here, otherwise the forced
+    // "restaurants" default would hide bars/cafes/etc the user is searching for.
+    // Results still never escape the 6 categories (primaryCategory drops the rest).
+    let pool = [];
+    try {
+      pool = await textSearch({ query, lat, lng, radius });
+    } catch (e) {
+      console.error('searchPlaces textSearch error:', e.message);
     }
 
-    const pool = await getCategoryCandidates({ cat: categoryFilter, lat, lng, radius, requiredCount: Infinity });
-    const needle = query.toLowerCase();
-    const rawResults = pool.filter(p =>
-      (p.name || '').toLowerCase().includes(needle) ||
-      (p.formatted_address || '').toLowerCase().includes(needle) ||
-      (p.vicinity || '').toLowerCase().includes(needle)
-    );
-    const top = rawResults.slice(0, limit);
+    const top = [];
+    for (const p of pool) {
+      const bucket = primaryCategory(p);
+      if (!bucket) continue;                 // outside our 6 categories → drop
+      top.push(p);
+      if (top.length >= limit) break;
+    }
 
     // 2) Active multiplier for this user (factor=1 if none)
     const now = new Date();
@@ -766,7 +771,7 @@ exports.searchPlaces = async (req, res) => {
       const photos = buildPhotosArray(d, 8);
       const image = photos[0] || photoUrlByRef(p.photos?.[0]?.photo_reference, 4800) || '';
       const matched = primaryCategory(d || p);
-      const bucket = categoryFilter || matched;
+      const bucket = matched; // each result classified into its own bucket (search spans all 6)
       // Points from Google price_level + reviews (per launch spec).
       const basePoints = pointsForPlace({
         priceLevel: d?.price_level ?? p.price_level,
@@ -806,7 +811,7 @@ exports.searchPlaces = async (req, res) => {
 
     res.json({
       success: true,
-      category: categoryFilter ? { key: categoryFilter.key, title: categoryFilter.title } : null,
+      category: null, // search spans all 6 categories; each place carries its own `category`
       radius,
       totalCount: restaurants.length,
       hasMore: false,
