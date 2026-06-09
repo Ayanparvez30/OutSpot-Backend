@@ -161,7 +161,9 @@ exports.getGlobalChatId = async (req, res) => {
 
 exports.sendTextMessage = async (req, res) => {
   const userId = req.authData.id;
-  let { chatId, content } = req.body;
+  // Item 9: accept optional `imageUrl` so share-to-chat (story / explore media)
+  // becomes a real image message, not a URL in text.
+  let { chatId, content, imageUrl } = req.body;
 
   try {
     chatId = parseInt(chatId, 10);
@@ -169,10 +171,13 @@ exports.sendTextMessage = async (req, res) => {
       return res.status(400).json({ message: "Valid chatId is required" });
     }
 
-    if (!content || !String(content).trim()) {
-      return res.status(400).json({ message: "Message content is required" });
+    // Either text or image is required. Caption can be empty when only sharing media.
+    const trimmedContent = content ? String(content).trim() : "";
+    const hasImage = imageUrl && typeof imageUrl === "string" && imageUrl.trim().length > 0;
+    if (!trimmedContent && !hasImage) {
+      return res.status(400).json({ message: "Message content or image is required" });
     }
-    content = String(content).trim();
+    content = trimmedContent || null;
 
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
@@ -226,12 +231,22 @@ exports.sendTextMessage = async (req, res) => {
       expiresAt = new Date(Date.now() + GLOBAL_CHAT_TTL_MS);
     }
 
+    // Item 9: copy a shared media URL to a chat-owned key so the chat message
+    // survives story expiry. Foreign URLs and already-chat-owned URLs pass
+    // through. On copy failure, falls back to the source URL (orphan-guard
+    // still keeps it alive via Message.imageUrl reference).
+    let persistedImageUrl = null;
+    if (hasImage) {
+      const { materializeChatMedia } = require("../utils/s3Upload");
+      persistedImageUrl = await materializeChatMedia(String(imageUrl).trim());
+    }
+
     const message = await prisma.message.create({
       data: {
         chatId,
         senderId: userId,
         content,
-        imageUrl: null,
+        imageUrl: persistedImageUrl,
         expiresAt,
       },
       include: {

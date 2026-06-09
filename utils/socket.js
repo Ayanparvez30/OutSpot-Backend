@@ -344,12 +344,26 @@ function initSocket(server) {
           expiresAt = new Date(Date.now() + GLOBAL_CHAT_TTL_MS);
         }
 
+        // Item 9: if imageUrl is a shared story / explore media URL we own,
+        // copy to a chat-owned key so the chat message survives the source's
+        // lifecycle (24h story expiry, etc). Foreign / already-chat-owned URLs
+        // pass through. Copy failure falls back to source URL.
+        let persistedImageUrl = imageUrl || null;
+        if (persistedImageUrl) {
+          try {
+            const { materializeChatMedia } = require('./s3Upload');
+            persistedImageUrl = await materializeChatMedia(persistedImageUrl);
+          } catch (matErr) {
+            console.error('sendMessage materializeChatMedia error', matErr);
+          }
+        }
+
         const message = await prisma.message.create({
           data: {
             chatId,
             senderId,
             content: content || null,
-            imageUrl: imageUrl || null,
+            imageUrl: persistedImageUrl,
             expiresAt,
             // Items 6 + 8: persist optional new fields. forwarded defaults to
             // false in the schema, replyToMessageId stays null when absent.
