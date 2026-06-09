@@ -276,10 +276,14 @@ exports.searchUsers = async (req, res) => {
     );
 
     // Drop weak candidates pulled in only by the broad first-letter prefix
-    // (keep real substring hits and close typo matches), then sort + cap.
-    const FUZZY_MIN = 0.62;
+    // (keep real substring hits + close ~1-edit typos), and drop nameless /
+    // non-onboarded accounts (no first/last name) so search never shows a blank
+    // row. 0.72 ≈ at most a single-character typo on a 6+ char query.
+    const FUZZY_MIN = 0.72;
+    const hasName = (u) =>
+      Boolean((u.firstName && u.firstName.trim()) || (u.lastName && u.lastName.trim()));
     const results = enriched
-      .filter((u) => u.fuzzy >= FUZZY_MIN || getMatchScore(u, searchTerm) > 0)
+      .filter((u) => hasName(u) && (u.fuzzy >= FUZZY_MIN || getMatchScore(u, searchTerm) > 0))
       .sort((a, b) => b.score - a.score)
       .slice(0, 30)
       .map(({ fuzzy, ...rest }) => rest); // drop internal field
