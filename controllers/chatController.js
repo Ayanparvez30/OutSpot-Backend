@@ -162,9 +162,11 @@ exports.getGlobalChatId = async (req, res) => {
 
 exports.sendTextMessage = async (req, res) => {
   const userId = req.authData.id;
-  // Item 9: accept optional `imageUrl` so share-to-chat (story / explore media)
-  // becomes a real image message, not a URL in text.
-  let { chatId, content, imageUrl } = req.body;
+  // Item 9: accept optional `imageUrl` (share-to-chat).
+  // Items 6 + 8: also accept replyToMessageId + forwarded so the REST send path
+  // is at parity with the socket sendMessage handler — recipients receive the
+  // reply chip / forwarded flag via the newMessage echo from this path too.
+  let { chatId, content, imageUrl, replyToMessageId, forwarded } = req.body;
 
   try {
     chatId = parseInt(chatId, 10);
@@ -242,6 +244,20 @@ exports.sendTextMessage = async (req, res) => {
       persistedImageUrl = await materializeChatMedia(String(imageUrl).trim());
     }
 
+    // Validate replyToMessageId same-chat (mirrors socket handler).
+    let replyToParsed = null;
+    if (replyToMessageId !== undefined && replyToMessageId !== null) {
+      const rid = parseInt(replyToMessageId, 10);
+      if (Number.isInteger(rid) && rid > 0) {
+        const target = await prisma.message.findUnique({
+          where: { id: rid },
+          select: { id: true, chatId: true },
+        });
+        if (target && target.chatId === chatId) replyToParsed = rid;
+      }
+    }
+    const forwardedFlag = forwarded === true; // strict-true only
+
     const message = await prisma.message.create({
       data: {
         chatId,
@@ -249,6 +265,8 @@ exports.sendTextMessage = async (req, res) => {
         content,
         imageUrl: persistedImageUrl,
         expiresAt,
+        ...(replyToParsed !== null ? { replyToMessageId: replyToParsed } : {}),
+        ...(forwardedFlag           ? { forwarded: true }                : {}),
       },
       include: {
         sender: {
@@ -263,6 +281,16 @@ exports.sendTextMessage = async (req, res) => {
               orderBy: { updatedAt: "desc" },
               take: 1,
             },
+          },
+        },
+        // Item 8: quoted message for the reply chip.
+        replyTo: {
+          select: {
+            id: true,
+            content: true,
+            imageUrl: true,
+            senderId: true,
+            sender: { select: { username: true, firstName: true, lastName: true } },
           },
         },
       },
@@ -298,6 +326,20 @@ exports.sendTextMessage = async (req, res) => {
             ? message.sender.minime[0].avatarUrl
             : null,
       },
+      // Items 6 + 8 — parity with socket sendMessage echo. Old clients that
+      // ignore unknown keys see no change.
+      forwarded: message.forwarded || false,
+      replyTo: message.replyTo
+        ? {
+            id: message.replyTo.id,
+            content: message.replyTo.content,
+            imageUrl: message.replyTo.imageUrl,
+            senderId: message.replyTo.senderId,
+            senderName: [message.replyTo.sender?.firstName, message.replyTo.sender?.lastName]
+              .filter(Boolean)
+              .join(" ") || message.replyTo.sender?.username || null,
+          }
+        : null,
     };
 
     try {
