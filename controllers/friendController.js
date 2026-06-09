@@ -58,17 +58,27 @@ async function getViewerFriendshipStatusMap(viewerId, targetIds) {
 const REASON_RANK = { CONTACT: 5, MUTUAL: 4, COMMUNITY: 3, POPULAR: 2, NEW_USER: 1 };
 
 const getMatchScore = (user, q) => {
-  const qLower = q.toLowerCase();
-  let score = 0;
-  const fields = [user.username, user.firstName, user.lastName]
+  const qLower = q.toLowerCase().trim();
+  const tokens = qLower.split(/\s+/).filter(Boolean);
+  const fullName = [user.firstName, user.lastName].filter(Boolean).join(' ');
+  const fields = [user.username, user.firstName, user.lastName, fullName]
     .filter(Boolean)
     .map((f) => f.toLowerCase());
 
+  let score = 0;
+  // whole-query match (incl. full name) — strongest signal
   for (const field of fields) {
     if (field === qLower) score += 40;
     else if (field.startsWith(qLower)) score += 30;
     else if (field.includes(qLower)) score += 20;
     else if (field.endsWith(qLower)) score += 10;
+  }
+  // per-word predictive match — rewards partial / multi-word typing
+  for (const t of tokens) {
+    for (const field of fields) {
+      if (field.startsWith(t)) score += 6;
+      else if (field.includes(t)) score += 3;
+    }
   }
   return score;
 };
@@ -119,19 +129,26 @@ exports.searchUsers = async (req, res) => {
       sameCommunityMembers.map((m) => m.userId)
     );
 
+    // Predictive, multi-word search across username + first/last name.
+    // Each typed word must appear (as a substring) in at least one of the
+    // name/username fields → "shohana moni" matches firstName=shohana,
+    // lastName=moni; "sho" matches partially; "avin" matches username.
+    const tokens = searchTerm.split(/\s+/).filter(Boolean);
+    const tokenConditions = tokens.map((t) => ({
+      OR: [
+        { firstName: { contains: t } },
+        { lastName: { contains: t } },
+        { username: { contains: t } },
+      ],
+    }));
+
     // users
     const users = await prisma.user.findMany({
       where: {
-        id: { not: currentUserId },
         AND: [
-          {
-            OR: [
-              { firstName: { contains: searchTerm } },
-              { lastName: { contains: searchTerm } },
-              { username: { contains: searchTerm } },
-            ],
-          },
+          { id: { not: currentUserId } },
           { id: { notIn: Array.from(blockedIds) } },
+          ...tokenConditions,
         ],
       },
       select: {
