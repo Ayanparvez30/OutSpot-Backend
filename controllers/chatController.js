@@ -1752,47 +1752,17 @@ exports.markChatAsRead = async (req, res) => {
       console.error('Socket emission error:', socketErr);
     }
 
-    // View-once: schedule deletion 5s after recipient reads
-    const cid = parseInt(chatId, 10);
-    const chat = await prisma.chat.findUnique({
-      where: { id: cid },
-      select: { disappearingSeconds: true },
-    });
-    if (chat && chat.disappearingSeconds === 1) {
-      const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
-      const viewOnceMessages = await prisma.message.findMany({
-        where: {
-          chatId: cid,
-          id: { lte: latestMessage.id },
-          isSystem: false,
-          expiresAt: VIEW_ONCE_SENTINEL,
-          senderId: { not: currentUserId },
-        },
-        select: { id: true, imageUrl: true },
-      });
-      if (viewOnceMessages.length > 0) {
-        const msgIds = viewOnceMessages.map(m => m.id);
-        const imageUrls = viewOnceMessages.map(m => m.imageUrl).filter(Boolean);
-        setTimeout(async () => {
-          try {
-            await prisma.message.deleteMany({ where: { id: { in: msgIds } } });
-            // Orphan-only S3 cleanup — same URL may live on a SavedStory clone
-            // or other table; skip the S3 delete when still referenced.
-            const { deleteS3IfOrphanBulk } = require('../utils/s3Cleanup');
-            const uniqUrls = [...new Set(imageUrls)];
-            if (uniqUrls.length) await deleteS3IfOrphanBulk(uniqUrls);
-            const io = require('../utils/socket').getIO();
-            io.to(`chat_${cid}`).emit('messagesDeleted', { chatId: cid, messageIds: msgIds });
-          } catch (e) {
-            console.error('View-once delete error:', e);
-          }
-        }, 5000);
-      }
-    }
+    // Disappear-immediately: handled per-user on chat EXIT (clearChatOnExit) —
+    // never on read. Removed the legacy 5s-after-read deletion that broadcast
+    // messagesDeleted to the whole chat room and wiped bubbles while the
+    // recipient was still on the chat screen. The recipient's per-user
+    // clearedUpToMessageId advances only when they actually leave the chat
+    // (exitChat REST/socket, socket disconnect, or app close). See
+    // utils/socket.js clearChatOnExit for the live path.
 
     return res.json({
       message: 'Chat marked as read',
-      chatId: cid,
+      chatId: parseInt(chatId, 10),
       lastSeenMessageId: latestMessage.id,
       success: true
     });
