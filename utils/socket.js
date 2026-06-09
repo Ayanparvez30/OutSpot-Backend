@@ -227,7 +227,10 @@ function initSocket(server) {
     });
 
     socket.on('sendMessage', async (data) => {
-      let { chatId, content, senderId, imageUrl } = data || {};
+      // Items 6 + 8: NEW optional fields (additive — old clients work unchanged):
+      //   • replyToMessageId — int id of the message being replied to
+      //   • forwarded        — boolean flag (default false)
+      let { chatId, content, senderId, imageUrl, replyToMessageId, forwarded } = data || {};
 
       chatId = parseInt(chatId, 10);
       senderId = parseInt(senderId, 10);
@@ -240,6 +243,21 @@ function initSocket(server) {
         console.log('❌ Missing/invalid fields in sendMessage', { chatId, senderId });
         return;
       }
+
+      // Validate replyToMessageId: must be an int referencing a message in the
+      // SAME chat. Anything else → drop the field (defensive, never blocks send).
+      let replyToParsed = null;
+      if (replyToMessageId !== undefined && replyToMessageId !== null) {
+        const rid = parseInt(replyToMessageId, 10);
+        if (Number.isInteger(rid) && rid > 0) {
+          const target = await prisma.message.findUnique({
+            where: { id: rid },
+            select: { id: true, chatId: true },
+          });
+          if (target && target.chatId === chatId) replyToParsed = rid;
+        }
+      }
+      const forwardedFlag = forwarded === true; // strict-true only
 
       try {
         const chat = await prisma.chat.findUnique({
@@ -333,6 +351,10 @@ function initSocket(server) {
             content: content || null,
             imageUrl: imageUrl || null,
             expiresAt,
+            // Items 6 + 8: persist optional new fields. forwarded defaults to
+            // false in the schema, replyToMessageId stays null when absent.
+            ...(replyToParsed !== null ? { replyToMessageId: replyToParsed } : {}),
+            ...(forwardedFlag           ? { forwarded: true }                : {}),
           },
           include: {
             sender: {
@@ -347,6 +369,16 @@ function initSocket(server) {
                   orderBy: { updatedAt: 'desc' },
                   take: 1,
                 },
+              },
+            },
+            // Item 8: quoted message for client to render the "reply-to" bubble.
+            replyTo: {
+              select: {
+                id: true,
+                content: true,
+                imageUrl: true,
+                senderId: true,
+                sender: { select: { username: true, firstName: true, lastName: true } },
               },
             },
           },
@@ -376,11 +408,67 @@ function initSocket(server) {
             lastName: message.sender.lastName,
             avatarUrl: firstAvatar(message.sender.minime),
           },
+          // Items 6 + 8: emit new optional fields. Old clients that ignore
+          // unknown keys see no change.
+          forwarded: message.forwarded || false,
+          replyTo: message.replyTo
+            ? {
+                id: message.replyTo.id,
+                content: message.replyTo.content,
+                imageUrl: message.replyTo.imageUrl,
+                senderId: message.replyTo.senderId,
+                senderName: [message.replyTo.sender?.firstName, message.replyTo.sender?.lastName]
+                  .filter(Boolean)
+                  .join(' ') || message.replyTo.sender?.username || null,
+              }
+            : null,
           chatId: message.chatId,
           createdAt: message.createdAt,
         };
 
-        io.to(`chat_${chatId}`).emit('newMessage', msgPayload);
+        // Block-aware fan-out (item 4): for group/community, load blocks once
+        // and share the set with the existing per-recipient personal-room emit
+        // below. DM is unaffected — the send-side block at lines 295-313 already
+        // prevents the message from existing for DM.
+        //
+        // blockedSet is consulted at TWO points:
+        //   1) The chat_${chatId} broadcast — if any block exists, we skip the
+        //      room broadcast and fan out per-user so blocked members don't
+        //      receive via the broadcast.
+        //   2) The personal-room emit loop below — we always skip blocked
+        //      recipients there too. (Existing loop reused for delivery state;
+        //      we just narrow whom we emit `newMessage` to.)
+        let blockedSet = new Set();
+        let useRoomBroadcast = true;
+        if (chat.isGroup || chat.isCommunity) {
+          const memberIds = chat.users.map((u) => u.userId);
+          const blocks = await prisma.block.findMany({
+            where: {
+              OR: [
+                { blockerId: senderId, blockedId: { in: memberIds } },
+                { blockedId: senderId, blockerId: { in: memberIds } },
+              ],
+            },
+            select: { blockerId: true, blockedId: true },
+          });
+          for (const b of blocks) {
+            blockedSet.add(b.blockerId === senderId ? b.blockedId : b.blockerId);
+          }
+          if (blockedSet.size > 0) {
+            useRoomBroadcast = false;
+            // Sender always gets their own echo.
+            io.to(`user:${senderId}`).emit('newMessage', msgPayload);
+            // Per-recipient fan-out, skipping anyone on either side of a block.
+            for (const userOnChat of chat.users) {
+              if (userOnChat.userId === senderId) continue;
+              if (blockedSet.has(userOnChat.userId)) continue;
+              io.to(`user:${userOnChat.userId}`).emit('newMessage', msgPayload);
+            }
+          }
+        }
+        if (useRoomBroadcast) {
+          io.to(`chat_${chatId}`).emit('newMessage', msgPayload);
+        }
 
         // Collect who is online in the chat room
         const chatRoom = io.sockets.adapter.rooms.get(`chat_${chatId}`);
@@ -408,10 +496,14 @@ function initSocket(server) {
         }
 
         // Also emit to each recipient's personal room (handles newly
-        // created chats where the recipient hasn't joined the chat room)
+        // created chats where the recipient hasn't joined the chat room).
+        // Item 4: in group/community, skip recipients on either side of a block
+        // (blockedSet computed above is empty for DM and for unblocked groups).
         for (const userOnChat of chat.users) {
           if (userOnChat.userId !== senderId) {
-            io.to(`user:${userOnChat.userId}`).emit('newMessage', msgPayload);
+            if (!blockedSet.has(userOnChat.userId)) {
+              io.to(`user:${userOnChat.userId}`).emit('newMessage', msgPayload);
+            }
 
             // Mark delivery for online recipients not already handled above
             if (!onlineInChatRoom.has(userOnChat.userId)) {
@@ -450,6 +542,27 @@ function initSocket(server) {
         console.error('❌ Error sending message:', error);
         socket.emit('messageError', { error: 'Failed to send message' });
       }
+    });
+
+    // -------------------------------------------------------------------
+    // deleteMessage — owner deletes their own messages (item 1).
+    //
+    // Payload: { chatId, messageIds: [int, ...] }
+    //   • messageIds array supports both single and multi-delete from one path
+    //   • Hard delete; no time window; broadcast via the EXISTING messagesDeleted
+    //     event so the client's existing handler removes them locally
+    //   • Caller can delete ONLY their own messages — any non-owned id is
+    //     silently dropped. (Admin-delete-any-message is a separate REST route.)
+    // Body extracted to deleteOwnMessages(...) for unit-testability.
+    // -------------------------------------------------------------------
+    socket.on('deleteMessage', async (data) => {
+      await deleteOwnMessages({
+        prisma,
+        io,
+        callerId: socket.data?.userId,
+        chatId: data?.chatId,
+        messageIds: data?.messageIds,
+      });
     });
 
     socket.on('typing', ({ chatId, username }) => {
@@ -629,4 +742,48 @@ async function clearChatOnExit(userId, chatId) {
   }
 }
 
-module.exports = { initSocket, getIO, clearChatOnExit, sendPushToOfflineUsers: sendPushNotificationToOfflineUsers };
+// Hard-delete caller-owned messages, emit messagesDeleted, fire-and-forget
+// orphan-only S3 cleanup. Pure function — no closure on socket/io/prisma — so it
+// can be unit-tested with stubs. Returns the array of ids actually deleted.
+async function deleteOwnMessages({ prisma, io, callerId, chatId, messageIds }) {
+  try {
+    if (!callerId) return [];
+    const cid = parseInt(chatId, 10);
+    let ids = Array.isArray(messageIds) ? messageIds : [];
+    ids = ids.map((x) => parseInt(x, 10)).filter((x) => Number.isInteger(x) && x > 0);
+    if (!cid || !Number.isInteger(cid) || ids.length === 0) return [];
+    if (ids.length > 100) ids = ids.slice(0, 100);
+
+    const owned = await prisma.message.findMany({
+      where: { id: { in: ids }, chatId: cid, senderId: callerId },
+      select: { id: true, imageUrl: true },
+    });
+    if (owned.length === 0) return [];
+
+    const ownedIds = owned.map((m) => m.id);
+    await prisma.message.deleteMany({ where: { id: { in: ownedIds } } });
+
+    try {
+      const urls = owned.map((m) => m.imageUrl).filter(Boolean);
+      if (urls.length) {
+        const { deleteS3IfOrphanBulk } = require('../utils/s3Cleanup');
+        deleteS3IfOrphanBulk(urls).catch((err) =>
+          console.error('deleteMessage S3 cleanup error', err)
+        );
+      }
+    } catch (s3Err) {
+      console.error('deleteMessage S3 cleanup setup error', s3Err);
+    }
+
+    try {
+      io && io.to(`chat_${cid}`).emit('messagesDeleted', { chatId: cid, messageIds: ownedIds });
+    } catch (_) { /* socket not ready */ }
+
+    return ownedIds;
+  } catch (err) {
+    console.error('❌ deleteOwnMessages error:', err);
+    return [];
+  }
+}
+
+module.exports = { initSocket, getIO, clearChatOnExit, sendPushToOfflineUsers: sendPushNotificationToOfflineUsers, deleteOwnMessages };

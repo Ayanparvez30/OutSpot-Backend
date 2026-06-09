@@ -75,5 +75,15 @@ router.post('/chats/confirm-delivery', checkAuth, chatController.confirmDelivery
 // Disappear-on-exit: client signals leaving the conversation screen
 router.post('/chats/:chatId/exit', checkAuth, chatController.exitChat);
 
+// Moderation (additive) — item 2: report a message
+router.post('/chats/messages/:messageId/report', checkAuth, chatController.reportMessage);
+
+// Moderation (additive) — item 5b: group ban / unban (group admin only)
+router.post('/chats/:chatId/members/:userId/ban',   checkAuth, chatController.banGroupMember);
+router.delete('/chats/:chatId/members/:userId/ban', checkAuth, chatController.unbanGroupMember);
+
+// Moderation (additive) — item 5c: admin-delete any message in group/community
+router.post('/chats/messages/:messageId/admin-delete', checkAuth, chatController.adminDeleteMessage);
+
 module.exports = router;
 

@@ -32,4 +32,8 @@ router.delete('/communities/:communityId', checkAuth, communityController.delete
 // Recent communities for the current user (created + joined), sorted by recency
 router.get('/communities/my/recent', checkAuth, communityController.getMyRecentCommunities);
 
+// Moderation (additive) — item 5a: per-community ban (creator only)
+router.post('/communities/:communityId/members/:userId/ban',   checkAuth, communityController.banMember);
+router.delete('/communities/:communityId/members/:userId/ban', checkAuth, communityController.unbanMember);
+
 module.exports = router;

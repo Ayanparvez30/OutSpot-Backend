@@ -44,6 +44,21 @@ const NOT_GLOBAL_CHAT_WHERE = {
 const upload = multer({ dest: 'uploads/' });
 
 
+// Bi-directional block-set for a viewer. Returns the set of user-ids the viewer
+// has blocked AND user-ids that have blocked the viewer. Empty set when nothing
+// applies → fast-path skip for the common case (no blocks).
+async function getBlockedUserIdSet(viewerId) {
+  const blocks = await prisma.block.findMany({
+    where: { OR: [{ blockerId: viewerId }, { blockedId: viewerId }] },
+    select: { blockerId: true, blockedId: true },
+  });
+  const set = new Set();
+  for (const b of blocks) {
+    set.add(b.blockerId === viewerId ? b.blockedId : b.blockerId);
+  }
+  return set;
+}
+
 const firstAvatar = (minimeArr) =>
   Array.isArray(minimeArr) && minimeArr.length > 0
     ? (minimeArr[0]?.avatarUrl || null)
@@ -893,6 +908,11 @@ const chats = await prisma.chat.findMany({
     const chatIds = chats.map(c => c.id);
     const unreadCountsMap = await getBulkUnreadCounts(currentUserId, chatIds);
 
+    // Block-aware preview (item 4): if the chat's latest message is from a
+    // blocked user, show "[blocked]" in the preview instead of the raw content.
+    // Read-path filtering for full message lists is in getMessages.
+    const blockedIds = await getBlockedUserIdSet(currentUserId);
+
     const enrichedChats = chats.map(chat => {
       const chatUsers = chat.users.map(userOnChat => {
         const u = userOnChat.user;
@@ -916,10 +936,15 @@ const chats = await prisma.chat.findMany({
       // disappear-on-exit: messages this user cleared by leaving must not show
       // as the chat-list preview (keeps the list consistent with the open chat).
       const myCleared = currentUserOnChat?.clearedUpToMessageId || 0;
-      const latestMessage =
+      let latestMessage =
         chat.messages.length > 0 && chat.messages[0].id > myCleared
           ? chat.messages[0]
           : null;
+
+      // If the last message is from a blocked user, scrub the preview.
+      if (latestMessage && blockedIds.has(latestMessage.senderId)) {
+        latestMessage = { ...latestMessage, content: '[blocked]', imageUrl: null };
+      }
 
       // Derive a clear chatType: 'personal' | 'group' | 'community'
       const chatType = chat.isCommunity ? 'community'
@@ -982,12 +1007,21 @@ exports.getMessages = async (req, res) => {
       select: { clearedUpToMessageId: true },
     });
     const cleared = myRow?.clearedUpToMessageId || 0;
+
+    // Block-aware filter (item 4): hide messages from users I blocked or who
+    // blocked me. Skipped when the user has no blocks (the common case).
+    const blockedIds = await getBlockedUserIdSet(userId);
+    const messageWhere = {
+      chatId: cid,
+      id: { gt: cleared },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    };
+    if (blockedIds.size > 0) {
+      messageWhere.senderId = { notIn: [...blockedIds] };
+    }
+
     const messages = await prisma.message.findMany({
-      where: {
-        chatId: cid,
-        id: { gt: cleared },
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-      },
+      where: messageWhere,
       include: {
         sender: {
           select: {
@@ -1001,6 +1035,13 @@ exports.getMessages = async (req, res) => {
               orderBy: { updatedAt: 'desc' },
               take: 1,
             },
+          },
+        },
+        // Item 8: quoted message for the reply bubble.
+        replyTo: {
+          select: {
+            id: true, content: true, imageUrl: true, senderId: true,
+            sender: { select: { username: true, firstName: true, lastName: true } },
           },
         },
         chat: {
@@ -1027,6 +1068,18 @@ exports.getMessages = async (req, res) => {
         lastName: m.sender.lastName,
         avatarUrl: firstAvatar(m.sender.minime),
       },
+      // Items 6 + 8 (additive — old clients that don't expect these keys ignore them)
+      forwarded: m.forwarded || false,
+      replyTo: m.replyTo
+        ? {
+            id: m.replyTo.id,
+            content: m.replyTo.content,
+            imageUrl: m.replyTo.imageUrl,
+            senderId: m.replyTo.senderId,
+            senderName: [m.replyTo.sender?.firstName, m.replyTo.sender?.lastName]
+              .filter(Boolean).join(' ') || m.replyTo.sender?.username || null,
+          }
+        : null,
       readBy: m.chat.users
         .filter(u => u.userId !== m.senderId && u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
         .map(u => u.userId),
@@ -1058,12 +1111,20 @@ exports.getMessagesPaginated = async (req, res) => {
       select: { clearedUpToMessageId: true },
     });
     const cleared = myRow?.clearedUpToMessageId || 0;
+
+    // Block-aware filter (item 4) — see getMessages above.
+    const blockedIds = await getBlockedUserIdSet(userId);
+    const messageWhere = {
+      chatId: cid,
+      id: { gt: cleared },
+      OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
+    };
+    if (blockedIds.size > 0) {
+      messageWhere.senderId = { notIn: [...blockedIds] };
+    }
+
     const messages = await prisma.message.findMany({
-      where: {
-        chatId: cid,
-        id: { gt: cleared },
-        OR: [{ expiresAt: null }, { expiresAt: { gt: now } }],
-      },
+      where: messageWhere,
       include: {
         sender: {
           select: {
@@ -1074,6 +1135,13 @@ exports.getMessagesPaginated = async (req, res) => {
               orderBy: { updatedAt: 'asc' },
               take: 1,
             },
+          },
+        },
+        // Item 8: quoted message for the reply bubble.
+        replyTo: {
+          select: {
+            id: true, content: true, imageUrl: true, senderId: true,
+            sender: { select: { username: true, firstName: true, lastName: true } },
           },
         },
         chat: {
@@ -1102,6 +1170,18 @@ exports.getMessagesPaginated = async (req, res) => {
         lastName: m.sender.lastName,
         avatarUrl: firstAvatar(m.sender.minime),
       },
+      // Items 6 + 8 (additive)
+      forwarded: m.forwarded || false,
+      replyTo: m.replyTo
+        ? {
+            id: m.replyTo.id,
+            content: m.replyTo.content,
+            imageUrl: m.replyTo.imageUrl,
+            senderId: m.replyTo.senderId,
+            senderName: [m.replyTo.sender?.firstName, m.replyTo.sender?.lastName]
+              .filter(Boolean).join(' ') || m.replyTo.sender?.username || null,
+          }
+        : null,
       readBy: m.chat.users
         .filter(u => u.userId !== m.senderId && u.lastSeenMessageId && u.lastSeenMessageId >= m.id)
         .map(u => u.userId),
@@ -1172,7 +1252,25 @@ exports.addUsersToGroup = async (req, res) => {
   }
 
   const existing = new Set(chat.users.map(u => u.userId));
-  const toAdd = userIds.map(Number).filter(id => !existing.has(id));
+  let toAdd = userIds.map(Number).filter(id => !existing.has(id));
+
+  // Item 5b: block re-add of banned users.
+  if (toAdd.length) {
+    const bans = await prisma.chatBan.findMany({
+      where: { chatId: chat.id, userId: { in: toAdd } },
+      select: { userId: true },
+    });
+    if (bans.length) {
+      const bannedSet = new Set(bans.map((b) => b.userId));
+      toAdd = toAdd.filter((id) => !bannedSet.has(id));
+      if (!toAdd.length) {
+        return res.status(403).json({
+          message: 'All selected users are banned from this group',
+          bannedUserIds: [...bannedSet],
+        });
+      }
+    }
+  }
 
   if (!toAdd.length) {
     return res.status(400).json({ message: 'All users are already in the group' });
@@ -1787,6 +1885,8 @@ const chats = await prisma.chat.findMany({
     const chatIds = chats.map(c => c.id);
     const unreadCountsMap = await getBulkUnreadCounts(currentUserId, chatIds);
 
+    const blockedIds = await getBlockedUserIdSet(currentUserId);
+
     const enrichedChats = chats.map(chat => {
       const chatUsers = chat.users.map(userOnChat => {
         const u = userOnChat.user;
@@ -1808,9 +1908,14 @@ const chats = await prisma.chat.findMany({
       const isMuted = currentUserOnChat?.isMuted || false;
       const unreadCount = isMuted ? 0 : (unreadCountsMap.get(chat.id) || 0);
 
-      const latestMessage = chat.messages.length > 0
+      let latestMessage = chat.messages.length > 0
         ? chat.messages[0]
         : null;
+
+      // Block-aware preview (item 4): scrub if from a blocked user.
+      if (latestMessage && blockedIds.has(latestMessage.senderId)) {
+        latestMessage = { ...latestMessage, content: '[blocked]', imageUrl: null };
+      }
 
       return {
         ...chat,
@@ -1900,9 +2005,15 @@ exports.getMyGroupChats = async (req, res) => {
     const chatIds = chats.map(c => c.id);
     const unreadCountsMap = await getBulkUnreadCounts(currentUserId, chatIds);
 
+    const blockedIds = await getBlockedUserIdSet(currentUserId);
+
     const enrichedChats = chats.map(chat => {
-      const latestMessage = chat.messages[0] || null;
-      
+      let latestMessage = chat.messages[0] || null;
+      // Block-aware preview (item 4): scrub if from a blocked user.
+      if (latestMessage && blockedIds.has(latestMessage.senderId)) {
+        latestMessage = { ...latestMessage, content: '[blocked]', imageUrl: null };
+      }
+
       const enrichedUsers = chat.users.map(userOnChat => {
         const weekPoints = weekPointsMap[userOnChat.userId] || 0;
         return {
@@ -2226,5 +2337,220 @@ exports.exitChat = async (req, res) => {
   } catch (error) {
     console.error('exitChat error:', error);
     return res.status(500).json({ message: 'Failed to exit chat' });
+  }
+};
+
+// -------------------- Moderation (additive) --------------------
+
+// POST /api/chats/messages/:messageId/report  (item 2)
+// Body: { reason: string (required), note?: string }
+// Only chat members can report; non-members get 403. Inserts a row in the
+// existing Report table with type='message' so the moderation dashboard sees
+// both user-reports and message-reports in one place.
+exports.reportMessage = async (req, res) => {
+  try {
+    const reporterId = req.authData.id;
+    const messageId = parseInt(req.params.messageId, 10);
+    const { reason, note } = req.body || {};
+
+    if (!messageId || !Number.isInteger(messageId)) {
+      return res.status(400).json({ error: 'Invalid messageId' });
+    }
+    if (!reason || typeof reason !== 'string' || reason.trim().length === 0) {
+      return res.status(400).json({ error: 'reason required' });
+    }
+
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+      include: { chat: { include: { users: { select: { userId: true } } } } },
+    });
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+
+    const isMember = message.chat.users.some((u) => u.userId === reporterId);
+    if (!isMember) {
+      return res.status(403).json({ error: 'You are not a member of this chat' });
+    }
+
+    const contextType = message.chat.isCommunity
+      ? 'community'
+      : message.chat.isGroup
+        ? 'group'
+        : 'dm';
+
+    await prisma.report.create({
+      data: {
+        type: 'message',
+        reporterId,
+        reportedId: message.senderId,
+        messageId: message.id,
+        chatId: message.chatId,
+        contextType,
+        communityId: message.chat.communityId || null,
+        reason: String(reason).slice(0, 191),
+        note: note ? String(note).slice(0, 10000) : null,
+        status: 'PENDING',
+      },
+    });
+
+    return res.status(201).json({ success: true });
+  } catch (err) {
+    console.error('reportMessage error:', err);
+    return res.status(500).json({ error: 'Failed to report message' });
+  }
+};
+
+// POST /api/chats/:chatId/members/:userId/ban  (item 5b — group ban)
+// Only group admins can ban. Inserts ChatBan + removes UserOnChat.
+exports.banGroupMember = async (req, res) => {
+  try {
+    const adminId = req.authData.id;
+    const chatId = parseInt(req.params?.chatId, 10);
+    const targetUserId = parseInt(req.params?.userId, 10);
+    const reason = req.body?.reason ? String(req.body.reason).slice(0, 191) : null;
+
+    if (!chatId || !Number.isInteger(chatId))                 return res.status(400).json({ error: 'Invalid chatId' });
+    if (!targetUserId || !Number.isInteger(targetUserId))     return res.status(400).json({ error: 'Invalid userId' });
+    if (targetUserId === adminId)                              return res.status(400).json({ error: 'Cannot ban yourself' });
+
+    const chat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      include: { users: { select: { userId: true, role: true } } },
+    });
+    if (!chat || !chat.isGroup) return res.status(404).json({ error: 'Group chat not found' });
+
+    const me = chat.users.find((u) => u.userId === adminId);
+    if (!me || me.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Only group admins can ban' });
+    }
+
+    const target = chat.users.find((u) => u.userId === targetUserId);
+    if (target?.role === 'ADMIN') {
+      const adminCount = chat.users.filter((u) => u.role === 'ADMIN').length;
+      if (adminCount <= 1) {
+        return res.status(400).json({ error: 'Cannot ban the last admin' });
+      }
+    }
+
+    await prisma.chatBan.upsert({
+      where: { chatId_userId: { chatId, userId: targetUserId } },
+      update: { reason, bannedById: adminId, bannedAt: new Date() },
+      create: { chatId, userId: targetUserId, bannedById: adminId, reason },
+    });
+
+    if (target) {
+      await prisma.userOnChat.deleteMany({ where: { chatId, userId: targetUserId } });
+    }
+
+    realtime.toGroup(chatId, 'group.member_banned',  { chatId, userId: targetUserId });
+    realtime.toGroup(chatId, 'group.member_removed', { chatId, userId: targetUserId });
+    realtime.toUser(targetUserId, 'group.member_banned',  { chatId, userId: targetUserId, reason });
+    realtime.toUser(targetUserId, 'group.member_removed', { chatId, userId: targetUserId });
+
+    return res.json({ message: 'Member banned from group' });
+  } catch (err) {
+    console.error('banGroupMember error:', err);
+    return res.status(500).json({ error: 'Failed to ban member' });
+  }
+};
+
+// DELETE /api/chats/:chatId/members/:userId/ban  (unban)
+exports.unbanGroupMember = async (req, res) => {
+  try {
+    const adminId = req.authData.id;
+    const chatId = parseInt(req.params?.chatId, 10);
+    const targetUserId = parseInt(req.params?.userId, 10);
+    if (!chatId || !Number.isInteger(chatId))             return res.status(400).json({ error: 'Invalid chatId' });
+    if (!targetUserId || !Number.isInteger(targetUserId)) return res.status(400).json({ error: 'Invalid userId' });
+
+    const chat = await prisma.chat.findUnique({
+      where: { id: chatId },
+      include: { users: { select: { userId: true, role: true } } },
+    });
+    if (!chat || !chat.isGroup) return res.status(404).json({ error: 'Group chat not found' });
+
+    const me = chat.users.find((u) => u.userId === adminId);
+    if (!me || me.role !== 'ADMIN') {
+      return res.status(403).json({ error: 'Only group admins can unban' });
+    }
+
+    await prisma.chatBan.deleteMany({ where: { chatId, userId: targetUserId } });
+    realtime.toUser(targetUserId, 'group.member_unbanned', { chatId, userId: targetUserId });
+
+    return res.json({ message: 'Member unbanned' });
+  } catch (err) {
+    console.error('unbanGroupMember error:', err);
+    return res.status(500).json({ error: 'Failed to unban member' });
+  }
+};
+
+// POST /api/chats/messages/:messageId/admin-delete  (item 5c)
+// Group admin OR community creator can delete any message in their space.
+// DM context → 403. Emits the same messagesDeleted event as item 1.
+exports.adminDeleteMessage = async (req, res) => {
+  try {
+    const callerId = req.authData.id;
+    const messageId = parseInt(req.params?.messageId, 10);
+    if (!messageId || !Number.isInteger(messageId)) {
+      return res.status(400).json({ error: 'Invalid messageId' });
+    }
+
+    const message = await prisma.message.findUnique({
+      where: { id: messageId },
+      include: {
+        chat: {
+          include: {
+            users: { select: { userId: true, role: true } },
+            community: { select: { id: true, creatorId: true } },
+          },
+        },
+      },
+    });
+    if (!message) return res.status(404).json({ error: 'Message not found' });
+
+    const chat = message.chat;
+    if (!chat.isGroup && !chat.isCommunity) {
+      return res.status(403).json({ error: 'Admin delete is only for group/community chats' });
+    }
+
+    // Permission gate
+    let permitted = false;
+    if (chat.isCommunity && chat.community?.creatorId === callerId) permitted = true;
+    if (!permitted && chat.isGroup) {
+      const me = chat.users.find((u) => u.userId === callerId);
+      if (me && me.role === 'ADMIN') permitted = true;
+    }
+    if (!permitted) {
+      return res.status(403).json({ error: 'Only the group admin / community creator can delete messages' });
+    }
+
+    // Hard delete
+    await prisma.message.delete({ where: { id: message.id } });
+
+    // Orphan-only S3 cleanup
+    try {
+      if (message.imageUrl) {
+        const { deleteS3IfOrphanBulk } = require('../utils/s3Cleanup');
+        deleteS3IfOrphanBulk([message.imageUrl]).catch((err) =>
+          console.error('adminDeleteMessage S3 cleanup error', err)
+        );
+      }
+    } catch (_) { /* s3 module unavailable — skip */ }
+
+    // Broadcast same event as item 1
+    try {
+      const { getIO } = require('../utils/socket');
+      const io = getIO && getIO();
+      if (io) {
+        io.to(`chat_${chat.id}`).emit('messagesDeleted', {
+          chatId: chat.id,
+          messageIds: [message.id],
+        });
+      }
+    } catch (_) { /* socket not ready */ }
+
+    return res.json({ success: true, deleted: [message.id] });
+  } catch (err) {
+    console.error('adminDeleteMessage error:', err);
+    return res.status(500).json({ error: 'Failed to delete message' });
   }
 };

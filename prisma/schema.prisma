@@ -67,6 +67,13 @@ model User {
 
   reportsReceived Report[] @relation("Reported")
 
+  // Per-space bans (community / group). User.isBanned (above) is the GLOBAL
+  // admin-team ban; these are the creator/admin-issued local bans.
+  communityBansIssued CommunityBan[] @relation("CommunityBanIssuer")
+  communityBansAgainst CommunityBan[] @relation("CommunityBanTarget")
+  chatBansIssued      ChatBan[]      @relation("ChatBanIssuer")
+  chatBansAgainst     ChatBan[]      @relation("ChatBanTarget")
+
   actedNotifications Notification[] @relation("NotificationActor")
 
   pointsLedger         PointsLedger[]
@@ -270,6 +277,8 @@ model Chat {
 
   createdById Int?
   createdBy   User? @relation(fields: [createdById], references: [id], onDelete: SetNull)
+
+  bans ChatBan[]
 }
 
 model Message {
@@ -283,10 +292,24 @@ model Message {
   isSystem  Boolean   @default(false) // system alert messages (e.g. "disappearing messages turned on")
   expiresAt DateTime? // null = permanent; set when chat has disappearingSeconds
 
+  // Reply / quote (item 8). Null when message is not a reply.
+  // SetNull (not Cascade) so deleting a referenced message turns child rows into
+  // "reply to deleted message" rather than wiping them.
+  replyToMessageId Int?
+  replyTo          Message?  @relation("MessageReplies", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  replies          Message[] @relation("MessageReplies")
+
+  // Forward flag (item 6). Default false → existing rows unaffected.
+  forwarded Boolean @default(false)
+
+  // Reports targeting this message (item 2).
+  reports Report[] @relation("MessageReports")
+
   createdAt DateTime @default(now())
 
   @@index([expiresAt]) // fast cleanup query
   @@index([imageUrl]) // orphan-guard scan
+  @@index([replyToMessageId]) // reply lookup
 }
 
 model ChatImage {
@@ -444,6 +467,7 @@ model Community {
   history   CommunityHistory[]
   chats     Chat[]
   media     Media[] // ✅ inverse of Media.community
+  bans      CommunityBan[]
 }
 
 model CommunityMember {
@@ -492,8 +516,63 @@ model Report {
   reviewedAt DateTime?
   createdAt  DateTime  @default(now())
 
+  // Type discriminator. Existing rows back-fill to "user" via the default —
+  // existing /api/report path keeps working with zero code change.
+  type String @default("user") // "user" | "message"
+
+  // Set only when type=message. SetNull so admin-deleting the message later
+  // does not cascade-delete the report record (audit trail preserved).
+  messageId Int?
+  message   Message? @relation("MessageReports", fields: [messageId], references: [id], onDelete: SetNull)
+
+  // Optional context for the moderation dashboard.
+  chatId      Int?
+  contextType String? // "dm" | "group" | "community"
+  communityId Int?
+  note        String?
+
   reporter User @relation("Reporter", fields: [reporterId], references: [id], onDelete: Cascade)
   reported User @relation("Reported", fields: [reportedId], references: [id], onDelete: Cascade)
+
+  @@index([type, status])
+  @@index([messageId])
+}
+
+// Per-community ban issued by the community creator. Distinct from the global
+// User.isBanned flag (admin-team only). Used to keep a banned user out of the
+// community chat + member list and block their re-join.
+model CommunityBan {
+  id          Int      @id @default(autoincrement())
+  communityId Int
+  userId      Int
+  bannedById  Int
+  reason      String?
+  bannedAt    DateTime @default(now())
+
+  community  Community @relation(fields: [communityId], references: [id], onDelete: Cascade)
+  user       User      @relation("CommunityBanTarget", fields: [userId], references: [id], onDelete: Cascade)
+  bannedBy   User      @relation("CommunityBanIssuer", fields: [bannedById], references: [id], onDelete: Cascade)
+
+  @@unique([communityId, userId])
+  @@index([userId])
+}
+
+// Per-group-chat ban issued by a group admin. Used to keep a banned user out
+// of the group and block their re-add via addUsersToGroup.
+model ChatBan {
+  id         Int      @id @default(autoincrement())
+  chatId     Int
+  userId     Int
+  bannedById Int
+  reason     String?
+  bannedAt   DateTime @default(now())
+
+  chat     Chat @relation(fields: [chatId], references: [id], onDelete: Cascade)
+  user     User @relation("ChatBanTarget", fields: [userId], references: [id], onDelete: Cascade)
+  bannedBy User @relation("ChatBanIssuer", fields: [bannedById], references: [id], onDelete: Cascade)
+
+  @@unique([chatId, userId])
+  @@index([userId])
 }
 
 enum ShopSlot {

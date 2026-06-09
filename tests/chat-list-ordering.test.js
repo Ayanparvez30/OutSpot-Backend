@@ -101,6 +101,9 @@ fakePrisma.pointsLedger = { groupBy: async () => [], findMany: async () => [] };
 fakePrisma.message = { count: async () => 0, findMany: async () => [], groupBy: async () => [] };
 fakePrisma.userOnChat = { findMany: async () => [], findFirst: async () => null };
 fakePrisma.user = { findMany: async () => [] };
+// Item 4 (block-aware preview filter) calls prisma.block.findMany inside
+// getMyChats / getMyGroupChats. Empty result → no scrub → existing behavior.
+fakePrisma.block = { findMany: async () => [] };
 
 function makeReq(userId) { return { authData: { id: userId } }; }
 function makeRes() {

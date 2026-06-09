@@ -308,6 +308,15 @@ exports.joinCommunity = async (req, res) => {
     const { communityId } = req.body;
     const id = Number(communityId);
 
+    // Item 5a: reject join if this user is banned from the community.
+    const banned = await prisma.communityBan.findFirst({
+      where: { communityId: id, userId },
+      select: { id: true, reason: true },
+    });
+    if (banned) {
+      return res.status(403).json({ error: 'You are banned from this community', reason: banned.reason || null });
+    }
+
     const existing = await prisma.communityMember.findFirst({ where: { userId, communityId: id } });
     if (existing) return res.status(409).json({ error: 'Already a member' });
 
@@ -451,6 +460,98 @@ exports.removeMember = async (req, res) => {
   } catch (err) {
     console.error('removeMember error:', err);
     return res.status(500).json({ error: 'Failed to remove member' });
+  }
+};
+
+// -------------------- ban a member from this community (item 5a) --------------------
+// Only the creator can ban. Inserts CommunityBan + reuses the removeMember
+// cleanup (CommunityMember delete + UserOnChat delete + history + realtime).
+// Idempotent — if already banned, re-uses the existing row.
+exports.banMember = async (req, res) => {
+  try {
+    const adminId = req.authData.id;
+    const id = Number(req.params?.communityId);
+    const targetUserId = Number(req.params?.userId);
+    const reason = req.body?.reason ? String(req.body.reason).slice(0, 191) : null;
+
+    if (!Number.isInteger(id))          return res.status(400).json({ error: 'Invalid communityId' });
+    if (!Number.isInteger(targetUserId)) return res.status(400).json({ error: 'Invalid userId' });
+
+    const community = await prisma.community.findUnique({
+      where: { id },
+      select: { id: true, creatorId: true },
+    });
+    if (!community) return res.status(404).json({ error: 'Community not found' });
+    if (community.creatorId !== adminId) {
+      return res.status(403).json({ error: 'Only the community admin can ban members' });
+    }
+    if (community.creatorId === targetUserId) {
+      return res.status(403).json({ error: 'Creator cannot be banned. Delete the community instead.' });
+    }
+
+    // Insert ban (idempotent via unique [communityId, userId])
+    await prisma.communityBan.upsert({
+      where: { communityId_userId: { communityId: id, userId: targetUserId } },
+      update: { reason, bannedById: adminId, bannedAt: new Date() },
+      create: { communityId: id, userId: targetUserId, bannedById: adminId, reason },
+    });
+
+    // Remove from membership + community chat if currently in.
+    const membership = await prisma.communityMember.findFirst({
+      where: { userId: targetUserId, communityId: id },
+      select: { id: true },
+    });
+    if (membership) {
+      await prisma.$transaction([
+        prisma.communityMember.delete({ where: { id: membership.id } }),
+        prisma.userOnChat.deleteMany({
+          where: { userId: targetUserId, chat: { communityId: id, isCommunity: true } },
+        }),
+        prisma.communityHistory.create({
+          data: { userId: targetUserId, communityId: id, action: 'banned' },
+        }),
+      ]);
+    }
+
+    // Realtime
+    realtime.toCommunity(id, 'community.member_banned',  { communityId: id, userId: targetUserId });
+    realtime.toCommunity(id, 'community.member_removed', { communityId: id, userId: targetUserId });
+    realtime.toUser(targetUserId, 'community.member_banned',  { communityId: id, userId: targetUserId, reason });
+    realtime.toUser(targetUserId, 'community.member_removed', { communityId: id, userId: targetUserId });
+
+    return res.json({ message: 'Member banned from community' });
+  } catch (err) {
+    console.error('banMember error:', err);
+    return res.status(500).json({ error: 'Failed to ban member' });
+  }
+};
+
+// -------------------- unban (item 5a) --------------------
+exports.unbanMember = async (req, res) => {
+  try {
+    const adminId = req.authData.id;
+    const id = Number(req.params?.communityId);
+    const targetUserId = Number(req.params?.userId);
+
+    if (!Number.isInteger(id))           return res.status(400).json({ error: 'Invalid communityId' });
+    if (!Number.isInteger(targetUserId)) return res.status(400).json({ error: 'Invalid userId' });
+
+    const community = await prisma.community.findUnique({
+      where: { id },
+      select: { id: true, creatorId: true },
+    });
+    if (!community) return res.status(404).json({ error: 'Community not found' });
+    if (community.creatorId !== adminId) {
+      return res.status(403).json({ error: 'Only the community admin can unban members' });
+    }
+
+    await prisma.communityBan.deleteMany({ where: { communityId: id, userId: targetUserId } });
+    realtime.toUser(targetUserId, 'community.member_unbanned', { communityId: id, userId: targetUserId });
+
+    return res.json({ message: 'Member unbanned' });
+  } catch (err) {
+    console.error('unbanMember error:', err);
+    return res.status(500).json({ error: 'Failed to unban member' });
   }
 };
 
