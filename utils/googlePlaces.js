@@ -15,6 +15,7 @@ const SEARCH_FIELD_MASK = [
   'places.viewport',
   'places.types',
   'places.primaryType',
+  'places.primaryTypeDisplayName',
   'places.photos',
   'places.rating',
   'places.userRatingCount',
@@ -34,6 +35,7 @@ const DETAILS_FIELD_MASK = [
   'viewport',
   'types',
   'primaryType',
+  'primaryTypeDisplayName',
   'photos',
   'rating',
   'userRatingCount',
@@ -114,6 +116,7 @@ function mapNewToLegacy(p) {
     geometry,
     types: p.types || [],
     primary_type: p.primaryType || null,
+    primary_type_display: p.primaryTypeDisplayName?.text || null, // Google's UI tag, e.g. "Pub"
     photos,
     rating: p.rating ?? 0,
     user_ratings_total: p.userRatingCount ?? 0,
