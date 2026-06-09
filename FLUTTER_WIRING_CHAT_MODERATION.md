@@ -1,6 +1,6 @@
-# OutSpot Chat — Frontend Wiring Guide (9 items)
+# OutSpot Chat — Frontend Wiring Guide (10 items)
 
-**Backend status:** shipped to `main` (commits `3561adc7` + `e750e49b`).
+**Backend status:** shipped to `main` (commits `3561adc7` + `e750e49b` + the ban-notification commit).
 **Deploy order on the server:** `git pull` → `npx prisma migrate deploy` → restart Node.
 
 This doc describes every behaviour change the Flutter side needs to wire — logic + request/response shapes only, no code. Old clients that ignore unknown JSON keys keep working with zero change.
@@ -20,6 +20,7 @@ This doc describes every behaviour change the Flutter side needs to wire — log
 | 7 | Admin reports pipeline (web) | ✅ | Web only — no FE work |
 | 8 | Reply / quote | ❌ | New `replyToMessageId` field + `replyTo` render |
 | 9 | Share story/post → chat | ✅ | Pass `imageUrl` separately (already shipped on FE) |
+| 10 | Ban notification (record + FCM) | ✅ | None — existing notification list + FCM router already handle it |
 
 ---
 
@@ -311,28 +312,109 @@ Message objects now contain a populated `imageUrl` (or `null`). Same field as be
 
 ---
 
+## Item 10 — Ban notification (in-app record + FCM push)
+
+**Trigger:** every successful community / group ban or unban now also writes a
+`Notification` row for the affected user, sends an FCM push (if the user has
+notifications enabled), and emits the existing `notification` socket event.
+
+### Notification record shape (added to the user's notification list)
+
+```jsonc
+{
+  "id":          int,
+  "userId":      <bannedUserId>,
+  "type":        "COMMUNITY_BANNED" | "COMMUNITY_UNBANNED" | "GROUP_BANNED" | "GROUP_UNBANNED",
+  "title":       "Removed from <community/group name>"  // ban
+              // "Reinstated to <community/group name>" // unban
+  "description": "You were removed by an admin. Reason: <reason>" // ban (Reason: only when present)
+              // "An admin has unbanned you. You can rejoin now." // unban
+  "isRead":      false,
+  "actorId":     <adminUserId>,
+  "data": {
+    "communityId": int,    // for COMMUNITY_*
+    "chatId":      int,    // for GROUP_*
+    "reason":      "..."   // optional; only on bans where reason was supplied
+  },
+  "createdAt":   "<iso>"
+}
+```
+
+Uses the existing notification list format — **no UI change** required to render it. The FE may optionally map the four new types to a 🚫 / ✅ icon, but unknown types already fall through to the generic notification cell.
+
+### FCM payload (matches the existing FCM contract)
+
+```jsonc
+{
+  "notification": {
+    "title": "Removed from <name>",
+    "body":  "You were removed by an admin."
+  },
+  "data": {
+    "type":          "COMMUNITY_BANNED" | "GROUP_BANNED" | "COMMUNITY_UNBANNED" | "GROUP_UNBANNED",
+    "notificationId":"<int as string>",
+    "actorId":       "<adminUserId>",
+    "communityId":   "<id>"  // for COMMUNITY_*
+    "chatId":        "<id>"  // for GROUP_*
+    "reason":        "..."   // optional
+  }
+}
+```
+
+The existing FCM router handles unknown `data.type` values gracefully (default opens the app) — so no client change is required to avoid crashes. If you want to deep-link, route on the new `type` values:
+- `COMMUNITY_BANNED` / `COMMUNITY_UNBANNED` → open community detail screen (via `data.communityId`)
+- `GROUP_BANNED` / `GROUP_UNBANNED` → open chat list (or a banned-state notice; the chat itself is no longer accessible)
+
+### Socket event (already wired via `notifyUser`)
+
+The existing `notification` event the bell-dot already listens to:
+
+```
+socket.on('notification', ({ hasUnread: true }) => { ... })
+```
+
+### Toggle respect
+
+When the user has disabled push notifications (their personal toggle), the FCM step is skipped, **but** the in-app `Notification` record + the red-dot socket event still fire. So:
+- App open → user sees the bell light up + the new row in their list
+- App closed → user has a record waiting when they reopen (no push banner)
+
+### What was already in place (no new socket events)
+
+The `community.member_banned` / `group.member_banned` socket events (covered in item 5) still fire alongside item 10's delivery — they're for **live ejection** of the user from the open chat room. Item 10 adds the **closed-app** path.
+
+### UX
+
+Nothing new — the existing notification list cell renders `title` + `description`. Optionally:
+- Show a 🚫 icon next to `COMMUNITY_BANNED` / `GROUP_BANNED` entries
+- Show a ✅ icon next to `*_UNBANNED` entries
+- Tap → deep-link per the `data` payload
+
+---
+
 ## Summary — priority order for FE
 
 | Rank | Item | Reason |
 |---|---|---|
 | 1 | 9 (share-to-chat image) | FE already shipped this; just verify it now renders as image after deploy |
-| 2 | 4 (`'[blocked]'` preview render) | Pure UI — no logic, no menu, just text rendering |
-| 3 | 1 (delete own message) | One new socket emit + reuse the existing `messagesDeleted` listener |
-| 4 | 2 (report message) | One new REST call from the long-press menu |
-| 5 | 5 (admin ban + admin-delete) | New screens + new realtime listeners |
-| 6 | 8 (reply / quote) | New gesture + quote-chip rendering + `replyToMessageId` send |
-| 7 | 6 (forward) | Long-press → forward sheet → loop `sendMessage` with `forwarded: true` |
-| 8 | 3 (extend `/api/report`) | Optional — leave existing call as-is unless you want richer reports |
-| 9 | 7 | Web team only |
+| 2 | 10 (ban notification) | Zero FE work — existing notification list + FCM router already render it. Listed here only for awareness |
+| 3 | 4 (`'[blocked]'` preview render) | Pure UI — no logic, no menu, just text rendering |
+| 4 | 1 (delete own message) | One new socket emit + reuse the existing `messagesDeleted` listener |
+| 5 | 2 (report message) | One new REST call from the long-press menu |
+| 6 | 5 (admin ban + admin-delete) | New screens + new realtime listeners |
+| 7 | 8 (reply / quote) | New gesture + quote-chip rendering + `replyToMessageId` send |
+| 8 | 6 (forward) | Long-press → forward sheet → loop `sendMessage` with `forwarded: true` |
+| 9 | 3 (extend `/api/report`) | Optional — leave existing call as-is unless you want richer reports |
+| 10 | 7 | Web team only |
 
-Items 1, 2, 4, 5, 9 are store-required (Apple Guideline 1.2 + Google UGC policy). The rest are UX polish.
+Items 1, 2, 4, 5, 9, 10 are store-required (Apple Guideline 1.2 + Google UGC policy). The rest are UX polish.
 
 ---
 
 ## Backend test coverage (FYI)
 
-- **13 test files** across the chat layer
-- **306 asserts** total
+- **14 test files** across the chat layer
+- **350 asserts** total
 - **0 failures, 0 regressions**
 
 Every item above has a dedicated test file in `tests/`. If anything misbehaves on the device that contradicts this doc, it's a wiring issue on the FE side or a deploy hiccup (run `npx prisma migrate deploy` + restart) — not a backend behavior gap.

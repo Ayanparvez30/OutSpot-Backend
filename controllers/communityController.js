@@ -3,6 +3,7 @@ const { PrismaClient } = require('@prisma/client');
 const prisma = new PrismaClient();
 const uploadToS3 = require('../utils/s3Upload');
 const realtime = require('../utils/realtime');
+const { notifyUser } = require('../utils/notificationService');
 
 
 const { getWeeklyPointsForUsers } = require('../utils/weeklyPoints');
@@ -479,7 +480,7 @@ exports.banMember = async (req, res) => {
 
     const community = await prisma.community.findUnique({
       where: { id },
-      select: { id: true, creatorId: true },
+      select: { id: true, creatorId: true, name: true },
     });
     if (!community) return res.status(404).json({ error: 'Community not found' });
     if (community.creatorId !== adminId) {
@@ -519,6 +520,22 @@ exports.banMember = async (req, res) => {
     realtime.toUser(targetUserId, 'community.member_banned',  { communityId: id, userId: targetUserId, reason });
     realtime.toUser(targetUserId, 'community.member_removed', { communityId: id, userId: targetUserId });
 
+    // Item 10: persistent in-app notification + FCM push (respects per-user
+    // notification toggle inside notifyUser). Survives app-closed state.
+    try {
+      const cname = community.name || 'community';
+      const desc  = `You were removed by an admin.${reason ? ` Reason: ${reason}` : ''}`;
+      await notifyUser(
+        targetUserId,
+        'COMMUNITY_BANNED',
+        `Removed from ${cname}`,
+        desc,
+        { actorId: adminId, communityId: id, ...(reason ? { reason } : {}) },
+      );
+    } catch (e) {
+      console.error('banMember notifyUser error:', e);
+    }
+
     return res.json({ message: 'Member banned from community' });
   } catch (err) {
     console.error('banMember error:', err);
@@ -538,7 +555,7 @@ exports.unbanMember = async (req, res) => {
 
     const community = await prisma.community.findUnique({
       where: { id },
-      select: { id: true, creatorId: true },
+      select: { id: true, creatorId: true, name: true },
     });
     if (!community) return res.status(404).json({ error: 'Community not found' });
     if (community.creatorId !== adminId) {
@@ -547,6 +564,20 @@ exports.unbanMember = async (req, res) => {
 
     await prisma.communityBan.deleteMany({ where: { communityId: id, userId: targetUserId } });
     realtime.toUser(targetUserId, 'community.member_unbanned', { communityId: id, userId: targetUserId });
+
+    // Item 10: reinstatement notification + FCM push.
+    try {
+      const cname = community.name || 'community';
+      await notifyUser(
+        targetUserId,
+        'COMMUNITY_UNBANNED',
+        `Reinstated to ${cname}`,
+        'An admin has unbanned you. You can rejoin now.',
+        { actorId: adminId, communityId: id },
+      );
+    } catch (e) {
+      console.error('unbanMember notifyUser error:', e);
+    }
 
     return res.json({ message: 'Member unbanned' });
   } catch (err) {

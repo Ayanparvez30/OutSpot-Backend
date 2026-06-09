@@ -257,6 +257,13 @@ enum NotificationType {
   NEW_CHALLENGE
   DAILY_CHALLENGE
   WEEKLY_CHALLENGE
+  // Per-space ban / unban notifications (item 10). Distinct from the global
+  // User.isBanned admin action; these are issued by community creators / group
+  // admins when they remove a member.
+  COMMUNITY_BANNED
+  COMMUNITY_UNBANNED
+  GROUP_BANNED
+  GROUP_UNBANNED
 }
 
 model Chat {

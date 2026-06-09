@@ -4,6 +4,7 @@ const path = require('path');
 const multer = require('multer');
 const uploadToS3 = require('../utils/s3Upload');
 const realtime = require('../utils/realtime');
+const { notifyUser } = require('../utils/notificationService');
 
 const { PrismaClient } = require('@prisma/client');
 const fs = require('fs');
@@ -2429,7 +2430,10 @@ exports.banGroupMember = async (req, res) => {
 
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
-      include: { users: { select: { userId: true, role: true } } },
+      select: {
+        id: true, isGroup: true, name: true,
+        users: { select: { userId: true, role: true } },
+      },
     });
     if (!chat || !chat.isGroup) return res.status(404).json({ error: 'Group chat not found' });
 
@@ -2461,6 +2465,21 @@ exports.banGroupMember = async (req, res) => {
     realtime.toUser(targetUserId, 'group.member_banned',  { chatId, userId: targetUserId, reason });
     realtime.toUser(targetUserId, 'group.member_removed', { chatId, userId: targetUserId });
 
+    // Item 10: persistent in-app notification + FCM push (respects toggle).
+    try {
+      const gname = chat.name || 'group';
+      const desc  = `You were removed by an admin.${reason ? ` Reason: ${reason}` : ''}`;
+      await notifyUser(
+        targetUserId,
+        'GROUP_BANNED',
+        `Removed from ${gname}`,
+        desc,
+        { actorId: adminId, chatId, ...(reason ? { reason } : {}) },
+      );
+    } catch (e) {
+      console.error('banGroupMember notifyUser error:', e);
+    }
+
     return res.json({ message: 'Member banned from group' });
   } catch (err) {
     console.error('banGroupMember error:', err);
@@ -2479,7 +2498,10 @@ exports.unbanGroupMember = async (req, res) => {
 
     const chat = await prisma.chat.findUnique({
       where: { id: chatId },
-      include: { users: { select: { userId: true, role: true } } },
+      select: {
+        id: true, isGroup: true, name: true,
+        users: { select: { userId: true, role: true } },
+      },
     });
     if (!chat || !chat.isGroup) return res.status(404).json({ error: 'Group chat not found' });
 
@@ -2490,6 +2512,20 @@ exports.unbanGroupMember = async (req, res) => {
 
     await prisma.chatBan.deleteMany({ where: { chatId, userId: targetUserId } });
     realtime.toUser(targetUserId, 'group.member_unbanned', { chatId, userId: targetUserId });
+
+    // Item 10: reinstatement notification + FCM push.
+    try {
+      const gname = chat.name || 'group';
+      await notifyUser(
+        targetUserId,
+        'GROUP_UNBANNED',
+        `Reinstated to ${gname}`,
+        'An admin has unbanned you. You can rejoin now.',
+        { actorId: adminId, chatId },
+      );
+    } catch (e) {
+      console.error('unbanGroupMember notifyUser error:', e);
+    }
 
     return res.json({ message: 'Member unbanned' });
   } catch (err) {
