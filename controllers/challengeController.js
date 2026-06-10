@@ -515,7 +515,15 @@ exports.getSubmissions = async (req, res) => {
       return res.status(400).json({ error: 'Invalid challengeId' });
     }
 
-    // 1) challenge + window (daily/week)
+    // ---- Pagination + sort params ----
+    // Sized to keep the 50k+ submitter case stable on the client. Page size
+    // capped at 100 to bound the per-page hydration work below.
+    const page     = Math.max(1, parseInt(req.query.page,     10) || 1);
+    const pageSize = Math.max(1, Math.min(100, parseInt(req.query.pageSize, 10) || 20));
+    const sortDir  = String(req.query.sort || 'newest').toLowerCase() === 'oldest' ? 'asc' : 'desc';
+    const skip     = (page - 1) * pageSize;
+
+    // 1) challenge + window (daily/week) — unchanged.
     const challenge = await prisma.challenge.findUnique({
       where: { id: challengeId },
       select: { id: true, frequency: true, requiredPhotos: true, points: true },
@@ -524,177 +532,280 @@ exports.getSubmissions = async (req, res) => {
 
     const zone = currentZone(req);
     const now = new Date();
-    const window =
+    const win =
       challenge.frequency === 'DAILY'
         ? { startUTC: startOfDayInZone(now, zone), endUTC: endOfDayInZone(now, zone) }
         : getWeekStartEndInZone(now, zone);
     const required = challenge.requiredPhotos || 1;
 
-    // 2) this window-এর সব submissions (others only), সাথে basic user info
-    const subs = await prisma.submission.findMany({
-      where: {
-        challengeId: challenge.id,
-        userId: { not: me },
-        createdAt: { gte: window.startUTC, lte: window.endUTC },
-      },
-      include: {
-        user: {
-          select: {
-            id: true,
-            username: true,
-              firstName: true,
-    lastName: true,
-            totalPoints: true,
-            minime: {
-              where: { isSaved: true },
-              orderBy: { updatedAt: 'desc' },
-              select: { avatarUrl: true },
-              take: 1,
-            },
-          },
-        },
-      },
-    });
-
-    // 3) per-user aggregate
-    const perUserCount = new Map();
-    const perUserInfo = new Map();
-    for (const s of subs) {
-      const u = s.user;
-      if (!u) continue;
-      perUserInfo.set(u.id, u);
-      perUserCount.set(u.id, (perUserCount.get(u.id) || 0) + 1);
-    }
-    const submitterIds = Array.from(perUserInfo.keys());
-    if (!submitterIds.length) return res.json({ items: [] });
-
-    // 4) earnedPoints (this window, this challenge only) — ledger থেকে
-    const ledgerRows = await prisma.pointsLedger.findMany({
-      where: {
-        userId: { in: submitterIds },
-        createdAt: { gte: window.startUTC, lte: window.endUTC },
-        reason: 'CHALLENGE_COMPLETION',
-        refId: challenge.id,
-      },
-      select: { userId: true, finalPoints: true },
-    });
-    const earnedByUser = ledgerRows.reduce((m, r) => {
-      m.set(r.userId, (m.get(r.userId) || 0) + (r.finalPoints || 0));
-      return m;
-    }, new Map());
-
-    // 5) weeklyPoints (batch helper)
-    const { getWeeklyPointsForUsers } = require('../utils/weeklyPoints');
-    const weekMapRaw = await getWeeklyPointsForUsers(submitterIds);
-    // normalize Map
-    const weekMap =
-      weekMapRaw instanceof Map
-        ? weekMapRaw
-        : new Map(Object.entries(weekMapRaw || {}).map(([k, v]) => [Number(k), Number(v) || 0]));
-
-    // friends
+    // ---- Friends + shared community/group sets (bounded by ME, never by 50k) ----
     const friendRows = await prisma.friendship.findMany({
-      where: {
-        status: 'ACCEPTED',
-        OR: [
-          { requesterId: me, receiverId: { in: submitterIds } },
-          { receiverId: me, requesterId: { in: submitterIds } },
-        ],
-      },
+      where: { status: 'ACCEPTED', OR: [{ requesterId: me }, { receiverId: me }] },
       select: { requesterId: true, receiverId: true },
     });
-    const friendSet = new Set(
-      friendRows.map((r) => (r.requesterId === me ? r.receiverId : r.requesterId))
-    );
+    const friendIds = friendRows.map((r) => (r.requesterId === me ? r.receiverId : r.requesterId));
+    const friendSet = new Set(friendIds);
 
-   
     const myComms = await prisma.communityMember.findMany({
       where: { userId: me },
       include: { community: { select: { id: true, name: true } } },
     });
     const myCommIds = myComms.map((c) => c.communityId);
-    const commNameById = new Map(myComms.map((c) => [c.communityId, c.community.name]));
-
-  
-    const sharedCommRows =
-      myCommIds.length > 0
-        ? await prisma.communityMember.findMany({
-            where: { userId: { in: submitterIds }, communityId: { in: myCommIds } },
-            select: { userId: true, communityId: true },
-          })
-        : [];
-    const sharedCommunitiesByUser = new Map();
-    for (const row of sharedCommRows) {
-      const list = sharedCommunitiesByUser.get(row.userId) || [];
-      const name = commNameById.get(row.communityId);
-      if (name && !list.includes(name)) list.push(name);
-      sharedCommunitiesByUser.set(row.userId, list);
-    }
+    const commNameById = new Map(myComms.map((c) => [c.communityId, c.community?.name]));
 
     const myGroups = await prisma.userOnChat.findMany({
       where: { userId: me, chat: { isGroup: true, isCommunity: false } },
       include: { chat: { select: { id: true, name: true } } },
     });
     const myGroupIds = myGroups.map((g) => g.chatId);
-    const groupNameById = new Map(myGroups.map((g) => [g.chatId, g.chat.name || 'Group']));
+    const groupNameById = new Map(myGroups.map((g) => [g.chatId, g.chat?.name || 'Group']));
 
-    
-    const sharedGroupRows =
-      myGroupIds.length > 0
-        ? await prisma.userOnChat.findMany({
-            where: { userId: { in: submitterIds }, chatId: { in: myGroupIds } },
-            select: { userId: true, chatId: true },
+    // All my community/group co-member user-ids — bounded by my comms/groups,
+    // not the submitter pool. Subtract friends and self.
+    const [coCommRows, coGroupRows] = await Promise.all([
+      myCommIds.length
+        ? prisma.communityMember.findMany({
+            where: { communityId: { in: myCommIds }, NOT: { userId: me } },
+            select: { userId: true },
           })
-        : [];
-    const sharedGroupsByUser = new Map();
-    for (const row of sharedGroupRows) {
-      const list = sharedGroupsByUser.get(row.userId) || [];
-      const gname = groupNameById.get(row.chatId);
-      if (gname && !list.includes(gname)) list.push(gname);
-      sharedGroupsByUser.set(row.userId, list);
+        : Promise.resolve([]),
+      myGroupIds.length
+        ? prisma.userOnChat.findMany({
+            where: { chatId: { in: myGroupIds }, NOT: { userId: me } },
+            select: { userId: true },
+          })
+        : Promise.resolve([]),
+    ]);
+    const sharedSet = new Set([
+      ...coCommRows.map((r) => r.userId),
+      ...coGroupRows.map((r) => r.userId),
+    ]);
+    for (const fid of friendIds) sharedSet.delete(fid); // friends always win tier 1
+    sharedSet.delete(me);
+
+    const sharedIds = [...sharedSet];
+
+    // ---- Helper: per-user submissions for a fixed candidate set, ordered ----
+    // Returns array of { userId, uploadedCount, latestAt } ordered by latestAt
+    // (sortDir) then by userId asc as the stable tiebreaker.
+    async function rankUsers(candidateIds) {
+      if (candidateIds.length === 0) return [];
+      const groups = await prisma.submission.groupBy({
+        by: ['userId'],
+        where: {
+          challengeId: challenge.id,
+          userId: { in: candidateIds, not: me },
+          createdAt: { gte: win.startUTC, lte: win.endUTC },
+        },
+        _max: { createdAt: true },
+        _count: { _all: true },
+      });
+      // Tiebreaker MUST be deterministic — Prisma orderBy on userId works,
+      // but doing the sort in JS keeps the by/orderBy simple across versions.
+      groups.sort((a, b) => {
+        const ta = a._max?.createdAt ? new Date(a._max.createdAt).getTime() : 0;
+        const tb = b._max?.createdAt ? new Date(b._max.createdAt).getTime() : 0;
+        if (ta !== tb) return sortDir === 'desc' ? tb - ta : ta - tb;
+        return a.userId - b.userId;
+      });
+      return groups.map((g) => ({
+        userId: g.userId,
+        uploadedCount: g._count?._all || 0,
+        latestAt: g._max?.createdAt || null,
+      }));
     }
 
-    const buildBadges = (uid) => {
-      const badges = [];
-      if (friendSet.has(uid)) badges.push('Friend');
-      const comms = (sharedCommunitiesByUser.get(uid) || []).slice(0, 2);
-      const groups = (sharedGroupsByUser.get(uid) || []).slice(0, 2);
-      return [...badges, ...comms, ...groups]; 
-    };
+    // ---- Tier 1 + Tier 2 — bounded by my social graph, fully materialised ----
+    const t1 = await rankUsers(friendIds);
+    const t2 = await rankUsers(sharedIds);
+    const t1IdSet = new Set(t1.map((u) => u.userId));
+    const t2IdSet = new Set(t2.map((u) => u.userId));
 
-    const items = submitterIds
-      .map((uid) => {
-        const u = perUserInfo.get(uid);
-        const uploadedCount = perUserCount.get(uid) || 0;
-        return {
-          userId: uid,
-      username: `${u?.firstName || ''} ${u?.lastName || ''}`.trim(),
-          avatarUrl: firstAvatar(u?.minime),
-          uploadedCount,
-          completed: uploadedCount >= required,
-          earnedPoints: earnedByUser.get(uid) ?? 0,
-          weeklyPoints: weekMap.get(uid) ?? 0,
-          totalPoints: u?.totalPoints ?? 0,
-          relationship: {
-            isFriend: friendSet.has(uid),
-            sharedCommunities: sharedCommunitiesByUser.get(uid) || [],
-            sharedGroups: sharedGroupsByUser.get(uid) || [],
-            badges: buildBadges(uid),
+    // ---- Total distinct submitters (excluding me) — single COUNT, no NOT IN ----
+    const totalRows = await prisma.$queryRaw`
+      SELECT COUNT(DISTINCT \`userId\`) AS c
+      FROM \`Submission\`
+      WHERE \`challengeId\` = ${challenge.id}
+        AND \`userId\` != ${me}
+        AND \`createdAt\` >= ${win.startUTC}
+        AND \`createdAt\` <= ${win.endUTC}
+    `;
+    const totalDistinct = (() => {
+      const r = Array.isArray(totalRows) ? totalRows[0] : null;
+      if (!r) return 0;
+      const v = r.c ?? r.C ?? Object.values(r)[0];
+      return typeof v === 'bigint' ? Number(v) : Number(v) || 0;
+    })();
+    const t3Count = Math.max(0, totalDistinct - t1.length - t2.length);
+    const total   = totalDistinct;
+    const t12IdsForNotIn = [...t1IdSet, ...t2IdSet];
+
+    // ---- Walk tiers to assemble the requested page ----
+    let take = pageSize;
+    let cursor = skip;
+    const pageRows = []; // each: { userId, uploadedCount, latestAt, tier }
+
+    function drainFrom(list, tierLabel) {
+      if (cursor < list.length && take > 0) {
+        const slice = list.slice(cursor, cursor + take);
+        for (const e of slice) pageRows.push({ ...e, tier: tierLabel });
+        take -= slice.length;
+        cursor = 0;
+      } else {
+        cursor = Math.max(0, cursor - list.length);
+      }
+    }
+
+    drainFrom(t1, 'friend');
+    drainFrom(t2, 'shared');
+
+    if (take > 0 && t3Count > 0) {
+      // Tier 3 — page slice via groupBy with offset/limit. Excludes t1+t2 ids.
+      const t3Slice = await prisma.submission.groupBy({
+        by: ['userId'],
+        where: {
+          challengeId: challenge.id,
+          userId: {
+            not: me,
+            ...(t12IdsForNotIn.length ? { notIn: t12IdsForNotIn } : {}),
           },
-        };
-      })
-    
-      .sort(
-        (a, b) =>
-          (b.completed - a.completed) ||
-          (b.weeklyPoints - a.weeklyPoints) ||
-          String(a.username).localeCompare(String(b.username))
-      )
-      .slice(0, 100);
+          createdAt: { gte: win.startUTC, lte: win.endUTC },
+        },
+        _max: { createdAt: true },
+        _count: { _all: true },
+        orderBy: [{ _max: { createdAt: sortDir } }, { userId: 'asc' }],
+        skip: cursor,
+        take,
+      });
+      for (const g of t3Slice) {
+        pageRows.push({
+          userId: g.userId,
+          uploadedCount: g._count?._all || 0,
+          latestAt: g._max?.createdAt || null,
+          tier: 'other',
+        });
+      }
+    }
 
-    return res.json({ items, requiredCount: required });
+    // ---- Hydrate page user info (only for the small page slice) ----
+    const pageUserIds = pageRows.map((r) => r.userId);
+    if (pageUserIds.length === 0) {
+      return res.json({
+        items: [],
+        page, pageSize, total, hasMore: false,
+        requiredCount: required,
+      });
+    }
+
+    const users = await prisma.user.findMany({
+      where: { id: { in: pageUserIds } },
+      select: {
+        id: true, username: true, firstName: true, lastName: true,
+        totalPoints: true,
+        minime: {
+          where: { isSaved: true },
+          orderBy: { updatedAt: 'desc' },
+          select: { avatarUrl: true },
+          take: 1,
+        },
+      },
+    });
+    const userById = new Map(users.map((u) => [u.id, u]));
+
+    // earnedPoints — ledger, just for the page slice
+    const ledgerRows = await prisma.pointsLedger.findMany({
+      where: {
+        userId: { in: pageUserIds },
+        createdAt: { gte: win.startUTC, lte: win.endUTC },
+        reason: 'CHALLENGE_COMPLETION',
+        refId: challenge.id,
+      },
+      select: { userId: true, finalPoints: true },
+    });
+    const earnedByUser = new Map();
+    for (const r of ledgerRows) {
+      earnedByUser.set(r.userId, (earnedByUser.get(r.userId) || 0) + (r.finalPoints || 0));
+    }
+
+    // weekly points — page slice only
+    const { getWeeklyPointsForUsers } = require('../utils/weeklyPoints');
+    const weekMapRaw = await getWeeklyPointsForUsers(pageUserIds);
+    const weekMap =
+      weekMapRaw instanceof Map
+        ? weekMapRaw
+        : new Map(Object.entries(weekMapRaw || {}).map(([k, v]) => [Number(k), Number(v) || 0]));
+
+    // Per-user shared communities/groups (names) — only for the page slice.
+    const sharedCommByUser = new Map();
+    const sharedGroupByUser = new Map();
+    if (myCommIds.length) {
+      const rows = await prisma.communityMember.findMany({
+        where: { userId: { in: pageUserIds }, communityId: { in: myCommIds } },
+        select: { userId: true, communityId: true },
+      });
+      for (const r of rows) {
+        const name = commNameById.get(r.communityId);
+        if (!name) continue;
+        const list = sharedCommByUser.get(r.userId) || [];
+        if (!list.includes(name)) list.push(name);
+        sharedCommByUser.set(r.userId, list);
+      }
+    }
+    if (myGroupIds.length) {
+      const rows = await prisma.userOnChat.findMany({
+        where: { userId: { in: pageUserIds }, chatId: { in: myGroupIds } },
+        select: { userId: true, chatId: true },
+      });
+      for (const r of rows) {
+        const name = groupNameById.get(r.chatId);
+        if (!name) continue;
+        const list = sharedGroupByUser.get(r.userId) || [];
+        if (!list.includes(name)) list.push(name);
+        sharedGroupByUser.set(r.userId, list);
+      }
+    }
+
+    const items = pageRows.map((row) => {
+      const u = userById.get(row.userId);
+      const uploadedCount = row.uploadedCount;
+      const sharedCommunities = sharedCommByUser.get(row.userId) || [];
+      const sharedGroups      = sharedGroupByUser.get(row.userId) || [];
+      const isFriend = friendSet.has(row.userId);
+      const badges = [];
+      if (isFriend) badges.push('Friend');
+      badges.push(...sharedCommunities.slice(0, 2));
+      badges.push(...sharedGroups.slice(0, 2));
+      return {
+        userId: row.userId,
+        username: `${u?.firstName || ''} ${u?.lastName || ''}`.trim() || u?.username || '',
+        avatarUrl: firstAvatar(u?.minime),
+        uploadedCount,
+        completed: uploadedCount >= required,
+        earnedPoints: earnedByUser.get(row.userId) ?? 0,
+        weeklyPoints: weekMap.get(row.userId) ?? 0,
+        totalPoints: u?.totalPoints ?? 0,
+        relationship: {
+          isFriend,
+          sharedCommunities,
+          sharedGroups,
+          badges,
+        },
+        submittedAt: row.latestAt,
+      };
+    });
+
+    const hasMore = skip + items.length < total;
+
+    return res.json({
+      items,
+      page,
+      pageSize,
+      total,
+      hasMore,
+      requiredCount: required, // kept for back-compat
+    });
   } catch (err) {
-    console.error('getSubmissions (updated) error:', err);
+    console.error('getSubmissions error:', err);
     return res.status(500).json({ error: 'Failed to fetch submissions' });
   }
 };
