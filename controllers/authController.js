@@ -966,30 +966,32 @@ exports.contactUs = async (req, res) => {
     return res.status(400).json({ error: 'All fields are required.' });
   }
 
+  // Sanitise — these strings are interpolated into HTML below.
+  const esc = (s) =>
+    String(s)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/\n/g, '<br/>');
+
   try {
-    const transporter = nodemailer.createTransport({
-      host: process.env.SMTP_HOST,
-      port: parseInt(process.env.SMTP_PORT, 10),
-      secure: false,
-      requireTLS: true,
-      auth: {
-        user: process.env.SMTP_EMAIL,
-        pass: process.env.SMTP_PASSWORD,
-      },
-    });
-
-    const mailOptions = {
-      from: email,
-      to: process.env.CONTACT_RECEIVER_EMAIL || 'ishra101789@gmail.com',
-      subject: `Contact Us - ${subject}`,
-      html: `
-        <p><strong>From:</strong> ${email}</p>
-        <p><strong>Subject:</strong> ${subject}</p>
-        <p><strong>Description:</strong><br/>${description}</p>
-      `,
-    };
-
-    await transporter.sendMail(mailOptions);
+    // Use the SAME working sendEmail helper that drives OTP delivery. Key
+    // difference vs the old inline transporter: `from` is OUR authenticated
+    // SMTP_EMAIL account (not the user's typed email), so the SMTP provider
+    // doesn't SPF/DKIM-reject. The user's email goes in `replyTo` so the
+    // recipient can still hit Reply and land back at them.
+    const html = `
+      <p><strong>From:</strong> ${esc(email)}</p>
+      <p><strong>Subject:</strong> ${esc(subject)}</p>
+      <p><strong>Description:</strong><br/>${esc(description)}</p>
+    `;
+    await sendEmail(
+      process.env.CONTACT_RECEIVER_EMAIL || 'ishra101789@gmail.com',
+      `Contact Us - ${subject}`,
+      html,
+      email, // replyTo
+    );
 
     return res.status(200).json({ message: 'Message sent successfully!' });
   } catch (error) {
