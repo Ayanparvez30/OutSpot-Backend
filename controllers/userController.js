@@ -597,6 +597,41 @@ async function getUserPoints(req, res) {
   }
 }
 
+// GET submit-for-points cooldown status. Lets the client render a live countdown
+// when "Submit for Points" is shown, WITHOUT attempting a submission. Mirrors the
+// 1-hour per-user rate limit used by submitForPoints. (Challenge submissions are
+// separate and have NO such limit.)
+async function getSubmitForPointsStatus(req, res) {
+  try {
+    const userId = req.authData.id;
+    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 60);
+    if (RATE_LIMIT_MINUTES <= 0) {
+      return res.json({ canSubmit: true, retryAfterSeconds: 0, nextAllowedAt: null, rateLimitMinutes: 0, lastSubmitAt: null });
+    }
+    const windowMs = RATE_LIMIT_MINUTES * 60 * 1000;
+    const lastSubmit = await prisma.locationPoint.findFirst({
+      where: { userId, createdAt: { gte: new Date(Date.now() - windowMs) } },
+      orderBy: { createdAt: 'desc' },
+      select: { createdAt: true },
+    });
+    if (!lastSubmit) {
+      return res.json({ canSubmit: true, retryAfterSeconds: 0, nextAllowedAt: null, rateLimitMinutes: RATE_LIMIT_MINUTES, lastSubmitAt: null });
+    }
+    const nextAllowedAt = new Date(lastSubmit.createdAt.getTime() + windowMs);
+    const retryAfterSeconds = Math.max(0, Math.ceil((nextAllowedAt.getTime() - Date.now()) / 1000));
+    return res.json({
+      canSubmit: retryAfterSeconds <= 0,
+      retryAfterSeconds,                 // seconds left on cooldown (0 = can submit now)
+      nextAllowedAt: nextAllowedAt.toISOString(),
+      rateLimitMinutes: RATE_LIMIT_MINUTES,
+      lastSubmitAt: lastSubmit.createdAt,
+    });
+  } catch (err) {
+    console.error('getSubmitForPointsStatus error:', err);
+    return res.status(500).json({ error: 'Failed to load submit status' });
+  }
+}
+
 async function submitForPoints(req, res) {
   const userId = req.authData.id;
   const { placeId, placeName, latitude, longitude } = req.body;
@@ -1420,6 +1455,7 @@ module.exports = {
   // Points
   getUserPoints,
   submitForPoints,
+  getSubmitForPointsStatus,
   getAchievementStatus,
   getUserStatsByUserId,
   getUserVisitedSpots,
