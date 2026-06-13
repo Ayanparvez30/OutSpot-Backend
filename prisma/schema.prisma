@@ -468,6 +468,7 @@ model Community {
   name String
 
   imageUrl  String?
+  bio       String?  @db.Text // optional community bio/description, set by creator/admin
   creatorId Int
   creator   User               @relation("UserCreatedCommunities", fields: [creatorId], references: [id], onDelete: Cascade)
   members   CommunityMember[]

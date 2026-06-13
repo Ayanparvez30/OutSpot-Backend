@@ -57,7 +57,7 @@ const ensureCommunityChat = async (communityId) => {
 // -------------------- create community (+ chat) --------------------
 exports.createCommunity = async (req, res) => {
   try {
-    const { name } = req.body;
+    const { name, bio } = req.body;
     const creatorId = req.authData.id;
 
     // One community per user
@@ -79,7 +79,7 @@ exports.createCommunity = async (req, res) => {
     }
 
     const community = await prisma.community.create({
-      data: { name, creatorId, imageUrl },
+      data: { name, creatorId, imageUrl, bio: bio ?? null },
     });
 
     await prisma.communityMember.create({
@@ -107,7 +107,7 @@ exports.createCommunity = async (req, res) => {
 exports.editCommunity = async (req, res) => {
   try {
     const { communityId } = req.params;
-    const { name } = req.body;
+    const { name, bio } = req.body;
     const userId = req.authData.id;
 
     const id = Number(communityId);
@@ -122,7 +122,8 @@ exports.editCommunity = async (req, res) => {
 
     const updated = await prisma.community.update({
       where: { id },
-      data: { name, imageUrl },
+      // bio updates only when sent (undefined skips it); name/imageUrl as before
+      data: { name, imageUrl, ...(bio !== undefined ? { bio } : {}) },
     });
 
     await prisma.chat.updateMany({
@@ -233,7 +234,7 @@ exports.getCommunityDetails = async (req, res) => {
     const [community, chat, members] = await Promise.all([
       prisma.community.findUnique({
         where: { id: cid },
-        select: { id: true, name: true, imageUrl: true, creatorId: true },
+        select: { id: true, name: true, imageUrl: true, bio: true, creatorId: true },
       }),
       prisma.chat.findFirst({
         where: { communityId: cid, isCommunity: true },
@@ -290,6 +291,7 @@ exports.getCommunityDetails = async (req, res) => {
       id: community.id,
       name: community.name,
       imageUrl: community.imageUrl,
+      bio: community.bio || null,
       creatorId: community.creatorId,
       chatId: chat?.id || null,
       isMember: members.some((m) => m.user.id === userId),
