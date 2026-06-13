@@ -221,17 +221,22 @@ exports.sendTextMessage = async (req, res) => {
       }
     }
 
-    // Calculate expiresAt for disappearing messages
+    // Calculate expiresAt for disappearing messages.
+    // Timed modes (5m/15m/30m/1h/3h/6h) are receiver-view-triggered now —
+    // expiresAt stays null at send, stamped in markChatAsRead when the
+    // recipient actually reads. View-once and global keep their old
+    // send-time stamps.
     const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
     const GLOBAL_CHAT_TTL_MS = 12 * 60 * 60 * 1000; // global messages disappear 12h after being sent
+    const GROUP_CHAT_TTL_MS = 24 * 60 * 60 * 1000;  // group + community messages disappear 24h after being sent
     let expiresAt = null;
     if (chat.disappearingSeconds === 1) {
       expiresAt = VIEW_ONCE_SENTINEL;
-    } else if (chat.disappearingSeconds) {
-      expiresAt = new Date(Date.now() + chat.disappearingSeconds * 1000);
     } else if (isGlobalVariant) {
-      // Each global message expires independently, 12h from its own send time
       expiresAt = new Date(Date.now() + GLOBAL_CHAT_TTL_MS);
+    } else if (chat.isGroup || chat.isCommunity) {
+      // Each group/community message expires independently, 24h from its send time
+      expiresAt = new Date(Date.now() + GROUP_CHAT_TTL_MS);
     }
 
     // Item 9: copy a shared media URL to a chat-owned key so the chat message
@@ -1009,12 +1014,16 @@ const chats = await prisma.chat.findMany({
         : chat.isGroup ? 'group'
         : 'personal';
 
-      // Per-user effective sort time: max of latest-message time and THIS user's
-      // joinedAt. Ensures a newly-accepted friend chat / freshly-joined community
-      // chat appears at top for the joining user without reordering for others.
+      // Per-user effective sort time: max of latest-message time, chat's last
+      // activity (chat.updatedAt — bumped on every send), and THIS user's
+      // joinedAt. Including chat.updatedAt keeps the chat pinned at the top
+      // even after a disappearing message has been cleared/deleted from this
+      // user's preview — without it, latestMessage becomes null and the chat
+      // sinks back to joinedAt time.
       const lastMsgAt = latestMessage?.createdAt ? new Date(latestMessage.createdAt).getTime() : 0;
+      const chatUpdatedAtMs = chat.updatedAt ? new Date(chat.updatedAt).getTime() : 0;
       const joinedAtMs = currentUserOnChat?.joinedAt ? new Date(currentUserOnChat.joinedAt).getTime() : 0;
-      const _sortTime = Math.max(lastMsgAt, joinedAtMs);
+      const _sortTime = Math.max(lastMsgAt, chatUpdatedAtMs, joinedAtMs);
 
       return {
         ...chat,
@@ -1770,6 +1779,7 @@ exports.markChatAsRead = async (req, res) => {
     }
 
     // Update lastSeenMessageId to the latest message
+    const prevLastSeen = userInChat.lastSeenMessageId || 0;
     const updated = await prisma.userOnChat.update({
       where: { id: userInChat.id },
       data: { lastSeenMessageId: latestMessage.id }
@@ -1781,6 +1791,32 @@ exports.markChatAsRead = async (req, res) => {
       newLastSeenMessageId: latestMessage.id,
       updatedRecord: updated
     });
+
+    // Receiver-view-triggered countdown for timed disappearing modes
+    // (5m/15m/30m/1h/3h/6h). Stamp expiresAt on first read by THIS user, only
+    // for messages from other senders that don't already have expiresAt.
+    // Idempotent: set-once via `expiresAt: null` guard. View-once and "off"
+    // skipped — view-once uses sentinel at send, off has no timer.
+    try {
+      const chatRow = await prisma.chat.findUnique({
+        where: { id: parseInt(chatId, 10) },
+        select: { disappearingSeconds: true },
+      });
+      const sec = chatRow?.disappearingSeconds || 0;
+      if (sec > 1 && latestMessage.id > prevLastSeen) {
+        await prisma.message.updateMany({
+          where: {
+            chatId: parseInt(chatId, 10),
+            senderId: { not: currentUserId },
+            id: { gt: prevLastSeen, lte: latestMessage.id },
+            expiresAt: null,
+          },
+          data: { expiresAt: new Date(Date.now() + sec * 1000) },
+        });
+      }
+    } catch (timerErr) {
+      console.error('markChatAsRead timer-stamp error:', timerErr);
+    }
 
     // Emit socket event to notify other users (optional)
     try {
@@ -2069,12 +2105,15 @@ exports.getMyGroupChats = async (req, res) => {
           .map(u => u.userId);
       }
 
-      // Per-user effective sort time: max of latest-message and joinedAt.
-      // See getMyChats for rationale.
+      // Per-user effective sort time: max of latest-message, chat.updatedAt
+      // (last activity, bumped on every send), and joinedAt. See getMyChats
+      // for rationale — chat.updatedAt keeps the chat pinned at the top even
+      // after a disappearing message has been cleared from the preview.
       const currentUserOnChat = chat.users.find(u => u.userId === currentUserId);
       const lastMsgAt = latestMessage?.createdAt ? new Date(latestMessage.createdAt).getTime() : 0;
+      const chatUpdatedAtMs = chat.updatedAt ? new Date(chat.updatedAt).getTime() : 0;
       const joinedAtMs = currentUserOnChat?.joinedAt ? new Date(currentUserOnChat.joinedAt).getTime() : 0;
-      const _sortTime = Math.max(lastMsgAt, joinedAtMs);
+      const _sortTime = Math.max(lastMsgAt, chatUpdatedAtMs, joinedAtMs);
 
       return {
         id: chat.id,

@@ -330,18 +330,22 @@ function initSocket(server) {
           }
         }
 
-        // Calculate expiresAt if chat has disappearing messages enabled
-        // View-once (disappearingSeconds === 1): sentinel date, deleted 5s after recipient reads
+        // Calculate expiresAt if chat has disappearing messages enabled.
+        // Timed modes (5m/15m/30m/1h/3h/6h) are receiver-view-triggered now —
+        // expiresAt stays null at send, stamped in markChatAsRead when the
+        // recipient actually reads. View-once and global keep their old
+        // send-time stamps.
         const VIEW_ONCE_SENTINEL = new Date('2099-01-01T00:00:00.000Z');
         const GLOBAL_CHAT_TTL_MS = 12 * 60 * 60 * 1000; // global messages disappear 12h after being sent
+        const GROUP_CHAT_TTL_MS = 24 * 60 * 60 * 1000;  // group + community messages disappear 24h after being sent
         let expiresAt = null;
         if (chat.disappearingSeconds === 1) {
           expiresAt = VIEW_ONCE_SENTINEL;
-        } else if (chat.disappearingSeconds) {
-          expiresAt = new Date(Date.now() + chat.disappearingSeconds * 1000);
         } else if (isGlobalVariant) {
-          // Each global message expires independently, 12h from its own send time
           expiresAt = new Date(Date.now() + GLOBAL_CHAT_TTL_MS);
+        } else if (chat.isGroup || chat.isCommunity) {
+          // Each group/community message expires independently, 24h from its send time
+          expiresAt = new Date(Date.now() + GROUP_CHAT_TTL_MS);
         }
 
         // Item 9: if imageUrl is a shared story / explore media URL we own,
@@ -704,52 +708,55 @@ async function clearChatOnExit(userId, chatId) {
     });
     if (!chat || chat.disappearingSeconds !== 1) return; // only immediate mode
 
-    const latest = await prisma.message.findFirst({
-      where: { chatId: cid },
-      orderBy: { id: 'desc' },
-      select: { id: true },
-    });
-    const latestId = latest?.id || 0;
-    if (latestId === 0) return;
-
     const me = chat.users.find(u => u.userId === uid);
     if (!me) return; // not a member
     const myCleared = me.clearedUpToMessageId || 0;
+
+    // Receiver-driven: advance cleared past the latest message NOT sent by me.
+    // Messages I sent stay visible to me; only my exit-as-receiver clears.
+    const latestNotMine = await prisma.message.findFirst({
+      where: { chatId: cid, senderId: { not: uid } },
+      orderBy: { id: 'desc' },
+      select: { id: true },
+    });
+    const latestId = latestNotMine?.id || 0;
     const newCleared = Math.max(myCleared, latestId);
     if (newCleared !== myCleared) {
       await prisma.userOnChat.updateMany({
         where: { userId: uid, chatId: cid },
         data: { clearedUpToMessageId: newCleared },
       });
-      // Refresh THIS user's chat list so the disappeared message stops showing
-      // as the last-message preview (single exit doesn't hard-delete).
       try {
         ioInstance && ioInstance.to(`user:${uid}`).emit('messagesDeleted', { chatId: cid, messageIds: [] });
       } catch (_) { /* socket not ready */ }
     }
 
-    // Hard-delete messages every member has already passed (gone for all).
-    const clearedVals = chat.users.map(m =>
-      m.userId === uid ? newCleared : (m.clearedUpToMessageId || 0)
+    // Hard-delete per-sender: a message M from sender S is doomed when every
+    // other member has cleared past M. Sender's own clearedUpToMessageId is
+    // ignored for their own messages.
+    const clearedByUser = new Map(
+      chat.users.map(m => [m.userId, m.userId === uid ? newCleared : (m.clearedUpToMessageId || 0)])
     );
-    const minCleared = clearedVals.length ? Math.min(...clearedVals) : 0;
-    if (minCleared > 0) {
-      const doomed = await prisma.message.findMany({
-        where: { chatId: cid, id: { lte: minCleared } },
-        select: { id: true, imageUrl: true },
-      });
-      if (doomed.length) {
-        const ids = doomed.map(m => m.id);
-        await prisma.message.deleteMany({ where: { id: { in: ids } } });
-        // Orphan-only S3 cleanup — same upload may back a SavedStory clone;
-        // skip the S3 delete when any other row references it.
-        const { deleteS3IfOrphanBulk } = require('../utils/s3Cleanup');
-        const urls = [...new Set(doomed.map(m => m.imageUrl).filter(Boolean))];
-        if (urls.length) deleteS3IfOrphanBulk(urls).catch(err => console.error('socket clear-up S3 cleanup error', err));
-        try {
-          ioInstance && ioInstance.to(`chat_${cid}`).emit('messagesDeleted', { chatId: cid, messageIds: ids });
-        } catch (_) { /* socket not ready */ }
+    const candidates = await prisma.message.findMany({
+      where: { chatId: cid },
+      select: { id: true, senderId: true, imageUrl: true },
+    });
+    const doomed = candidates.filter(m => {
+      for (const [otherId, otherCleared] of clearedByUser) {
+        if (otherId === m.senderId) continue;
+        if ((otherCleared || 0) < m.id) return false;
       }
+      return true;
+    });
+    if (doomed.length) {
+      const ids = doomed.map(m => m.id);
+      await prisma.message.deleteMany({ where: { id: { in: ids } } });
+      const { deleteS3IfOrphanBulk } = require('../utils/s3Cleanup');
+      const urls = [...new Set(doomed.map(m => m.imageUrl).filter(Boolean))];
+      if (urls.length) deleteS3IfOrphanBulk(urls).catch(err => console.error('socket clear-up S3 cleanup error', err));
+      try {
+        ioInstance && ioInstance.to(`chat_${cid}`).emit('messagesDeleted', { chatId: cid, messageIds: ids });
+      } catch (_) { /* socket not ready */ }
     }
   } catch (e) {
     console.error('clearChatOnExit error:', e);
