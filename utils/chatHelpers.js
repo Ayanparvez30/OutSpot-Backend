@@ -110,11 +110,41 @@ async function markChatAsRead(userId, chatId) {
       return true; // No messages to mark as read
     }
 
+    // Snapshot prev lastSeen BEFORE bump so we can scope the timer stamp.
+    const prevRow = await prisma.userOnChat.findFirst({
+      where: { userId, chatId },
+      select: { lastSeenMessageId: true },
+    });
+    const prevLastSeen = prevRow?.lastSeenMessageId || 0;
+
     // Update user's lastSeenMessageId to the latest message
     await prisma.userOnChat.updateMany({
       where: { userId, chatId },
       data: { lastSeenMessageId: latestMessage.id }
     });
+
+    // Receiver-view-triggered countdown for timed disappearing modes.
+    // Idempotent: `expiresAt: null` guard means re-reads don't reset the timer.
+    try {
+      const chatRow = await prisma.chat.findUnique({
+        where: { id: chatId },
+        select: { disappearingSeconds: true },
+      });
+      const sec = chatRow?.disappearingSeconds || 0;
+      if (sec > 1 && latestMessage.id > prevLastSeen) {
+        await prisma.message.updateMany({
+          where: {
+            chatId,
+            senderId: { not: userId },
+            id: { gt: prevLastSeen, lte: latestMessage.id },
+            expiresAt: null,
+          },
+          data: { expiresAt: new Date(Date.now() + sec * 1000) },
+        });
+      }
+    } catch (timerErr) {
+      console.error('chatHelpers.markChatAsRead timer-stamp error:', timerErr);
+    }
 
     return true;
   } catch (error) {
