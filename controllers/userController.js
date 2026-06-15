@@ -946,7 +946,10 @@ async function deleteAccount(req, res) {
 
     const s3Urls = [
       user.selfieUrl,
-      user.bodyShapeUrl,
+      // NOTE: user.bodyShapeUrl is a SHARED admin master asset (BodyShape.imageUrl)
+      // that the user only references — never theirs to delete. Deleting an account
+      // must NOT feed it into S3 cleanup (would orphan-delete the master image and
+      // 404 it for everyone). Same applies to any premade/shop master URL.
       ...minimes.map(m => m.avatarUrl),
       ...media.map(m => m.fileUrl),
       ...stories.map(s => s.mediaUrl),
