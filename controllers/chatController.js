@@ -1045,6 +1045,10 @@ const chats = await prisma.chat.findMany({
             .map(u => u.userId),
         } : null,
         totalMessages: chat._count.messages,
+        // Stable recency key for the client to sort by. Driven by chat.updatedAt
+        // (bumped on every send), so a disappearing/cleared message NEVER changes
+        // the chat's list position. Sort by THIS, not latestMessage.createdAt.
+        lastActivityAt: new Date(_sortTime).toISOString(),
         _sortTime,
       };
     });
