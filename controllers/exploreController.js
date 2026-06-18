@@ -425,7 +425,7 @@ exports.recordVisit = async (req, res) => {
     // --------------------------
     // ✅ server-side place validate
     // --------------------------
-    const MAX_PLACE_DISTANCE_METERS = Number(process.env.MAX_PLACE_DISTANCE_METERS || 15);
+    const MAX_PLACE_DISTANCE_METERS = Number(process.env.MAX_PLACE_DISTANCE_METERS || 20);
 
     let placeLat = null;
     let placeLng = null;
