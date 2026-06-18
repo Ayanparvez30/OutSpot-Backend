@@ -433,6 +433,8 @@ exports.recordVisit = async (req, res) => {
     let viewport = null;  // { northeast: {lat,lng}, southwest: {lat,lng} } or null
     let placePriceLevel = null;
     let placeReviewCount = null;
+    let placeOpenNow = null;     // null/undefined = hours unknown → allow
+    let placeBizStatus = null;
 
     try {
       const d = await details(placeId);
@@ -442,6 +444,8 @@ exports.recordVisit = async (req, res) => {
       viewport = d?.geometry?.viewport || null;
       placePriceLevel = d?.price_level ?? null;
       placeReviewCount = d?.user_ratings_total ?? null;
+      placeOpenNow = d?.opening_hours?.open_now ?? null; // derived from currentOpeningHours.openNow (same field FE shows)
+      placeBizStatus = d?.business_status ?? null;
     } catch (e) {
       return res.status(502).json({
         awarded: false,
@@ -453,6 +457,19 @@ exports.recordVisit = async (req, res) => {
       return res.status(400).json({
         awarded: false,
         error: 'Invalid placeId (no geometry)',
+      });
+    }
+
+    // #2 — closed-place reject. Only reject on an EXPLICIT closed signal; if the
+    // place has no hours data (openNow null/undefined) we ALLOW (don't block legit
+    // spots that simply lack hours on Google). Mirrors the FE's Open/Closed badge.
+    if (placeOpenNow === false ||
+        placeBizStatus === 'CLOSED_TEMPORARILY' ||
+        placeBizStatus === 'CLOSED_PERMANENTLY') {
+      return res.status(409).json({
+        awarded: false,
+        reason: 'place-closed',
+        message: 'This place is closed right now — you can’t check in.',
       });
     }
 
