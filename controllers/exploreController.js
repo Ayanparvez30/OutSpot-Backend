@@ -420,6 +420,33 @@ exports.recordVisit = async (req, res) => {
     }
     placeId = placeId.trim();
 
+    // #4 — global check-in cooldown (once per N min, any place). Mirrors the
+    // /submit-for-points/status countdown (same LocationPoint source + env), so
+    // the FE countdown matches what's actually enforced here. Runs BEFORE the
+    // Google details fetch so spammed/early taps cost nothing.
+    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 30);
+    if (RATE_LIMIT_MINUTES > 0) {
+      const windowMs = RATE_LIMIT_MINUTES * 60 * 1000;
+      const lastVisit = await prisma.locationPoint.findFirst({
+        where: { userId, createdAt: { gte: new Date(Date.now() - windowMs) } },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      if (lastVisit) {
+        const nextAllowedAt = new Date(lastVisit.createdAt.getTime() + windowMs);
+        const retryAfterSeconds = Math.max(1, Math.ceil((nextAllowedAt.getTime() - Date.now()) / 1000));
+        res.set('Retry-After', String(retryAfterSeconds));
+        return res.status(429).json({
+          awarded: false,
+          reason: 'rate-limited',
+          message: `You can only check in once every ${RATE_LIMIT_MINUTES} minutes. Try again soon.`,
+          rateLimitMinutes: RATE_LIMIT_MINUTES,
+          retryAfterSeconds,
+          nextAllowedAt: nextAllowedAt.toISOString(),
+        });
+      }
+    }
+
     const cat = categoryKey ? getCategory(categoryKey) : null;
 
     // --------------------------

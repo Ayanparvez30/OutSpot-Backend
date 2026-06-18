@@ -604,7 +604,7 @@ async function getUserPoints(req, res) {
 async function getSubmitForPointsStatus(req, res) {
   try {
     const userId = req.authData.id;
-    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 60);
+    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 30);
     if (RATE_LIMIT_MINUTES <= 0) {
       return res.json({ canSubmit: true, retryAfterSeconds: 0, nextAllowedAt: null, rateLimitMinutes: 0, lastSubmitAt: null });
     }
@@ -644,7 +644,7 @@ async function submitForPoints(req, res) {
     // place. Cheap query (single findFirst with createdAt index) runs BEFORE
     // any other validation so spam attempts cost almost nothing. Env override
     // SUBMIT_RATE_LIMIT_MINUTES lets us tune without redeploy.
-    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 60);
+    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 30);
     if (RATE_LIMIT_MINUTES > 0) {
       const rateWindowAgo = new Date(Date.now() - RATE_LIMIT_MINUTES * 60 * 1000);
       const lastSubmit = await prisma.locationPoint.findFirst({
