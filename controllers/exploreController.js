@@ -402,7 +402,7 @@ exports.getCategoryMorePlaces = async (req, res) => {
 exports.recordVisit = async (req, res) => {
   try {
     const userId = req.authData.id;
-    let { placeId, name, latitude, longitude, mediaUrl, categoryKey } = req.body || {};
+    let { placeId, name, latitude, longitude, mediaUrl, categoryKey, accuracy, isMocked } = req.body || {};
 
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
@@ -412,6 +412,29 @@ exports.recordVisit = async (req, res) => {
     }
     if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
       return res.status(400).json({ error: 'Latitude/longitude out of range' });
+    }
+
+    // #5 — GPS integrity (anti-spoof + precision). Cheap, runs first.
+    // 1) Mocked/fake location → reject.
+    if (isMocked === true || isMocked === 'true') {
+      return res.status(409).json({
+        awarded: false,
+        reason: 'mocked-location',
+        message: 'Your location looks spoofed. Turn off mock location to check in.',
+      });
+    }
+    // 2) Low GPS precision → reject (only when accuracy is actually reported;
+    //    missing/unknown accuracy is allowed so older clients aren't blocked).
+    const MAX_GPS_ACCURACY_METERS = Number(process.env.MAX_GPS_ACCURACY_METERS || 50);
+    const acc = accuracy != null && accuracy !== '' ? Number(accuracy) : null;
+    if (acc != null && Number.isFinite(acc) && acc > MAX_GPS_ACCURACY_METERS) {
+      return res.status(409).json({
+        awarded: false,
+        reason: 'low-accuracy',
+        message: 'Weak GPS signal — move to open sky and try again.',
+        accuracy: acc,
+        maxAccuracy: MAX_GPS_ACCURACY_METERS,
+      });
     }
 
     // ✅ require placeId (so we can validate)
