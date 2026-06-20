@@ -402,7 +402,7 @@ exports.getCategoryMorePlaces = async (req, res) => {
 exports.recordVisit = async (req, res) => {
   try {
     const userId = req.authData.id;
-    let { placeId, name, latitude, longitude, mediaUrl, categoryKey } = req.body || {};
+    let { placeId, name, latitude, longitude, mediaUrl, categoryKey, accuracy, isMocked } = req.body || {};
 
     const lat = parseFloat(latitude);
     const lng = parseFloat(longitude);
@@ -414,18 +414,68 @@ exports.recordVisit = async (req, res) => {
       return res.status(400).json({ error: 'Latitude/longitude out of range' });
     }
 
+    // #5 — GPS integrity (anti-spoof + precision). Cheap, runs first.
+    // 1) Mocked/fake location → reject.
+    if (isMocked === true || isMocked === 'true') {
+      return res.status(409).json({
+        awarded: false,
+        reason: 'mocked-location',
+        message: 'Your location looks spoofed. Turn off mock location to check in.',
+      });
+    }
+    // 2) Low GPS precision → reject (only when accuracy is actually reported;
+    //    missing/unknown accuracy is allowed so older clients aren't blocked).
+    const MAX_GPS_ACCURACY_METERS = Number(process.env.MAX_GPS_ACCURACY_METERS || 50);
+    const acc = accuracy != null && accuracy !== '' ? Number(accuracy) : null;
+    if (acc != null && Number.isFinite(acc) && acc > MAX_GPS_ACCURACY_METERS) {
+      return res.status(409).json({
+        awarded: false,
+        reason: 'low-accuracy',
+        message: 'Weak GPS signal — move to open sky and try again.',
+        accuracy: acc,
+        maxAccuracy: MAX_GPS_ACCURACY_METERS,
+      });
+    }
+
     // ✅ require placeId (so we can validate)
     if (!placeId || typeof placeId !== 'string' || placeId.trim().length < 5) {
       return res.status(400).json({ error: 'placeId required to award points' });
     }
     placeId = placeId.trim();
 
+    // #4 — global check-in cooldown (once per N min, any place). Mirrors the
+    // /submit-for-points/status countdown (same LocationPoint source + env), so
+    // the FE countdown matches what's actually enforced here. Runs BEFORE the
+    // Google details fetch so spammed/early taps cost nothing.
+    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 30);
+    if (RATE_LIMIT_MINUTES > 0) {
+      const windowMs = RATE_LIMIT_MINUTES * 60 * 1000;
+      const lastVisit = await prisma.locationPoint.findFirst({
+        where: { userId, createdAt: { gte: new Date(Date.now() - windowMs) } },
+        orderBy: { createdAt: 'desc' },
+        select: { createdAt: true },
+      });
+      if (lastVisit) {
+        const nextAllowedAt = new Date(lastVisit.createdAt.getTime() + windowMs);
+        const retryAfterSeconds = Math.max(1, Math.ceil((nextAllowedAt.getTime() - Date.now()) / 1000));
+        res.set('Retry-After', String(retryAfterSeconds));
+        return res.status(429).json({
+          awarded: false,
+          reason: 'rate-limited',
+          message: `You can only check in once every ${RATE_LIMIT_MINUTES} minutes. Try again soon.`,
+          rateLimitMinutes: RATE_LIMIT_MINUTES,
+          retryAfterSeconds,
+          nextAllowedAt: nextAllowedAt.toISOString(),
+        });
+      }
+    }
+
     const cat = categoryKey ? getCategory(categoryKey) : null;
 
     // --------------------------
     // ✅ server-side place validate
     // --------------------------
-    const MAX_PLACE_DISTANCE_METERS = Number(process.env.MAX_PLACE_DISTANCE_METERS || 15);
+    const MAX_PLACE_DISTANCE_METERS = Number(process.env.MAX_PLACE_DISTANCE_METERS || 20);
 
     let placeLat = null;
     let placeLng = null;
@@ -433,6 +483,8 @@ exports.recordVisit = async (req, res) => {
     let viewport = null;  // { northeast: {lat,lng}, southwest: {lat,lng} } or null
     let placePriceLevel = null;
     let placeReviewCount = null;
+    let placeOpenNow = null;     // null/undefined = hours unknown → allow
+    let placeBizStatus = null;
 
     try {
       const d = await details(placeId);
@@ -442,6 +494,8 @@ exports.recordVisit = async (req, res) => {
       viewport = d?.geometry?.viewport || null;
       placePriceLevel = d?.price_level ?? null;
       placeReviewCount = d?.user_ratings_total ?? null;
+      placeOpenNow = d?.opening_hours?.open_now ?? null; // derived from currentOpeningHours.openNow (same field FE shows)
+      placeBizStatus = d?.business_status ?? null;
     } catch (e) {
       return res.status(502).json({
         awarded: false,
@@ -453,6 +507,19 @@ exports.recordVisit = async (req, res) => {
       return res.status(400).json({
         awarded: false,
         error: 'Invalid placeId (no geometry)',
+      });
+    }
+
+    // #2 — closed-place reject. Only reject on an EXPLICIT closed signal; if the
+    // place has no hours data (openNow null/undefined) we ALLOW (don't block legit
+    // spots that simply lack hours on Google). Mirrors the FE's Open/Closed badge.
+    if (placeOpenNow === false ||
+        placeBizStatus === 'CLOSED_TEMPORARILY' ||
+        placeBizStatus === 'CLOSED_PERMANENTLY') {
+      return res.status(409).json({
+        awarded: false,
+        reason: 'place-closed',
+        message: 'This place is closed right now — you can’t check in.',
       });
     }
 

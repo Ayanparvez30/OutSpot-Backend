@@ -604,7 +604,7 @@ async function getUserPoints(req, res) {
 async function getSubmitForPointsStatus(req, res) {
   try {
     const userId = req.authData.id;
-    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 60);
+    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 30);
     if (RATE_LIMIT_MINUTES <= 0) {
       return res.json({ canSubmit: true, retryAfterSeconds: 0, nextAllowedAt: null, rateLimitMinutes: 0, lastSubmitAt: null });
     }
@@ -644,7 +644,7 @@ async function submitForPoints(req, res) {
     // place. Cheap query (single findFirst with createdAt index) runs BEFORE
     // any other validation so spam attempts cost almost nothing. Env override
     // SUBMIT_RATE_LIMIT_MINUTES lets us tune without redeploy.
-    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 60);
+    const RATE_LIMIT_MINUTES = Number(process.env.SUBMIT_RATE_LIMIT_MINUTES || 30);
     if (RATE_LIMIT_MINUTES > 0) {
       const rateWindowAgo = new Date(Date.now() - RATE_LIMIT_MINUTES * 60 * 1000);
       const lastSubmit = await prisma.locationPoint.findFirst({
@@ -816,55 +816,40 @@ async function submitForPoints(req, res) {
 }
 
 
-// 20 levels, each with a cumulative points threshold
-// Tiers: New Explorer (1-4), Urban Explorer (5-9), City Sniper (10-19), Legendary Explorer (20)
-const LEVEL_THRESHOLDS = [
-  0,    // Level 1  — 0 pts
-  10,   // Level 2  — 10 pts
-  25,   // Level 3  — 25 pts
-  45,   // Level 4  — 45 pts
-  70,   // Level 5  — 70 pts
-  100,  // Level 6  — 100 pts
-  140,  // Level 7  — 140 pts
-  190,  // Level 8  — 190 pts
-  250,  // Level 9  — 250 pts
-  320,  // Level 10 — 320 pts
-  400,  // Level 11 — 400 pts
-  500,  // Level 12 — 500 pts
-  620,  // Level 13 — 620 pts
-  760,  // Level 14 — 760 pts
-  920,  // Level 15 — 920 pts
-  1100, // Level 16 — 1100 pts
-  1300, // Level 17 — 1300 pts
-  1550, // Level 18 — 1550 pts
-  1850, // Level 19 — 1850 pts
-  2200, // Level 20 — 2200 pts
+// Lifetime-points tiers. No numeric levels — a user's rank IS their point range.
+//   New Explorer       0 – 499
+//   Urban Explorer     500 – 2,499
+//   City Sniper        2,500 – 9,999
+//   Legendary Explorer 10,000+
+const TIERS = [
+  { title: 'New Explorer',       min: 0 },
+  { title: 'Urban Explorer',     min: 500 },
+  { title: 'City Sniper',        min: 2500 },
+  { title: 'Legendary Explorer', min: 10000 },
 ];
 
-const getTitleForLevel = (level) => {
-  if (level >= 20) return 'Legendary Explorer';
-  if (level >= 10) return 'City Sniper';
-  if (level >= 5) return 'Urban Explorer';
-  return 'New Explorer';
-};
-
-const getLevelFromPoints = (points) => {
-  let level = 1;
-  for (let i = 1; i < LEVEL_THRESHOLDS.length; i++) {
-    if (points >= LEVEL_THRESHOLDS[i]) {
-      level = i + 1; // index 0 = level 1, index 1 = level 2, etc.
-    } else {
-      break;
-    }
+// Resolve a user's tier from lifetime points + progress to the next tier.
+const getTier = (points) => {
+  const p = Number(points) || 0;
+  let idx = 0;
+  for (let i = 0; i < TIERS.length; i++) {
+    if (p >= TIERS[i].min) idx = i; else break;
   }
-  return { level, title: getTitleForLevel(level) };
-};
-
-const getPointsForNextLevel = (currentPoints) => {
-  for (let i = 1; i < LEVEL_THRESHOLDS.length; i++) {
-    if (currentPoints < LEVEL_THRESHOLDS[i]) return LEVEL_THRESHOLDS[i] - currentPoints;
-  }
-  return 0; // max level reached
+  const current = TIERS[idx];
+  const next = TIERS[idx + 1] || null;
+  const min = current.min;
+  const max = next ? next.min - 1 : null;          // null = unbounded (Legendary)
+  const pointsToNext = next ? next.min - p : 0;    // 0 = top tier reached
+  const progress = next ? (p - min) / (next.min - min) : 1;
+  return {
+    title: current.title,
+    min,
+    max,
+    nextTitle: next ? next.title : null,
+    nextAt: next ? next.min : null,
+    pointsToNext,
+    progress: Math.min(Math.max(progress, 0), 1),
+  };
 };
 
 async function getAchievementStatus(req, res) {
@@ -878,35 +863,22 @@ async function getAchievementStatus(req, res) {
 
     if (!user) return res.status(404).json({ error: 'User not found' });
 
-    const { level, title } = getLevelFromPoints(user.totalPoints);
-    const remaining = getPointsForNextLevel(user.totalPoints);
-
-    // Current level threshold and next level threshold for progress bar
-    const currentLevelThreshold = LEVEL_THRESHOLDS[level - 1]; // points needed to reach current level
-    const nextLevelThreshold = level < 20 ? LEVEL_THRESHOLDS[level] : LEVEL_THRESHOLDS[19];
-    const pointsInCurrentLevel = user.totalPoints - currentLevelThreshold;
-    const pointsRequiredForNextLevel = nextLevelThreshold - currentLevelThreshold;
-    const progress = level >= 20 ? 1.0 : pointsInCurrentLevel / pointsRequiredForNextLevel;
+    const t = getTier(user.totalPoints);
 
     res.json({
       totalPoints: user.totalPoints,
-      level,
-      maxLevel: 20,
-      title,
-      pointsToNextLevel: remaining,
-      currentLevelThreshold,
-      nextLevelThreshold,
-      progress: Math.min(Math.max(progress, 0), 1), // clamped 0-1
-      tiers: [
-        { name: 'New Explorer', unlockLevel: 1 },
-        { name: 'Urban Explorer', unlockLevel: 5 },
-        { name: 'City Sniper', unlockLevel: 10 },
-        { name: 'Legendary Explorer', unlockLevel: 20 },
-      ],
+      title: t.title,                 // current tier name
+      currentMin: t.min,              // tier's lower bound
+      currentMax: t.max,              // tier's upper bound (null = Legendary, unbounded)
+      nextTitle: t.nextTitle,         // null at top tier
+      nextAt: t.nextAt,               // points where next tier begins (null at top)
+      pointsToNext: t.pointsToNext,   // points remaining to next tier (0 at top)
+      progress: t.progress,           // 0..1 within current tier
+      tiers: TIERS.map(x => ({ name: x.title, pointsRequired: x.min })),
     });
   } catch (error) {
     console.error('Get achievement error:', error);
-    res.status(500).json({ error: 'Could not get level info' });
+    res.status(500).json({ error: 'Could not get tier info' });
   }
 }
 
